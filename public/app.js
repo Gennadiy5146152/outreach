@@ -7,6 +7,7 @@ const state = {
   warmup: null,
   dashboard: null,
   settings: null,
+  envCheck: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -83,6 +84,55 @@ function switchView(view) {
 async function loadHealth() {
   const health = await api("/api/health");
   $("#health").textContent = `OK · dry-run: ${health.dryRun ? "да" : "нет"} · tracking: ${health.publicTrackingUrl ? "on" : "off"}`;
+}
+
+async function loadEnvCheck() {
+  state.envCheck = await api("/api/env-check");
+  renderEnvChecklist();
+}
+
+function envItem({ key, configured, value, secret }) {
+  const status = configured ? "задано" : "не задано";
+  return `
+    <article class="env-item ${configured ? "done" : ""}">
+      <div>
+        <strong>${esc(key)}</strong>
+        <p>${secret ? "секретное значение скрыто" : value ? `текущее значение: ${esc(value)}` : "можно оставить пустым до реального запуска"}</p>
+      </div>
+      ${pill(status)}
+    </article>
+  `;
+}
+
+function renderEnvChecklist() {
+  if (!state.envCheck || !$("#envChecklist")) return;
+  const mailboxItems = state.envCheck.mailboxSecrets.map((item) => ({
+    key: item.key,
+    configured: item.configured,
+    secret: true,
+    value: "",
+  }));
+  $("#envChecklist").innerHTML = `
+    <div class="env-grid">
+      <section>
+        <h3>Обязательное</h3>
+        <div class="cards">${state.envCheck.required.map(envItem).join("")}</div>
+      </section>
+      <section>
+        <h3>Пароли почты</h3>
+        <div class="cards">${mailboxItems.map(envItem).join("")}</div>
+      </section>
+      <section>
+        <h3>Желательно</h3>
+        <div class="cards">${state.envCheck.recommended.map(envItem).join("")}</div>
+      </section>
+      <section>
+        <h3>Шаблон для .env</h3>
+        <pre class="env-template">${esc(state.envCheck.template)}</pre>
+        <p class="muted">После изменения .env выполни: docker compose restart web worker</p>
+      </section>
+    </div>
+  `;
 }
 
 async function loadDashboard() {
@@ -401,6 +451,7 @@ async function loadEvents() {
 async function refresh() {
   await Promise.all([
     loadHealth(),
+    loadEnvCheck(),
     loadDashboard(),
     loadLeads(),
     loadMailboxes(),

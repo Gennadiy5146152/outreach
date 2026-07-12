@@ -49,6 +49,49 @@ app.get("/api/settings", asyncHandler(async (_req, res) => {
   });
 }));
 
+app.get("/api/env-check", asyncHandler(async (_req, res) => {
+  const mailboxes = (await query("SELECT id, name, email, password_env_key FROM mailboxes ORDER BY created_at")).rows;
+  const mailboxSecrets = mailboxes.map((mailbox) => ({
+    mailboxId: mailbox.id,
+    name: mailbox.name,
+    email: mailbox.email,
+    key: mailbox.password_env_key,
+    configured: Boolean(process.env[mailbox.password_env_key]),
+  }));
+  const expectedMailboxKeys = mailboxes.length
+    ? mailboxSecrets
+    : [
+        { key: "MAILBOX_1_PASSWORD", configured: Boolean(process.env.MAILBOX_1_PASSWORD), example: true },
+        { key: "MAILBOX_2_PASSWORD", configured: Boolean(process.env.MAILBOX_2_PASSWORD), example: true },
+      ];
+
+  res.json({
+    required: [
+      { key: "MAIL_DRY_RUN", configured: process.env.MAIL_DRY_RUN !== undefined, value: env.mailDryRun ? "true" : "false", secret: false },
+      { key: "POSTGRES_PORT", configured: process.env.POSTGRES_PORT !== undefined, value: process.env.POSTGRES_PORT || "55432", secret: false },
+    ],
+    recommended: [
+      { key: "PUBLIC_TRACKING_URL", configured: Boolean(env.publicTrackingUrl), secret: false },
+      { key: "MAX_ATTACHMENT_MB", configured: process.env.MAX_ATTACHMENT_MB !== undefined, value: String(env.maxAttachmentMb), secret: false },
+    ],
+    mailboxSecrets: expectedMailboxKeys,
+    template: [
+      "# Безопасный режим. Пока true, реальные письма не отправляются.",
+      "MAIL_DRY_RUN=true",
+      "",
+      "# Пароли от двух почтовых ящиков. В UI указывайте только имя переменной.",
+      "MAILBOX_1_PASSWORD=вставьте_пароль_или_app_password",
+      "MAILBOX_2_PASSWORD=вставьте_пароль_или_app_password",
+      "",
+      "# Для реального open tracking нужен публичный URL туннеля.",
+      "PUBLIC_TRACKING_URL=",
+      "",
+      "# Postgres на хосте опубликован на 55432, чтобы не конфликтовать с локальным 5432.",
+      "POSTGRES_PORT=55432",
+    ].join("\n"),
+  });
+}));
+
 app.put("/api/settings/:key", asyncHandler(async (req, res) => {
   const result = await query(
     `

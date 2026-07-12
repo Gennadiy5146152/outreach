@@ -18,5 +18,6 @@ await getJson("/api/sending/progress");
 await getJson("/api/warmup");
 await getJson("/api/suppressions");
 await getJson("/api/settings");
+await getJson("/api/env-check");
 
 console.log("smoke ok");
