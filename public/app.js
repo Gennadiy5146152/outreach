@@ -5,6 +5,8 @@ const state = {
   queue: [],
   suppressions: [],
   warmup: null,
+  dashboard: null,
+  settings: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -65,6 +67,7 @@ function switchView(view) {
   $$("nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   $("#title").textContent = {
     dashboard: "Обзор",
+    start: "Старт",
     leads: "База",
     mailboxes: "Почта",
     campaigns: "Кампании",
@@ -84,6 +87,7 @@ async function loadHealth() {
 
 async function loadDashboard() {
   const data = await api("/api/dashboard");
+  state.dashboard = data;
   const metrics = [
     ["Лидов", data.leads.total],
     ["Valid", data.leads.valid],
@@ -103,6 +107,7 @@ async function loadDashboard() {
     <p>Ответы: <strong>${data.replies.total}</strong></p>
     <p>Положительные: <strong>${data.replies.positive}</strong></p>
   `;
+  renderSetupChecklist();
 }
 
 async function loadLeads() {
@@ -146,6 +151,7 @@ async function loadMailboxes() {
     `,
     )
     .join("");
+  renderSetupChecklist();
 }
 
 async function loadCampaigns() {
@@ -170,6 +176,82 @@ async function loadCampaigns() {
       `,
     )
     .join("");
+  renderSetupChecklist();
+}
+
+function stepCard({ done, title, text, action, view }) {
+  return `
+    <article class="setup-step ${done ? "done" : ""}">
+      <div class="setup-status">${done ? "Готово" : "Нужно"}</div>
+      <div>
+        <strong>${esc(title)}</strong>
+        <p>${esc(text)}</p>
+      </div>
+      <button data-go="${view}">${esc(action)}</button>
+    </article>
+  `;
+}
+
+function renderSetupChecklist() {
+  const dashboard = state.dashboard;
+  if (!dashboard || !$("#setupChecklist")) return;
+  const verifiedMailboxes = state.mailboxes.filter((mailbox) => mailbox.smtp_verified_at && mailbox.imap_verified_at);
+  const warmupEnabled = state.mailboxes.filter((mailbox) => mailbox.warmup_enabled).length;
+  const campaignsWithSteps = state.campaigns.filter((campaign) => campaign.steps.length > 0);
+  const queuedOrSent = Number(dashboard.queue.pending || 0) + Number(dashboard.queue.sent || 0);
+
+  const steps = [
+    {
+      done: state.settings?.runtime?.dryRun === true,
+      title: "Безопасный режим включен",
+      text: state.settings?.runtime?.dryRun
+        ? "Сейчас можно тестировать сценарий: письма не уйдут наружу."
+        : "Dry-run выключен: действия в очереди могут реально отправлять письма.",
+      action: "Открыть настройки",
+      view: "settings",
+    },
+    {
+      done: verifiedMailboxes.length >= 2,
+      title: "Подключить 2 mailbox",
+      text: `Проверено SMTP/IMAP: ${verifiedMailboxes.length}. Для старта нужно 2 ящика.`,
+      action: "Перейти в Почту",
+      view: "mailboxes",
+    },
+    {
+      done: warmupEnabled >= 2,
+      title: "Включить прогрев",
+      text: `Mailbox с прогревом: ${warmupEnabled}. Прогрев работает только между твоими ящиками.`,
+      action: "Перейти в Прогрев",
+      view: "warmup",
+    },
+    {
+      done: Number(dashboard.leads.valid || 0) + Number(dashboard.leads.risky || 0) > 0,
+      title: "Добавить и проверить базу",
+      text: `Лидов: ${dashboard.leads.total}. Valid/risky: ${Number(dashboard.leads.valid || 0) + Number(dashboard.leads.risky || 0)}.`,
+      action: "Перейти в Базу",
+      view: "leads",
+    },
+    {
+      done: campaignsWithSteps.length > 0,
+      title: "Создать кампанию и письмо",
+      text: `Кампаний с шагами: ${campaignsWithSteps.length}. Нужен хотя бы один шаг письма.`,
+      action: "Перейти в Кампании",
+      view: "campaigns",
+    },
+    {
+      done: queuedOrSent > 0,
+      title: "Запустить тест или очередь",
+      text: `В очереди/отправлено: ${queuedOrSent}. Сначала запускай режим Тест.`,
+      action: "Перейти в Очередь",
+      view: "queue",
+    },
+  ];
+
+  const next = steps.find((step) => !step.done);
+  $("#setupChecklist").innerHTML = `
+    ${next ? `<div class="next-action"><strong>Следующий шаг:</strong> ${esc(next.title)} <button data-go="${next.view}">${esc(next.action)}</button></div>` : `<div class="next-action success"><strong>Базовая настройка готова.</strong> Можно тестировать кампанию и смотреть метрики.</div>`}
+    <div class="setup-list">${steps.map(stepCard).join("")}</div>
+  `;
 }
 
 function renderAttachments() {
@@ -291,6 +373,7 @@ async function loadSuppressions() {
 
 async function loadSettings() {
   const settings = await api("/api/settings");
+  state.settings = settings;
   $("#settingsPanel").innerHTML = `
     <div class="cards">
       <article class="card"><strong>Dry-run</strong><p>${settings.runtime.dryRun ? "включен" : "выключен"}</p></article>
@@ -298,6 +381,7 @@ async function loadSettings() {
       <article class="card"><strong>Вложения</strong><p>${esc(settings.runtime.attachmentDir)} · максимум ${settings.runtime.maxAttachmentMb} МБ</p></article>
     </div>
   `;
+  renderSetupChecklist();
 }
 
 async function loadEvents() {
@@ -329,6 +413,11 @@ async function refresh() {
 $$("nav button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
 $("#refreshBtn").addEventListener("click", () => refresh().then(() => toast("Обновлено")));
 $("#leadSearch").addEventListener("input", () => loadLeads());
+
+document.body.addEventListener("click", (event) => {
+  const go = event.target.dataset.go;
+  if (go) switchView(go);
+});
 
 $("#leadsTable").addEventListener("click", async (event) => {
   const row = event.target.closest("tr[data-lead-id]");
@@ -397,10 +486,12 @@ $("#validateBtn").addEventListener("click", async () => {
 
 $("#mailboxForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const payload = formJson(event.target);
+  payload.warmup_enabled = event.target.elements.warmup_enabled.checked;
   await api("/api/mailboxes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(formJson(event.target)),
+    body: JSON.stringify(payload),
   });
   event.target.reset();
   await refresh();
@@ -409,10 +500,13 @@ $("#mailboxForm").addEventListener("submit", async (event) => {
 
 $("#campaignForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const payload = formJson(event.target);
+  payload.tracking_enabled = event.target.elements.tracking_enabled.checked;
+  payload.manual_approval_required = event.target.elements.manual_approval_required.checked;
   await api("/api/campaigns", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(formJson(event.target)),
+    body: JSON.stringify(payload),
   });
   event.target.reset();
   await refresh();

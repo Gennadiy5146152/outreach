@@ -13,7 +13,8 @@
         <span>Локальный B2B-аутрич</span>
       </div>
       <nav>
-        <button class="active" data-view="dashboard">Обзор</button>
+        <button class="active" data-view="start">Старт</button>
+        <button data-view="dashboard">Обзор</button>
         <button data-view="leads">База</button>
         <button data-view="mailboxes">Почта</button>
         <button data-view="campaigns">Кампании</button>
@@ -31,7 +32,7 @@
       <header>
         <div>
           <p class="eyebrow">Первый этап</p>
-          <h1 id="title">Обзор</h1>
+          <h1 id="title">Старт</h1>
         </div>
         <div class="header-actions">
           <button id="refreshBtn">Обновить</button>
@@ -39,7 +40,47 @@
         </div>
       </header>
 
-      <section class="view active" id="dashboardView">
+      <section class="view active" id="startView">
+        <section class="panel start-panel">
+          <div class="panel-head">
+            <div>
+              <h2>С чего начать</h2>
+              <p class="muted">Иди сверху вниз. Пока включен dry-run, реальные письма не уходят.</p>
+            </div>
+            <button data-go="settings">Проверить режим</button>
+          </div>
+          <div id="setupChecklist" class="checklist"></div>
+        </section>
+
+        <div class="grid two">
+          <section class="panel">
+            <h2>Рабочий маршрут</h2>
+            <div class="workflow">
+              <button data-go="mailboxes">1. Подключить 2 почты</button>
+              <button data-go="warmup">2. Включить прогрев</button>
+              <button data-go="leads">3. Добавить базу и валидировать</button>
+              <button data-go="campaigns">4. Создать кампанию и тест</button>
+              <button data-go="queue">5. Следить за отправкой</button>
+              <button data-go="inbox">6. Смотреть ответы</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Зачем разделы</h2>
+            <div class="section-map">
+              <p><strong>Почта</strong> — подключение SMTP/IMAP, проверка домена и доступов.</p>
+              <p><strong>Прогрев</strong> — письма между твоими ящиками, чтобы проверить отправку и входящие.</p>
+              <p><strong>База</strong> — лиды, CSV, валидация email.</p>
+              <p><strong>Кампании</strong> — шаблоны, вложения, preflight, тест/старт.</p>
+              <p><strong>Очередь</strong> — прогресс, ETA, countdown, ошибки отправки.</p>
+              <p><strong>Входящие</strong> — IMAP-ответы и классификация.</p>
+              <p><strong>Стоп-лист</strong> — кому больше не писать.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="dashboardView">
         <div class="metrics" id="metrics"></div>
         <div class="grid two">
           <section class="panel">
