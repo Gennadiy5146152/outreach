@@ -1,0 +1,64 @@
+name: outreach-desk
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-outreach}
+      POSTGRES_USER: ${POSTGRES_USER:-outreach}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-outreach}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-outreach} -d ${POSTGRES_DB:-outreach}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "test -d node_modules || npm install; node src/db/migrate.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "test -d node_modules || npm install; node src/server.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - .:/app
+      - ./storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "test -d node_modules || npm install; node src/worker/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+    volumes:
+      - .:/app
+      - ./storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

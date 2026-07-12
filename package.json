@@ -1,0 +1,22 @@
+{
+  "name": "outreach-desk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.js",
+    "worker": "node src/worker/index.js",
+    "migrate": "node src/db/migrate.js",
+    "check": "node --check src/server.js && node --check src/worker/index.js && node --check src/services/mail.js && node --check public/app.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "imapflow": "^1.0.184",
+    "mailparser": "^3.7.2",
+    "multer": "^2.0.2",
+    "nodemailer": "^9.0.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {}
+}

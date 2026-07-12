@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Outreach Desk</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>Outreach Desk</strong>
+        <span>Локальный B2B-аутрич</span>
+      </div>
+      <nav>
+        <button class="active" data-view="dashboard">Обзор</button>
+        <button data-view="leads">База</button>
+        <button data-view="mailboxes">Почта</button>
+        <button data-view="campaigns">Кампании</button>
+        <button data-view="queue">Очередь</button>
+        <button data-view="inbox">Входящие</button>
+        <button data-view="events">События</button>
+      </nav>
+      <div class="health" id="health">Проверка...</div>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Первый этап</p>
+          <h1 id="title">Обзор</h1>
+        </div>
+        <div class="header-actions">
+          <button id="refreshBtn">Обновить</button>
+          <a class="button" href="/api/export/leads.csv">CSV лидов</a>
+        </div>
+      </header>
+
+      <section class="view active" id="dashboardView">
+        <div class="metrics" id="metrics"></div>
+        <div class="grid two">
+          <section class="panel">
+            <h2>Очередь отправки</h2>
+            <div id="queueSummary"></div>
+          </section>
+          <section class="panel">
+            <h2>KPI</h2>
+            <div id="kpi"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="leadsView">
+        <div class="grid two">
+          <section class="panel">
+            <h2>Новый лид</h2>
+            <form id="leadForm" class="form">
+              <input name="company" placeholder="Компания" required />
+              <input name="contact_name" placeholder="Контакт" />
+              <input name="position" placeholder="Должность" />
+              <input name="email" type="email" placeholder="Email" required />
+              <input name="website" placeholder="Сайт" />
+              <input name="segment" placeholder="Сегмент" />
+              <input name="city" placeholder="Город" />
+              <input name="pain" placeholder="Боль/триггер" />
+              <textarea name="notes" placeholder="Заметки"></textarea>
+              <button>Добавить</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Импорт и валидация</h2>
+            <form id="importForm" class="form">
+              <input name="file" type="file" accept=".csv,text/csv" required />
+              <button>Импорт CSV</button>
+            </form>
+            <button id="validateBtn">Запустить валидацию</button>
+          </section>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>База</h2>
+            <input id="leadSearch" placeholder="Поиск" />
+          </div>
+          <div class="table-wrap"><table id="leadsTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="mailboxesView">
+        <div class="grid two">
+          <section class="panel">
+            <h2>Подключить mailbox</h2>
+            <form id="mailboxForm" class="form">
+              <input name="name" placeholder="Название" required />
+              <input name="from_name" placeholder="Имя отправителя" />
+              <input name="email" type="email" placeholder="Email" required />
+              <select name="provider">
+                <option value="yandex">Яндекс</option>
+                <option value="custom">Корпоративный SMTP/IMAP</option>
+              </select>
+              <input name="smtp_host" placeholder="SMTP host" value="smtp.yandex.ru" required />
+              <input name="smtp_port" type="number" value="465" required />
+              <input name="imap_host" placeholder="IMAP host" value="imap.yandex.ru" required />
+              <input name="imap_port" type="number" value="993" required />
+              <input name="username" placeholder="Логин" />
+              <input name="password_env_key" placeholder="ENV ключ пароля, например MAILBOX_1_PASSWORD" required />
+              <input name="min_delay_minutes" type="number" value="7" />
+              <input name="max_delay_minutes" type="number" value="18" />
+              <input name="send_window_start" type="time" value="09:00" />
+              <input name="send_window_end" type="time" value="18:00" />
+              <label class="check"><input name="warmup_enabled" type="checkbox" /> Прогрев включен</label>
+              <button>Сохранить mailbox</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Почтовые ящики</h2>
+            <div id="mailboxList" class="cards"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="campaignsView">
+        <div class="grid two">
+          <section class="panel">
+            <h2>Кампания</h2>
+            <form id="campaignForm" class="form">
+              <input name="name" placeholder="Название" required />
+              <input name="segment" placeholder="Сегмент" />
+              <textarea name="description" placeholder="Описание"></textarea>
+              <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Open tracking</label>
+              <label class="check"><input name="manual_approval_required" type="checkbox" checked /> Ручное подтверждение пачки</label>
+              <button>Создать кампанию</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Шаг письма</h2>
+            <form id="stepForm" class="form">
+              <select name="campaign_id" id="stepCampaign"></select>
+              <input name="name" placeholder="Название шага" required />
+              <input name="delay_days" type="number" value="0" />
+              <input name="subject_template" placeholder="Тема" required />
+              <textarea name="body_template_text" placeholder="Plain text"></textarea>
+              <div class="editor" id="htmlEditor" contenteditable="true">Здравствуйте, {{contact}}.<br><br>Хочу обсудить {{company}} и {{pain}}.</div>
+              <button>Добавить шаг</button>
+            </form>
+          </section>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Кампании</h2>
+            <div>
+              <button id="enrollBtn">Добавить всех valid лидов</button>
+              <button id="preflightBtn">Preflight</button>
+              <button id="startManualBtn">Старт manual</button>
+              <button id="startAutoBtn">Старт auto</button>
+              <button id="startTestBtn">Тест</button>
+            </div>
+          </div>
+          <select id="activeCampaign"></select>
+          <pre id="preflightResult" class="log"></pre>
+          <div id="campaignList" class="cards"></div>
+        </section>
+      </section>
+
+      <section class="view" id="queueView">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Очередь</h2>
+            <button id="approveAllBtn">Подтвердить pending</button>
+          </div>
+          <div id="sendProgress"></div>
+          <div class="table-wrap"><table id="queueTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="inboxView">
+        <section class="panel">
+          <h2>Входящие</h2>
+          <div id="inboxList" class="inbox"></div>
+        </section>
+      </section>
+
+      <section class="view" id="eventsView">
+        <section class="panel">
+          <h2>Event log</h2>
+          <div class="table-wrap"><table id="eventsTable"></table></div>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

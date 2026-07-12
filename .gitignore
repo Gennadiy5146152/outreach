@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+.env
+.DS_Store
+storage/attachments/*
+!storage/attachments/.gitkeep
+*.log
+backup.sql
