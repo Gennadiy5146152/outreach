@@ -186,6 +186,11 @@ h2 {
   gap: 10px;
 }
 
+.form.inline {
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  align-items: center;
+}
+
 input,
 select,
 textarea,
@@ -243,6 +248,14 @@ table {
   width: 100%;
   border-collapse: collapse;
   min-width: 780px;
+}
+
+tbody tr {
+  cursor: pointer;
+}
+
+tbody tr:hover {
+  background: #f7faf8;
 }
 
 th,
@@ -333,6 +346,27 @@ pre {
   opacity: 1;
 }
 
+dialog {
+  width: min(980px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+dialog::backdrop {
+  background: rgba(10, 20, 16, 0.45);
+}
+
+.dialog-card {
+  overflow: auto;
+  max-height: calc(100vh - 32px);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 @media (max-width: 980px) {
   body {
     grid-template-columns: 1fr;
@@ -349,7 +383,8 @@ pre {
   }
 
   .grid.two,
-  .metrics {
+  .metrics,
+  .form.inline {
     grid-template-columns: 1fr;
   }
 }

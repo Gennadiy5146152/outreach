@@ -10,7 +10,7 @@ import { checkSendingDomain } from "./services/domain-check.js";
 import { verifyImap, verifySmtp } from "./services/mail.js";
 import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
-import { asyncHandler, emailDomain, parseArray, toBool } from "./http/utils.js";
+import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
 
@@ -27,7 +27,39 @@ app.use(express.static("public"));
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const db = await query("SELECT now() AS now");
-  res.json({ ok: true, now: db.rows[0].now, dryRun: env.mailDryRun });
+  res.json({
+    ok: true,
+    now: db.rows[0].now,
+    dryRun: env.mailDryRun,
+    publicTrackingUrl: env.publicTrackingUrl,
+    maxAttachmentMb: env.maxAttachmentMb,
+  });
+}));
+
+app.get("/api/settings", asyncHandler(async (_req, res) => {
+  const settings = (await query("SELECT key, value FROM settings ORDER BY key")).rows;
+  res.json({
+    runtime: {
+      dryRun: env.mailDryRun,
+      publicTrackingUrl: env.publicTrackingUrl,
+      attachmentDir: env.attachmentDir,
+      maxAttachmentMb: env.maxAttachmentMb,
+    },
+    settings: Object.fromEntries(settings.map((item) => [item.key, item.value])),
+  });
+}));
+
+app.put("/api/settings/:key", asyncHandler(async (req, res) => {
+  const result = await query(
+    `
+      INSERT INTO settings(key, value, updated_at)
+      VALUES ($1, $2, now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+      RETURNING *
+    `,
+    [req.params.key, req.body.value || {}],
+  );
+  res.json(result.rows[0]);
 }));
 
 app.get("/api/dashboard", asyncHandler(async (_req, res) => {
@@ -99,6 +131,47 @@ app.get("/api/leads", asyncHandler(async (req, res) => {
     [search, status, validation],
   );
   res.json(result.rows);
+}));
+
+app.get("/api/leads/:id/detail", asyncHandler(async (req, res) => {
+  const lead = (await query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "not_found" });
+  const [messages, events, enrollments, validations, opens] = await Promise.all([
+    query(
+      `
+        SELECT msg.*, c.name AS campaign_name, m.email AS mailbox_email, s.name AS step_name
+        FROM messages msg
+        LEFT JOIN campaigns c ON c.id = msg.campaign_id
+        LEFT JOIN mailboxes m ON m.id = msg.mailbox_id
+        LEFT JOIN campaign_steps s ON s.id = msg.campaign_step_id
+        WHERE msg.lead_id = $1
+        ORDER BY COALESCE(msg.sent_at, msg.received_at, msg.created_at) DESC
+      `,
+      [req.params.id],
+    ),
+    query("SELECT * FROM events WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 200", [req.params.id]),
+    query(
+      `
+        SELECT e.*, c.name AS campaign_name, m.email AS mailbox_email
+        FROM enrollments e
+        LEFT JOIN campaigns c ON c.id = e.campaign_id
+        LEFT JOIN mailboxes m ON m.id = e.mailbox_id
+        WHERE e.lead_id = $1
+        ORDER BY e.started_at DESC
+      `,
+      [req.params.id],
+    ),
+    query("SELECT * FROM email_validation_results WHERE lead_id = $1 ORDER BY checked_at DESC", [req.params.id]),
+    query("SELECT * FROM open_events WHERE lead_id = $1 ORDER BY created_at DESC", [req.params.id]),
+  ]);
+  res.json({
+    lead,
+    messages: messages.rows,
+    events: events.rows,
+    enrollments: enrollments.rows,
+    validations: validations.rows,
+    opens: opens.rows,
+  });
 }));
 
 app.post("/api/leads", asyncHandler(async (req, res) => {
@@ -244,6 +317,35 @@ app.get("/api/mailboxes", asyncHandler(async (_req, res) => {
   res.json(result.rows);
 }));
 
+app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
+  const result = await query(
+    `
+      UPDATE mailboxes
+      SET is_active = COALESCE($2, is_active),
+          warmup_enabled = COALESCE($3, warmup_enabled),
+          daily_warmup_limit = COALESCE($4, daily_warmup_limit),
+          min_delay_minutes = COALESCE($5, min_delay_minutes),
+          max_delay_minutes = COALESCE($6, max_delay_minutes),
+          send_window_start = COALESCE($7, send_window_start),
+          send_window_end = COALESCE($8, send_window_end),
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      req.params.id,
+      req.body.is_active === undefined ? null : toBool(req.body.is_active),
+      req.body.warmup_enabled === undefined ? null : toBool(req.body.warmup_enabled),
+      req.body.daily_warmup_limit ? Number(req.body.daily_warmup_limit) : null,
+      req.body.min_delay_minutes ? Number(req.body.min_delay_minutes) : null,
+      req.body.max_delay_minutes ? Number(req.body.max_delay_minutes) : null,
+      req.body.send_window_start || null,
+      req.body.send_window_end || null,
+    ],
+  );
+  res.json(result.rows[0]);
+}));
+
 app.post("/api/mailboxes", asyncHandler(async (req, res) => {
   const result = await query(
     `
@@ -302,10 +404,58 @@ app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
   res.json({ smtp, imap, domain });
 }));
 
+app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {
+  await query("INSERT INTO job_queue(job_type, payload) VALUES ('sync_inbox', $1)", [{ mailboxId: req.params.id }]);
+  res.json({ queued: true });
+}));
+
+app.get("/api/suppressions", asyncHandler(async (_req, res) => {
+  const result = await query("SELECT * FROM suppressions ORDER BY created_at DESC LIMIT 500");
+  res.json(result.rows);
+}));
+
+app.post("/api/suppressions", asyncHandler(async (req, res) => {
+  const email = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
+  const domain = req.body.domain ? String(req.body.domain).trim().toLowerCase() : email?.split("@")[1] || null;
+  const result = await query(
+    `
+      INSERT INTO suppressions(email, domain, reason, source)
+      VALUES ($1,$2,$3,$4)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `,
+    [email, domain, req.body.reason || "manual", req.body.source || "manual"],
+  );
+  if (email) {
+    await query(
+      "UPDATE leads SET status = 'suppressed', suppressed_at = now(), suppression_reason = $2 WHERE lower(email) = $1",
+      [email, req.body.reason || "manual"],
+    );
+  }
+  if (domain) {
+    await query(
+      "UPDATE leads SET status = 'suppressed', suppressed_at = now(), suppression_reason = $2 WHERE lower(domain) = $1",
+      [domain, req.body.reason || "manual"],
+    );
+  }
+  res.status(201).json(result.rows[0] || { email, domain, reason: req.body.reason || "manual" });
+}));
+
+app.delete("/api/suppressions/:id", asyncHandler(async (req, res) => {
+  await query("DELETE FROM suppressions WHERE id = $1", [req.params.id]);
+  res.json({ deleted: true });
+}));
+
 app.get("/api/campaigns", asyncHandler(async (_req, res) => {
   const campaigns = (await query("SELECT * FROM campaigns ORDER BY created_at DESC")).rows;
   const steps = (await query("SELECT * FROM campaign_steps ORDER BY campaign_id, position")).rows;
-  res.json(campaigns.map((campaign) => ({ ...campaign, steps: steps.filter((step) => step.campaign_id === campaign.id) })));
+  const attachments = (await query("SELECT * FROM attachments WHERE campaign_step_id IS NOT NULL ORDER BY created_at")).rows;
+  res.json(campaigns.map((campaign) => ({
+    ...campaign,
+    steps: steps
+      .filter((step) => step.campaign_id === campaign.id)
+      .map((step) => ({ ...step, attachments: attachments.filter((item) => item.campaign_step_id === step.id) })),
+  })));
 }));
 
 app.post("/api/campaigns", asyncHandler(async (req, res) => {
@@ -366,6 +516,17 @@ app.post("/api/steps/:id/attachments", attachmentUpload.single("file"), asyncHan
     [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path)],
   );
   res.status(201).json(result.rows[0]);
+}));
+
+app.get("/api/steps/:id/attachments", asyncHandler(async (req, res) => {
+  const result = await query("SELECT * FROM attachments WHERE campaign_step_id = $1 ORDER BY created_at DESC", [req.params.id]);
+  res.json(result.rows);
+}));
+
+app.delete("/api/attachments/:id", asyncHandler(async (req, res) => {
+  const attachment = (await query("DELETE FROM attachments WHERE id = $1 RETURNING *", [req.params.id])).rows[0];
+  if (attachment?.storage_path) await fs.unlink(attachment.storage_path).catch(() => {});
+  res.json({ deleted: Boolean(attachment) });
 }));
 
 app.post("/api/campaigns/:id/enroll", asyncHandler(async (req, res) => {
@@ -448,6 +609,29 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
   res.json(result.rows);
 }));
 
+app.get("/api/sending/progress", asyncHandler(async (_req, res) => {
+  const result = await query(`
+    SELECT
+      count(*)::int AS total,
+      count(*) FILTER (WHERE status = 'sent')::int AS sent,
+      count(*) FILTER (WHERE status = 'failed')::int AS failed,
+      count(*) FILTER (WHERE status IN ('pending','retrying','running'))::int AS active,
+      min(scheduled_at) FILTER (WHERE status IN ('pending','retrying')) AS next_scheduled_at,
+      avg(EXTRACT(EPOCH FROM (scheduled_at - lag_scheduled_at)) / 60.0) FILTER (WHERE lag_scheduled_at IS NOT NULL) AS avg_gap_minutes
+    FROM (
+      SELECT q.*, lag(scheduled_at) OVER (ORDER BY scheduled_at) AS lag_scheduled_at
+      FROM sending_queue q
+    ) q
+  `);
+  const row = result.rows[0];
+  const avgGap = Math.max(Number(row.avg_gap_minutes || 12), 7);
+  res.json({
+    ...row,
+    percent: row.total ? Math.round((row.sent / row.total) * 100) : 0,
+    etaMinutes: Math.round(Number(row.active || 0) * avgGap),
+  });
+}));
+
 app.get("/api/inbox", asyncHandler(async (_req, res) => {
   const result = await query(`
     SELECT msg.*, l.company, l.email AS lead_email, m.email AS mailbox_email
@@ -459,6 +643,17 @@ app.get("/api/inbox", asyncHandler(async (_req, res) => {
     LIMIT 200
   `);
   res.json(result.rows);
+}));
+
+app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {
+  const result = await query(`
+    INSERT INTO job_queue(job_type, payload)
+    SELECT 'sync_inbox', jsonb_build_object('mailboxId', id)
+    FROM mailboxes
+    WHERE is_active = true
+    RETURNING id
+  `);
+  res.json({ queued: result.rowCount });
 }));
 
 app.patch("/api/inbox/:id/classification", asyncHandler(async (req, res) => {
@@ -478,6 +673,27 @@ app.patch("/api/inbox/:id/classification", asyncHandler(async (req, res) => {
 app.get("/api/events", asyncHandler(async (_req, res) => {
   const result = await query("SELECT * FROM events ORDER BY created_at DESC LIMIT 200");
   res.json(result.rows);
+}));
+
+app.get("/api/warmup", asyncHandler(async (_req, res) => {
+  const [mailboxes, stats, events] = await Promise.all([
+    query("SELECT id, name, email, warmup_enabled, daily_warmup_limit, health_status FROM mailboxes ORDER BY created_at DESC"),
+    query(`
+      SELECT
+        count(*) FILTER (WHERE event_type = 'warmup_sent')::int AS sent,
+        count(*) FILTER (WHERE event_type = 'warmup_reply_received')::int AS replies,
+        count(*) FILTER (WHERE event_type = 'mailbox_error')::int AS errors
+      FROM events
+      WHERE created_at > now() - interval '30 days'
+    `),
+    query("SELECT * FROM events WHERE event_type LIKE 'warmup_%' ORDER BY created_at DESC LIMIT 100"),
+  ]);
+  res.json({ mailboxes: mailboxes.rows, stats: stats.rows[0], events: events.rows });
+}));
+
+app.post("/api/warmup/send-now", asyncHandler(async (_req, res) => {
+  await query("INSERT INTO job_queue(job_type, payload) VALUES ('warmup_send', '{}'::jsonb)");
+  res.json({ queued: true });
 }));
 
 app.get("/api/export/leads.csv", asyncHandler(async (_req, res) => {

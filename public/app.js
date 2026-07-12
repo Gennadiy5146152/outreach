@@ -3,6 +3,8 @@ const state = {
   mailboxes: [],
   leads: [],
   queue: [],
+  suppressions: [],
+  warmup: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -28,9 +30,28 @@ function toast(message) {
   toast.timer = setTimeout(() => node.classList.remove("show"), 2500);
 }
 
+function esc(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function fmtDate(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("ru-RU");
+}
+
+function fmtCountdown(value) {
+  if (!value) return "";
+  const diff = new Date(value).getTime() - Date.now();
+  if (diff <= 0) return "сейчас";
+  const totalSeconds = Math.ceil(diff / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes} мин ${String(seconds).padStart(2, "0")} сек`;
 }
 
 function pill(value) {
@@ -49,13 +70,16 @@ function switchView(view) {
     campaigns: "Кампании",
     queue: "Очередь",
     inbox: "Входящие",
+    warmup: "Прогрев",
+    suppression: "Стоп-лист",
     events: "События",
+    settings: "Настройки",
   }[view];
 }
 
 async function loadHealth() {
   const health = await api("/api/health");
-  $("#health").textContent = `OK · dry-run: ${health.dryRun ? "да" : "нет"}`;
+  $("#health").textContent = `OK · dry-run: ${health.dryRun ? "да" : "нет"} · tracking: ${health.publicTrackingUrl ? "on" : "off"}`;
 }
 
 async function loadDashboard() {
@@ -90,13 +114,13 @@ async function loadLeads() {
       ${state.leads
         .map(
           (lead) => `
-            <tr>
-              <td><strong>${lead.company}</strong><br><span class="muted">${lead.contact_name || ""}</span></td>
-              <td>${lead.email}</td>
-              <td>${lead.segment || ""}</td>
+            <tr data-lead-id="${lead.id}">
+              <td><strong>${esc(lead.company)}</strong><br><span class="muted">${esc(lead.contact_name || "")}</span></td>
+              <td>${esc(lead.email)}</td>
+              <td>${esc(lead.segment || "")}</td>
               <td>${pill(lead.status)}</td>
-              <td>${pill(lead.validation_status)}<br><span class="muted">${lead.validation_reason || ""}</span></td>
-              <td>${lead.source || ""}</td>
+              <td>${pill(lead.validation_status)}<br><span class="muted">${esc(lead.validation_reason || "")}</span></td>
+              <td>${esc(lead.source || "")}</td>
             </tr>
           `,
         )
@@ -111,11 +135,13 @@ async function loadMailboxes() {
     .map(
       (mailbox) => `
       <article class="card">
-        <strong>${mailbox.name}</strong>
-        <p>${mailbox.email} · ${mailbox.provider}</p>
+        <strong>${esc(mailbox.name)}</strong>
+        <p>${esc(mailbox.email)} · ${esc(mailbox.provider)}</p>
         <p>SMTP: ${mailbox.smtp_verified_at ? "ok" : "нет"} · IMAP: ${mailbox.imap_verified_at ? "ok" : "нет"}</p>
         <p>MX/SPF/DKIM/DMARC: ${mailbox.mx_status || "-"} / ${mailbox.spf_status || "-"} / ${mailbox.dkim_status || "-"} / ${mailbox.dmarc_status || "-"}</p>
         <button data-check-mailbox="${mailbox.id}">Проверить</button>
+        <button data-sync-mailbox="${mailbox.id}">Sync IMAP</button>
+        <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить прогрев" : "Включить прогрев"}</button>
       </article>
     `,
     )
@@ -127,33 +153,53 @@ async function loadCampaigns() {
   const options = state.campaigns.map((campaign) => `<option value="${campaign.id}">${campaign.name}</option>`).join("");
   $("#stepCampaign").innerHTML = options;
   $("#activeCampaign").innerHTML = options;
+  $("#attachmentStep").innerHTML = state.campaigns
+    .flatMap((campaign) => campaign.steps.map((step) => ({ ...step, campaignName: campaign.name })))
+    .map((step) => `<option value="${step.id}">${esc(step.campaignName)} / ${esc(step.name)}</option>`)
+    .join("");
+  renderAttachments();
   $("#campaignList").innerHTML = state.campaigns
     .map(
       (campaign) => `
         <article class="card">
-          <strong>${campaign.name}</strong> ${pill(campaign.status)}
-          <p>${campaign.description || ""}</p>
+          <strong>${esc(campaign.name)}</strong> ${pill(campaign.status)}
+          <p>${esc(campaign.description || "")}</p>
           <p>Шаги: ${campaign.steps.length} · tracking: ${campaign.tracking_enabled ? "on" : "off"} · manual: ${campaign.manual_approval_required ? "да" : "нет"}</p>
-          <ol>${campaign.steps.map((step) => `<li>${step.name}: ${step.subject_template}</li>`).join("")}</ol>
+          <ol>${campaign.steps.map((step) => `<li>${esc(step.name)}: ${esc(step.subject_template)} (${step.attachments?.length || 0} влож.)</li>`).join("")}</ol>
         </article>
       `,
     )
     .join("");
 }
 
+function renderAttachments() {
+  const steps = state.campaigns.flatMap((campaign) => campaign.steps.map((step) => ({ ...step, campaignName: campaign.name })));
+  const cards = steps.flatMap((step) => (step.attachments || []).map((attachment) => ({ ...attachment, stepName: step.name, campaignName: step.campaignName })));
+  $("#attachmentList").innerHTML = cards.length
+    ? cards
+        .map(
+          (item) => `
+            <article class="card">
+              <strong>${esc(item.file_name)}</strong>
+              <p>${esc(item.campaignName)} / ${esc(item.stepName)} · ${Math.round(Number(item.size_bytes || 0) / 1024)} KB</p>
+              <button data-delete-attachment="${item.id}">Удалить</button>
+            </article>
+          `,
+        )
+        .join("")
+    : `<p class="muted">Вложений пока нет.</p>`;
+}
+
 async function loadQueue() {
-  state.queue = await api("/api/sending");
+  const [queue, progress] = await Promise.all([api("/api/sending"), api("/api/sending/progress")]);
+  state.queue = queue;
   const total = state.queue.length;
-  const sent = state.queue.filter((item) => item.status === "sent").length;
-  const failed = state.queue.filter((item) => item.status === "failed").length;
   const next = state.queue.find((item) => ["pending", "retrying"].includes(item.status));
-  const percent = total ? Math.round((sent / total) * 100) : 0;
-  const etaMinutes = state.queue.filter((item) => ["pending", "retrying"].includes(item.status)).length * 12;
   $("#sendProgress").innerHTML = `
     <div class="progress">
-      <div class="bar"><span style="width:${percent}%"></span></div>
-      <div>Прогресс: ${sent}/${total}. Ошибок: ${failed}. ETA: ~${etaMinutes} мин. ${
-        next ? `До следующего: ${fmtDate(next.scheduled_at)}` : ""
+      <div class="bar"><span style="width:${progress.percent}%"></span></div>
+      <div>Прогресс: ${progress.sent}/${progress.total}. Ошибок: ${progress.failed}. ETA: ~${progress.etaMinutes} мин. ${
+        next ? `До следующего письма: ${fmtCountdown(next.scheduled_at)} (${fmtDate(next.scheduled_at)})` : ""
       }</div>
     </div>
   `;
@@ -165,12 +211,12 @@ async function loadQueue() {
           (item) => `
             <tr>
               <td>${fmtDate(item.scheduled_at)}</td>
-              <td>${item.campaign_name}</td>
-              <td>${item.company}<br><span class="muted">${item.email}</span></td>
-              <td>${item.mailbox_email || ""}</td>
-              <td>${item.step_name || ""}</td>
+              <td>${esc(item.campaign_name)}</td>
+              <td>${esc(item.company)}<br><span class="muted">${esc(item.email)}</span></td>
+              <td>${esc(item.mailbox_email || "")}</td>
+              <td>${esc(item.step_name || "")}</td>
               <td>${pill(item.status)} ${item.requires_approval && !item.approved_at ? pill("approval") : ""}</td>
-              <td>${item.last_error || ""}</td>
+              <td>${esc(item.last_error || "")}</td>
               <td>${item.requires_approval && !item.approved_at ? `<button data-approve="${item.id}">OK</button>` : ""}</td>
             </tr>
           `,
@@ -186,9 +232,9 @@ async function loadInbox() {
     .map(
       (item) => `
         <article class="card">
-          <strong>${item.subject}</strong> ${pill(item.reply_classification || item.type)}
-          <p>${item.company || ""} · ${item.lead_email || ""} · ${fmtDate(item.received_at || item.created_at)}</p>
-          <pre>${(item.body_text || "").slice(0, 2500)}</pre>
+          <strong>${esc(item.subject)}</strong> ${pill(item.reply_classification || item.type)}
+          <p>${esc(item.company || "")} · ${esc(item.lead_email || "")} · ${fmtDate(item.received_at || item.created_at)}</p>
+          <pre>${esc((item.body_text || "").slice(0, 2500))}</pre>
           <select data-classify="${item.id}">
             ${["positive_reply", "neutral_reply", "negative_reply", "auto_reply", "unsubscribe", "not_target", "bounce", "unknown"]
               .map((value) => `<option value="${value}" ${value === item.reply_classification ? "selected" : ""}>${value}</option>`)
@@ -200,23 +246,129 @@ async function loadInbox() {
     .join("");
 }
 
+async function loadWarmup() {
+  state.warmup = await api("/api/warmup");
+  $("#warmupStats").innerHTML = `
+    <p>Отправлено warmup: <strong>${state.warmup.stats.sent}</strong></p>
+    <p>Ответов warmup: <strong>${state.warmup.stats.replies}</strong></p>
+    <p>Ошибок: <strong>${state.warmup.stats.errors}</strong></p>
+  `;
+  $("#warmupMailboxList").innerHTML = state.warmup.mailboxes
+    .map(
+      (mailbox) => `
+        <article class="card">
+          <strong>${esc(mailbox.name)}</strong>
+          <p>${esc(mailbox.email)} · ${pill(mailbox.health_status)} · лимит ${mailbox.daily_warmup_limit}/день</p>
+          <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить" : "Включить"}</button>
+        </article>
+      `,
+    )
+    .join("");
+  $("#warmupEventsTable").innerHTML = `
+    <thead><tr><th>Время</th><th>Тип</th><th>Payload</th></tr></thead>
+    <tbody>${state.warmup.events
+      .map((event) => `<tr><td>${fmtDate(event.created_at)}</td><td>${event.event_type}</td><td><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></td></tr>`)
+      .join("")}</tbody>
+  `;
+}
+
+async function loadSuppressions() {
+  state.suppressions = await api("/api/suppressions");
+  $("#suppressionList").innerHTML = state.suppressions.length
+    ? state.suppressions
+        .map(
+          (item) => `
+            <article class="card">
+              <strong>${esc(item.email || item.domain)}</strong>
+              <p>${esc(item.reason)} · ${esc(item.source)} · ${fmtDate(item.created_at)}</p>
+              <button data-delete-suppression="${item.id}">Удалить</button>
+            </article>
+          `,
+        )
+        .join("")
+    : `<p class="muted">Стоп-лист пуст.</p>`;
+}
+
+async function loadSettings() {
+  const settings = await api("/api/settings");
+  $("#settingsPanel").innerHTML = `
+    <div class="cards">
+      <article class="card"><strong>Dry-run</strong><p>${settings.runtime.dryRun ? "включен" : "выключен"}</p></article>
+      <article class="card"><strong>PUBLIC_TRACKING_URL</strong><p>${esc(settings.runtime.publicTrackingUrl || "не задан")}</p></article>
+      <article class="card"><strong>Вложения</strong><p>${esc(settings.runtime.attachmentDir)} · максимум ${settings.runtime.maxAttachmentMb} МБ</p></article>
+    </div>
+  `;
+}
+
 async function loadEvents() {
   const events = await api("/api/events");
   $("#eventsTable").innerHTML = `
     <thead><tr><th>Время</th><th>Тип</th><th>Payload</th></tr></thead>
     <tbody>
-      ${events.map((event) => `<tr><td>${fmtDate(event.created_at)}</td><td>${event.event_type}</td><td><pre>${JSON.stringify(event.payload, null, 2)}</pre></td></tr>`).join("")}
+      ${events.map((event) => `<tr><td>${fmtDate(event.created_at)}</td><td>${event.event_type}</td><td><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></td></tr>`).join("")}
     </tbody>
   `;
 }
 
 async function refresh() {
-  await Promise.all([loadHealth(), loadDashboard(), loadLeads(), loadMailboxes(), loadCampaigns(), loadQueue(), loadInbox(), loadEvents()]);
+  await Promise.all([
+    loadHealth(),
+    loadDashboard(),
+    loadLeads(),
+    loadMailboxes(),
+    loadCampaigns(),
+    loadQueue(),
+    loadInbox(),
+    loadWarmup(),
+    loadSuppressions(),
+    loadEvents(),
+    loadSettings(),
+  ]);
 }
 
 $$("nav button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
 $("#refreshBtn").addEventListener("click", () => refresh().then(() => toast("Обновлено")));
 $("#leadSearch").addEventListener("input", () => loadLeads());
+
+$("#leadsTable").addEventListener("click", async (event) => {
+  const row = event.target.closest("tr[data-lead-id]");
+  if (!row) return;
+  const detail = await api(`/api/leads/${row.dataset.leadId}/detail`);
+  $("#leadDialogTitle").textContent = `${detail.lead.company} · ${detail.lead.email}`;
+  $("#leadDetail").innerHTML = `
+    <div class="grid two">
+      <section>
+        <h3>Профиль</h3>
+        <p>${pill(detail.lead.status)} ${pill(detail.lead.validation_status)}</p>
+        <p>${esc(detail.lead.contact_name || "")} ${esc(detail.lead.position || "")}</p>
+        <p>${esc(detail.lead.segment || "")} · ${esc(detail.lead.city || "")}</p>
+        <p>${esc(detail.lead.pain || "")}</p>
+      </section>
+      <section>
+        <h3>Открытия</h3>
+        <p>Всего: ${detail.opens.length}</p>
+        <p>Первые: ${detail.opens.filter((item) => item.is_first_open).length}</p>
+      </section>
+    </div>
+    <h3>Переписка</h3>
+    <div class="cards">${detail.messages
+      .map(
+        (msg) => `
+          <article class="card">
+            <strong>${esc(msg.direction)} · ${esc(msg.subject)}</strong> ${pill(msg.status)} ${msg.reply_classification ? pill(msg.reply_classification) : ""}
+            <p>${esc(msg.campaign_name || "")} · ${esc(msg.mailbox_email || "")} · ${fmtDate(msg.sent_at || msg.received_at || msg.created_at)}</p>
+            <pre>${esc((msg.body_text || "").slice(0, 2500))}</pre>
+          </article>
+        `,
+      )
+      .join("")}</div>
+    <h3>События</h3>
+    <div class="cards">${detail.events
+      .map((event) => `<article class="card"><strong>${event.event_type}</strong><p>${fmtDate(event.created_at)}</p><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></article>`)
+      .join("")}</div>
+  `;
+  $("#leadDialog").showModal();
+});
 
 $("#leadForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -280,6 +432,17 @@ $("#stepForm").addEventListener("submit", async (event) => {
   toast("Шаг добавлен");
 });
 
+$("#attachmentForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const stepId = form.get("step_id");
+  form.delete("step_id");
+  await api(`/api/steps/${stepId}/attachments`, { method: "POST", body: form });
+  event.target.reset();
+  await refresh();
+  toast("Вложение добавлено");
+});
+
 $("#enrollBtn").addEventListener("click", async () => {
   const campaignId = $("#activeCampaign").value;
   const leadIds = state.leads.filter((lead) => ["valid", "risky"].includes(lead.validation_status)).map((lead) => lead.id);
@@ -321,7 +484,11 @@ $("#approveAllBtn").addEventListener("click", async () => {
 
 document.body.addEventListener("click", async (event) => {
   const mailboxId = event.target.dataset.checkMailbox;
+  const syncMailboxId = event.target.dataset.syncMailbox;
+  const toggleWarmupId = event.target.dataset.toggleWarmup;
   const approveId = event.target.dataset.approve;
+  const deleteAttachmentId = event.target.dataset.deleteAttachment;
+  const deleteSuppressionId = event.target.dataset.deleteSuppression;
   if (mailboxId) {
     const result = await api(`/api/mailboxes/${mailboxId}/check`, { method: "POST" });
     await refresh();
@@ -331,6 +498,29 @@ document.body.addEventListener("click", async (event) => {
     await api(`/api/sending/${approveId}/approve`, { method: "POST" });
     await refresh();
     toast("Письмо подтверждено");
+  }
+  if (syncMailboxId) {
+    await api(`/api/mailboxes/${syncMailboxId}/sync`, { method: "POST" });
+    toast("IMAP sync поставлен в очередь");
+  }
+  if (toggleWarmupId) {
+    await api(`/api/mailboxes/${toggleWarmupId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ warmup_enabled: event.target.dataset.enabled }),
+    });
+    await refresh();
+    toast("Настройка прогрева обновлена");
+  }
+  if (deleteAttachmentId) {
+    await api(`/api/attachments/${deleteAttachmentId}`, { method: "DELETE" });
+    await refresh();
+    toast("Вложение удалено");
+  }
+  if (deleteSuppressionId) {
+    await api(`/api/suppressions/${deleteSuppressionId}`, { method: "DELETE" });
+    await refresh();
+    toast("Запись удалена");
   }
 });
 
@@ -345,5 +535,30 @@ document.body.addEventListener("change", async (event) => {
   toast("Класс ответа обновлен");
 });
 
+$("#syncInboxBtn").addEventListener("click", async () => {
+  const result = await api("/api/inbox/sync", { method: "POST" });
+  toast(`IMAP sync: ${result.queued} задач`);
+});
+
+$("#warmupNowBtn").addEventListener("click", async () => {
+  await api("/api/warmup/send-now", { method: "POST" });
+  toast("Warmup поставлен в очередь");
+});
+
+$("#suppressionForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await api("/api/suppressions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(formJson(event.target)),
+  });
+  event.target.reset();
+  await refresh();
+  toast("Добавлено в стоп-лист");
+});
+
+$("#closeLeadDialog").addEventListener("click", () => $("#leadDialog").close());
+
 refresh();
 setInterval(loadQueue, 15000);
+setInterval(loadWarmup, 30000);

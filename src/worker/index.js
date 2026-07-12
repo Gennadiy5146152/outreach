@@ -322,6 +322,8 @@ async function syncInbox(mailbox) {
       const subject = parsed.subject || "";
       const bodyText = parsed.text || "";
       const headers = Object.fromEntries([...parsed.headers.entries()].map(([key, value]) => [key, String(value)]));
+      const warmupPeer = await findWarmupPeer(fromEmail);
+      const isWarmup = Boolean(warmupPeer) && /рабочая заметка|warmup/i.test(subject);
       const classification = classifyInbound({ subject, body: bodyText, headers });
       const linked = await findLinkedOutbound(parsed, fromEmail);
 
@@ -336,10 +338,10 @@ async function syncInbox(mailbox) {
           RETURNING *
         `,
         [
-          linked?.lead_id || null,
-          linked?.campaign_id || null,
+          isWarmup ? null : linked?.lead_id || null,
+          isWarmup ? null : linked?.campaign_id || null,
           mailbox.id,
-          classification === "bounce" ? "bounce" : "reply",
+          isWarmup ? "warmup" : classification === "bounce" ? "bounce" : "reply",
           subject,
           bodyText,
           parsed.html || "",
@@ -352,7 +354,11 @@ async function syncInbox(mailbox) {
         ],
       );
 
-      await applyInboundEffects(inserted.rows[0], classification);
+      if (isWarmup) {
+        await handleWarmupInbound(mailbox, warmupPeer, inserted.rows[0], subject);
+      } else {
+        await applyInboundEffects(inserted.rows[0], classification);
+      }
     }
 
     await query(
@@ -367,6 +373,42 @@ async function syncInbox(mailbox) {
   } finally {
     await client.logout().catch(() => {});
   }
+}
+
+async function findWarmupPeer(email) {
+  if (!email) return null;
+  return (await query("SELECT * FROM mailboxes WHERE lower(email) = $1 AND warmup_enabled = true AND is_active = true", [email])).rows[0] || null;
+}
+
+async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
+  await logEvent("warmup_reply_received", {
+    mailboxId: mailbox.id,
+    messageId: message.id,
+    payload: { from: fromMailbox.email, subject },
+  });
+
+  const alreadyReply = /^re:/i.test(subject);
+  if (alreadyReply) return;
+
+  const shouldReply = Math.random() < 0.6;
+  if (!shouldReply) return;
+
+  const replyText = "Добрый день.\n\nПолучил, спасибо. Все в порядке.\n\nХорошего дня.";
+  const info = await sendMail(mailbox, {
+    to: fromMailbox.email,
+    subject: `Re: ${subject}`,
+    text: replyText,
+    html: replyText.replace(/\n/g, "<br>"),
+    headers: { "X-Outreach-Warmup": "true" },
+  });
+
+  await query(
+    `
+      INSERT INTO messages(mailbox_id, direction, type, status, subject, body_text, body_html, provider_message_id, message_id_header, sent_at)
+      VALUES ($1,'outbound','warmup','sent',$2,$3,$4,$5,$6,now())
+    `,
+    [mailbox.id, `Re: ${subject}`, replyText, replyText.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
+  );
 }
 
 async function findLinkedOutbound(parsed, fromEmail) {
@@ -462,7 +504,13 @@ async function sendWarmup() {
   const [from, to] = mailboxes;
   const subject = `Рабочая заметка ${new Date().toISOString().slice(0, 10)}`;
   const text = "Добрый день.\n\nПроверяю рабочую переписку и доставку писем.\n\nСпасибо.";
-  const info = await sendMail(from, { to: to.email, subject, text, html: text.replace(/\n/g, "<br>") });
+  const info = await sendMail(from, {
+    to: to.email,
+    subject,
+    text,
+    html: text.replace(/\n/g, "<br>"),
+    headers: { "X-Outreach-Warmup": "true" },
+  });
   await query(
     `
       INSERT INTO messages(mailbox_id, direction, type, status, subject, body_text, body_html, provider_message_id, message_id_header, sent_at)

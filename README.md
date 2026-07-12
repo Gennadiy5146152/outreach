@@ -24,6 +24,74 @@ http://localhost:3000
 
 По умолчанию включен `MAIL_DRY_RUN=true`: письма логируются и сохраняются в БД, но не уходят через SMTP. Для реальной отправки заполните SMTP/IMAP-настройки mailbox в UI и отключите dry-run в `.env`.
 
+## Как начать прогрев и рассылки
+
+### 1. Добавьте пароли mailbox в `.env`
+
+Для каждого ящика заведите отдельную переменную:
+
+```bash
+MAILBOX_1_PASSWORD=app-password-or-smtp-password
+MAILBOX_2_PASSWORD=app-password-or-smtp-password
+```
+
+В UI при создании mailbox укажите не сам пароль, а имя переменной, например `MAILBOX_1_PASSWORD`.
+
+### 2. Подключите mailbox
+
+Откройте `Почта` и добавьте 2 ящика.
+
+Для Яндекса обычно:
+
+```text
+SMTP host: smtp.yandex.ru
+SMTP port: 465
+IMAP host: imap.yandex.ru
+IMAP port: 993
+Secure: true
+```
+
+После сохранения нажмите `Проверить`: сервис проверит SMTP, IMAP и MX/SPF/DKIM/DMARC домена.
+
+### 3. Включите прогрев
+
+В разделе `Прогрев` включите прогрев для обоих mailbox и нажмите `Отправить warmup сейчас`, либо дождитесь worker. Warmup отправляется только между вашими подключенными mailbox.
+
+### 4. Подготовьте кампанию
+
+1. Импортируйте или добавьте лидов.
+2. Запустите валидацию.
+3. Создайте кампанию.
+4. Создайте шаги письма.
+5. При необходимости загрузите вложения к шагу.
+6. Добавьте valid/risky лидов в кампанию.
+7. Запустите `Preflight`.
+8. Сначала запустите `Тест`, затем `Старт manual` или `Старт auto`.
+
+### 5. Включите реальную отправку
+
+Когда тестовый сценарий прошел:
+
+```bash
+MAIL_DRY_RUN=false
+```
+
+Затем:
+
+```bash
+docker compose restart web worker
+```
+
+### 6. Open tracking
+
+Для реальных открытий нужен публичный URL, например через `ngrok` или `cloudflared`.
+
+```bash
+PUBLIC_TRACKING_URL=https://your-public-tunnel.example
+```
+
+После изменения `.env` перезапустите `web` и `worker`.
+
 ## Команды
 
 ```bash
@@ -31,6 +99,7 @@ npm run dev       # локальный backend без Docker
 npm run worker    # локальный worker без Docker
 npm run migrate   # применить миграции
 npm run check     # проверка синтаксиса JS
+npm run check:smoke # smoke-проверка запущенного сервиса
 ```
 
 ## Резервная копия PostgreSQL
@@ -44,3 +113,5 @@ docker compose exec postgres pg_dump -U outreach outreach > backup.sql
 - `.env` не коммитится.
 - Вложения хранятся в `storage/attachments`.
 - Open tracking для реальных получателей требует публичный `PUBLIC_TRACKING_URL`, например через туннель.
+- Стоп-лист доступен в UI: адреса и домены из него исключаются из коммуникации.
+- Очередь показывает progress, ETA, countdown до следующего письма и ошибки отправки.
