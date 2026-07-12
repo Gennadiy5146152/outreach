@@ -13,14 +13,14 @@
         <span>Локальный B2B-аутрич</span>
       </div>
       <nav>
-        <button class="active" data-view="start">Старт</button>
+        <button class="active" data-view="start">Что делать</button>
         <button data-view="dashboard">Обзор</button>
-        <button data-view="leads">База</button>
-        <button data-view="mailboxes">Почта</button>
-        <button data-view="campaigns">Кампании</button>
+        <button data-view="mailboxes">1. Почта</button>
+        <button data-view="warmup">2. Прогрев</button>
+        <button data-view="leads">3. База</button>
+        <button data-view="campaigns">4. Рассылка</button>
         <button data-view="queue">Очередь</button>
         <button data-view="inbox">Входящие</button>
-        <button data-view="warmup">Прогрев</button>
         <button data-view="suppression">Стоп-лист</button>
         <button data-view="events">События</button>
         <button data-view="settings">Настройки</button>
@@ -41,43 +41,68 @@
       </header>
 
       <section class="view active" id="startView">
+        <section class="panel hero-help">
+          <div>
+            <p class="eyebrow">Самый короткий путь</p>
+            <h2>Сначала подключи 2 свои почты, потом включи прогрев, потом запускай тестовую рассылку.</h2>
+            <p>Сейчас включен безопасный режим: пока `MAIL_DRY_RUN=true`, сервис все покажет в интерфейсе, но реальные письма наружу не отправит.</p>
+          </div>
+          <button data-go="mailboxes">Начать с подключения почты</button>
+        </section>
+
         <section class="panel start-panel">
           <div class="panel-head">
             <div>
-              <h2>С чего начать</h2>
-              <p class="muted">Иди сверху вниз. Пока включен dry-run, реальные письма не уходят.</p>
+              <h2>Чеклист готовности</h2>
+              <p class="muted">Здесь видно, что уже настроено, а что еще мешает старту.</p>
             </div>
             <button data-go="settings">Проверить режим</button>
           </div>
           <div id="setupChecklist" class="checklist"></div>
         </section>
 
-        <div class="grid two">
-          <section class="panel">
-            <h2>Рабочий маршрут</h2>
-            <div class="workflow">
-              <button data-go="mailboxes">1. Подключить 2 почты</button>
-              <button data-go="warmup">2. Включить прогрев</button>
-              <button data-go="leads">3. Добавить базу и валидировать</button>
-              <button data-go="campaigns">4. Создать кампанию и тест</button>
-              <button data-go="queue">5. Следить за отправкой</button>
-              <button data-go="inbox">6. Смотреть ответы</button>
+        <section class="wizard">
+          <article class="wizard-step">
+            <div class="wizard-number">1</div>
+            <div>
+              <h2>Подключить почту</h2>
+              <p>Нужно добавить 2 своих ящика. Сервис проверит SMTP для отправки, IMAP для входящих и настройки домена.</p>
+              <div class="example-box">
+                <strong>Что заранее добавить в `.env`</strong>
+                <code>MAILBOX_1_PASSWORD=пароль_или_app_password</code>
+                <code>MAILBOX_2_PASSWORD=пароль_или_app_password</code>
+              </div>
+              <button data-go="mailboxes">Открыть раздел Почта</button>
             </div>
-          </section>
+          </article>
 
-          <section class="panel">
-            <h2>Зачем разделы</h2>
-            <div class="section-map">
-              <p><strong>Почта</strong> — подключение SMTP/IMAP, проверка домена и доступов.</p>
-              <p><strong>Прогрев</strong> — письма между твоими ящиками, чтобы проверить отправку и входящие.</p>
-              <p><strong>База</strong> — лиды, CSV, валидация email.</p>
-              <p><strong>Кампании</strong> — шаблоны, вложения, preflight, тест/старт.</p>
-              <p><strong>Очередь</strong> — прогресс, ETA, countdown, ошибки отправки.</p>
-              <p><strong>Входящие</strong> — IMAP-ответы и классификация.</p>
-              <p><strong>Стоп-лист</strong> — кому больше не писать.</p>
+          <article class="wizard-step">
+            <div class="wizard-number">2</div>
+            <div>
+              <h2>Включить прогрев</h2>
+              <p>Прогрев отправляет письма только между твоими подключенными ящиками. Это проверяет отправку, входящие и ответы.</p>
+              <button data-go="warmup">Открыть Прогрев</button>
             </div>
-          </section>
-        </div>
+          </article>
+
+          <article class="wizard-step">
+            <div class="wizard-number">3</div>
+            <div>
+              <h2>Добавить базу</h2>
+              <p>Добавь лидов вручную или CSV, затем нажми “Запустить проверку email”. Невалидные адреса не попадут в отправку.</p>
+              <button data-go="leads">Открыть Базу</button>
+            </div>
+          </article>
+
+          <article class="wizard-step">
+            <div class="wizard-number">4</div>
+            <div>
+              <h2>Сделать тестовую рассылку</h2>
+              <p>Создай кампанию, добавь письмо, добавь лидов, нажми “Проверить перед запуском”, потом “Тест на мои почты”.</p>
+              <button data-go="campaigns">Открыть Рассылку</button>
+            </div>
+          </article>
+        </section>
       </section>
 
       <section class="view" id="dashboardView">
@@ -98,6 +123,7 @@
         <div class="grid two">
           <section class="panel">
             <h2>Новый лид</h2>
+            <p class="help-text">Минимум нужны компания и email. После добавления email автоматически попадет в очередь проверки.</p>
             <form id="leadForm" class="form">
               <input name="company" placeholder="Компания" required />
               <input name="contact_name" placeholder="Контакт" />
@@ -113,11 +139,12 @@
           </section>
           <section class="panel">
             <h2>Импорт и валидация</h2>
+            <p class="help-text">CSV должен содержать колонки `company` и `email`. После импорта нажми проверку email.</p>
             <form id="importForm" class="form">
               <input name="file" type="file" accept=".csv,text/csv" required />
               <button>Импорт CSV</button>
             </form>
-            <button id="validateBtn">Запустить валидацию</button>
+            <button id="validateBtn">Запустить проверку email</button>
           </section>
         </div>
         <section class="panel">
@@ -134,6 +161,7 @@
         <div class="grid two">
           <section class="panel">
             <h2>Подключить mailbox</h2>
+            <p class="help-text">Пароль сюда не вставляется. Вставь пароль в `.env`, а здесь укажи только имя переменной, например `MAILBOX_1_PASSWORD`.</p>
             <form id="mailboxForm" class="form">
               <input name="name" placeholder="Название" required />
               <input name="from_name" placeholder="Имя отправителя" />
@@ -147,7 +175,7 @@
               <input name="imap_host" placeholder="IMAP host" value="imap.yandex.ru" required />
               <input name="imap_port" type="number" value="993" required />
               <input name="username" placeholder="Логин" />
-              <input name="password_env_key" placeholder="ENV ключ пароля, например MAILBOX_1_PASSWORD" required />
+              <input name="password_env_key" placeholder="Имя переменной из .env: MAILBOX_1_PASSWORD" required />
               <input name="min_delay_minutes" type="number" value="7" />
               <input name="max_delay_minutes" type="number" value="18" />
               <input name="send_window_start" type="time" value="09:00" />
@@ -168,6 +196,7 @@
         <div class="grid two">
           <section class="panel">
             <h2>Кампания</h2>
+            <p class="help-text">Кампания — это одна рассылка: кому пишем, с каким письмом и через какие почты.</p>
             <form id="campaignForm" class="form">
               <input name="name" placeholder="Название" required />
               <input name="segment" placeholder="Сегмент" />
@@ -179,6 +208,7 @@
           </section>
           <section class="panel">
             <h2>Шаг письма</h2>
+            <p class="help-text">Шаг — это письмо в цепочке. Для первой проверки достаточно одного шага.</p>
             <form id="stepForm" class="form">
               <select name="campaign_id" id="stepCampaign"></select>
               <input name="name" placeholder="Название шага" required />
@@ -204,12 +234,13 @@
             <h2>Кампании</h2>
             <div>
               <button id="enrollBtn">Добавить всех valid лидов</button>
-              <button id="preflightBtn">Preflight</button>
-              <button id="startManualBtn">Старт manual</button>
-              <button id="startAutoBtn">Старт auto</button>
-              <button id="startTestBtn">Тест</button>
+              <button id="preflightBtn">Проверить перед запуском</button>
+              <button id="startTestBtn">Тест на мои почты</button>
+              <button id="startManualBtn">Запуск с подтверждением</button>
+              <button id="startAutoBtn">Автозапуск</button>
             </div>
           </div>
+          <p class="help-text">Правильный порядок: добавь лидов в кампанию → проверь перед запуском → сначала тест → потом запуск.</p>
           <select id="activeCampaign"></select>
           <pre id="preflightResult" class="log"></pre>
           <div id="campaignList" class="cards"></div>

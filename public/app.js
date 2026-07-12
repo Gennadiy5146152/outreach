@@ -67,10 +67,10 @@ function switchView(view) {
   $$("nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   $("#title").textContent = {
     dashboard: "Обзор",
-    start: "Старт",
+    start: "Что делать",
     leads: "База",
-    mailboxes: "Почта",
-    campaigns: "Кампании",
+    mailboxes: "1. Почта",
+    campaigns: "4. Рассылка",
     queue: "Очередь",
     inbox: "Входящие",
     warmup: "Прогрев",
@@ -116,7 +116,8 @@ async function loadLeads() {
   $("#leadsTable").innerHTML = `
     <thead><tr><th>Компания</th><th>Email</th><th>Сегмент</th><th>Статус</th><th>Валидация</th><th>Источник</th></tr></thead>
     <tbody>
-      ${state.leads
+      ${state.leads.length
+        ? state.leads
         .map(
           (lead) => `
             <tr data-lead-id="${lead.id}">
@@ -129,15 +130,16 @@ async function loadLeads() {
             </tr>
           `,
         )
-        .join("")}
+        .join("")
+        : `<tr><td colspan="6" class="muted">Лидов пока нет. Добавь одного вручную или импортируй CSV, затем нажми “Запустить проверку email”.</td></tr>`}
     </tbody>
   `;
 }
 
 async function loadMailboxes() {
   state.mailboxes = await api("/api/mailboxes");
-  $("#mailboxList").innerHTML = state.mailboxes
-    .map(
+  $("#mailboxList").innerHTML = state.mailboxes.length
+    ? state.mailboxes.map(
       (mailbox) => `
       <article class="card">
         <strong>${esc(mailbox.name)}</strong>
@@ -150,7 +152,8 @@ async function loadMailboxes() {
       </article>
     `,
     )
-    .join("");
+    .join("")
+    : `<article class="card"><strong>Почтовых ящиков пока нет</strong><p>Добавь первый ящик слева. Пароль хранится только в .env, в форму вставляется имя переменной.</p></article>`;
   renderSetupChecklist();
 }
 
@@ -164,8 +167,8 @@ async function loadCampaigns() {
     .map((step) => `<option value="${step.id}">${esc(step.campaignName)} / ${esc(step.name)}</option>`)
     .join("");
   renderAttachments();
-  $("#campaignList").innerHTML = state.campaigns
-    .map(
+  $("#campaignList").innerHTML = state.campaigns.length
+    ? state.campaigns.map(
       (campaign) => `
         <article class="card">
           <strong>${esc(campaign.name)}</strong> ${pill(campaign.status)}
@@ -175,7 +178,8 @@ async function loadCampaigns() {
         </article>
       `,
     )
-    .join("");
+    .join("")
+    : `<article class="card"><strong>Рассылок пока нет</strong><p>Создай кампанию, затем добавь хотя бы один шаг письма.</p></article>`;
   renderSetupChecklist();
 }
 
@@ -205,51 +209,51 @@ function renderSetupChecklist() {
       done: state.settings?.runtime?.dryRun === true,
       title: "Безопасный режим включен",
       text: state.settings?.runtime?.dryRun
-        ? "Сейчас можно тестировать сценарий: письма не уйдут наружу."
-        : "Dry-run выключен: действия в очереди могут реально отправлять письма.",
+        ? "Можно спокойно нажимать кнопки: реальные письма не отправятся."
+        : "Внимание: dry-run выключен, очередь может реально отправлять письма.",
       action: "Открыть настройки",
       view: "settings",
     },
     {
       done: verifiedMailboxes.length >= 2,
-      title: "Подключить 2 mailbox",
-      text: `Проверено SMTP/IMAP: ${verifiedMailboxes.length}. Для старта нужно 2 ящика.`,
-      action: "Перейти в Почту",
+      title: "Подключить 2 почтовых ящика",
+      text: `Проверено ящиков: ${verifiedMailboxes.length}. Нужно 2, чтобы прогревать почту между ними.`,
+      action: "Подключить почту",
       view: "mailboxes",
     },
     {
       done: warmupEnabled >= 2,
       title: "Включить прогрев",
       text: `Mailbox с прогревом: ${warmupEnabled}. Прогрев работает только между твоими ящиками.`,
-      action: "Перейти в Прогрев",
+      action: "Включить прогрев",
       view: "warmup",
     },
     {
       done: Number(dashboard.leads.valid || 0) + Number(dashboard.leads.risky || 0) > 0,
-      title: "Добавить и проверить базу",
+      title: "Добавить лидов и проверить email",
       text: `Лидов: ${dashboard.leads.total}. Valid/risky: ${Number(dashboard.leads.valid || 0) + Number(dashboard.leads.risky || 0)}.`,
-      action: "Перейти в Базу",
+      action: "Добавить базу",
       view: "leads",
     },
     {
       done: campaignsWithSteps.length > 0,
-      title: "Создать кампанию и письмо",
+      title: "Создать рассылку и письмо",
       text: `Кампаний с шагами: ${campaignsWithSteps.length}. Нужен хотя бы один шаг письма.`,
-      action: "Перейти в Кампании",
+      action: "Создать рассылку",
       view: "campaigns",
     },
     {
       done: queuedOrSent > 0,
-      title: "Запустить тест или очередь",
-      text: `В очереди/отправлено: ${queuedOrSent}. Сначала запускай режим Тест.`,
-      action: "Перейти в Очередь",
+      title: "Запустить тестовую отправку",
+      text: `В очереди/отправлено: ${queuedOrSent}. Перед боевой отправкой сначала делай тест на свои почты.`,
+      action: "Открыть очередь",
       view: "queue",
     },
   ];
 
   const next = steps.find((step) => !step.done);
   $("#setupChecklist").innerHTML = `
-    ${next ? `<div class="next-action"><strong>Следующий шаг:</strong> ${esc(next.title)} <button data-go="${next.view}">${esc(next.action)}</button></div>` : `<div class="next-action success"><strong>Базовая настройка готова.</strong> Можно тестировать кампанию и смотреть метрики.</div>`}
+    ${next ? `<div class="next-action"><strong>Сейчас сделай это:</strong> ${esc(next.title)} <button data-go="${next.view}">${esc(next.action)}</button></div>` : `<div class="next-action success"><strong>Базовая настройка готова.</strong> Можно тестировать рассылку и смотреть метрики.</div>`}
     <div class="setup-list">${steps.map(stepCard).join("")}</div>
   `;
 }
