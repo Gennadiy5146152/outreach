@@ -926,6 +926,259 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   res.json(summary);
 }));
 
+app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
+  const status = req.query.status || "";
+  const classification = req.query.classification || "";
+  const onlyReview = toBool(req.query.review);
+  const result = await query(
+    `
+      SELECT oc.*,
+             l.company,
+             l.contact_name,
+             l.segment,
+             latest.subject AS latest_subject,
+             latest.body_text AS latest_body_text,
+             latest.received_at AS latest_received_at,
+             latest.sent_at AS latest_sent_at,
+             latest.direction AS latest_direction,
+             latest.reply_classification AS latest_reply_classification,
+             COALESCE(stats.messages_total, 0)::int AS messages_total,
+             COALESCE(stats.outbound_total, 0)::int AS outbound_total,
+             COALESCE(stats.inbound_total, 0)::int AS inbound_total,
+             COALESCE(queue.pending_total, 0)::int AS pending_total,
+             COALESCE(queue.approval_total, 0)::int AS approval_total
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      LEFT JOIN LATERAL (
+        SELECT msg.*
+        FROM messages msg
+        WHERE msg.lead_id = oc.lead_id
+          AND msg.type <> 'warmup'
+        ORDER BY COALESCE(msg.received_at, msg.sent_at, msg.created_at) DESC
+        LIMIT 1
+      ) latest ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          count(*) AS messages_total,
+          count(*) FILTER (WHERE direction = 'outbound') AS outbound_total,
+          count(*) FILTER (WHERE direction = 'inbound') AS inbound_total
+        FROM messages msg
+        WHERE msg.lead_id = oc.lead_id
+          AND msg.type <> 'warmup'
+      ) stats ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          count(*) FILTER (WHERE status IN ('pending','retrying')) AS pending_total,
+          count(*) FILTER (WHERE status IN ('pending','retrying') AND requires_approval = true AND approved_at IS NULL) AS approval_total
+        FROM sending_queue q
+        WHERE q.lead_id = oc.lead_id
+          AND q.outreach_draft_id IS NOT NULL
+      ) queue ON true
+      WHERE ($1 = '' OR oc.status = $1)
+        AND ($2 = '' OR oc.classification = $2)
+        AND ($3 = false OR oc.status IN ('waiting_reply_review','manual_reply_needed'))
+      ORDER BY COALESCE(oc.last_message_at, oc.updated_at, oc.created_at) DESC
+      LIMIT 300
+    `,
+    [status, classification, onlyReview],
+  );
+  res.json(result.rows);
+}));
+
+app.get("/api/outreach/conversations/export.jsonl", asyncHandler(async (req, res) => {
+  const status = req.query.status || "";
+  const classification = req.query.classification || "";
+  const onlyReview = toBool(req.query.review);
+  const conversations = (await query(
+    `
+      SELECT oc.*, l.company, l.contact_name, l.segment
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      WHERE ($1 = '' OR oc.status = $1)
+        AND ($2 = '' OR oc.classification = $2)
+        AND ($3 = false OR oc.status IN ('waiting_reply_review','manual_reply_needed'))
+      ORDER BY COALESCE(oc.last_message_at, oc.updated_at, oc.created_at) DESC
+      LIMIT 1000
+    `,
+    [status, classification, onlyReview],
+  )).rows;
+  const leadIds = conversations.map((item) => item.lead_id).filter(Boolean);
+  const messages = leadIds.length
+    ? (await query(
+      `
+        SELECT *
+        FROM messages
+        WHERE lead_id = ANY($1::uuid[])
+          AND type <> 'warmup'
+        ORDER BY COALESCE(received_at, sent_at, created_at) ASC
+      `,
+      [leadIds],
+    )).rows
+    : [];
+  const byLead = new Map();
+  for (const message of messages) {
+    const list = byLead.get(message.lead_id) || [];
+    list.push(message);
+    byLead.set(message.lead_id, list);
+  }
+  const lines = conversations.map((conversation) => JSON.stringify({
+    conversation,
+    messages: byLead.get(conversation.lead_id) || [],
+  }));
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=\"outreach-conversations.jsonl\"");
+  res.send(`${lines.join("\n")}\n`);
+}));
+
+app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
+  const conversation = (await query(
+    `
+      SELECT oc.*, l.company, l.contact_name, l.position, l.website, l.segment, l.notes
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      WHERE oc.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+
+  const [messages, drafts, queue] = await Promise.all([
+    query(
+      `
+        SELECT msg.*, m.email AS mailbox_email
+        FROM messages msg
+        LEFT JOIN mailboxes m ON m.id = msg.mailbox_id
+        WHERE msg.lead_id = $1
+          AND msg.type <> 'warmup'
+        ORDER BY COALESCE(msg.received_at, msg.sent_at, msg.created_at) ASC
+      `,
+      [conversation.lead_id],
+    ),
+    query(
+      `
+        SELECT d.*, COALESCE(
+          json_agg(json_build_object(
+            'id', s.id,
+            'position', s.position,
+            'subject', s.subject,
+            'body_text', s.body_text,
+            'delay_days', s.delay_days,
+            'status', s.status
+          ) ORDER BY s.position) FILTER (WHERE s.id IS NOT NULL),
+          '[]'::json
+        ) AS steps
+        FROM outreach_drafts d
+        LEFT JOIN outreach_draft_steps s ON s.draft_id = d.id
+        WHERE d.conversation_id = $1
+        GROUP BY d.id
+        ORDER BY d.created_at
+      `,
+      [conversation.id],
+    ),
+    query(
+      `
+        SELECT q.*, ods.position AS outreach_step_position, ods.subject AS outreach_subject
+        FROM sending_queue q
+        LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+        WHERE q.lead_id = $1
+          AND q.outreach_draft_id IS NOT NULL
+        ORDER BY q.scheduled_at ASC
+      `,
+      [conversation.lead_id],
+    ),
+  ]);
+
+  res.json({ conversation, messages: messages.rows, drafts: drafts.rows, queue: queue.rows });
+}));
+
+app.post("/api/outreach/conversations/:id/stop", asyncHandler(async (req, res) => {
+  const conversation = (await query("SELECT * FROM outreach_conversations WHERE id = $1", [req.params.id])).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const result = await query(
+    `
+      WITH cancelled_queue AS (
+        UPDATE sending_queue
+        SET status = 'cancelled',
+            last_error = 'Отменено после ответа получателя',
+            updated_at = now()
+        WHERE lead_id = $1
+          AND outreach_draft_id IS NOT NULL
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id
+      ),
+      cancelled_steps AS (
+        UPDATE outreach_draft_steps
+        SET status = 'cancelled',
+            updated_at = now()
+        WHERE id IN (SELECT outreach_step_id FROM cancelled_queue WHERE outreach_step_id IS NOT NULL)
+        RETURNING id
+      ),
+      updated_conversation AS (
+        UPDATE outreach_conversations
+        SET status = 'paused',
+            next_action = 'stopped_by_user',
+            updated_at = now()
+        WHERE id = $2
+        RETURNING *
+      )
+      SELECT
+        (SELECT row_to_json(updated_conversation) FROM updated_conversation) AS conversation,
+        (SELECT count(*)::int FROM cancelled_queue) AS cancelled_queue,
+        (SELECT count(*)::int FROM cancelled_steps) AS cancelled_steps
+    `,
+    [conversation.lead_id, conversation.id],
+  );
+  await logEvent("outreach_conversation_stopped", {
+    leadId: conversation.lead_id,
+    payload: { conversationId: conversation.id, cancelledQueue: result.rows[0].cancelled_queue },
+  });
+  res.json(result.rows[0]);
+}));
+
+app.post("/api/outreach/conversations/:id/continue", asyncHandler(async (req, res) => {
+  const conversation = (await query("SELECT * FROM outreach_conversations WHERE id = $1", [req.params.id])).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const result = await query(
+    `
+      WITH approved_queue AS (
+        UPDATE sending_queue
+        SET requires_approval = false,
+            approved_at = now(),
+            updated_at = now()
+        WHERE lead_id = $1
+          AND outreach_draft_id IS NOT NULL
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id
+      ),
+      approved_steps AS (
+        UPDATE outreach_draft_steps
+        SET status = 'queued',
+            updated_at = now()
+        WHERE id IN (SELECT outreach_step_id FROM approved_queue WHERE outreach_step_id IS NOT NULL)
+        RETURNING id
+      ),
+      updated_conversation AS (
+        UPDATE outreach_conversations
+        SET status = 'active_sequence',
+            next_action = 'followup_allowed',
+            updated_at = now()
+        WHERE id = $2
+        RETURNING *
+      )
+      SELECT
+        (SELECT row_to_json(updated_conversation) FROM updated_conversation) AS conversation,
+        (SELECT count(*)::int FROM approved_queue) AS approved_queue,
+        (SELECT count(*)::int FROM approved_steps) AS approved_steps
+    `,
+    [conversation.lead_id, conversation.id],
+  );
+  await logEvent("outreach_conversation_continued", {
+    leadId: conversation.lead_id,
+    payload: { conversationId: conversation.id, approvedQueue: result.rows[0].approved_queue },
+  });
+  res.json(result.rows[0]);
+}));
+
 app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file_required" });
   const { fileType, rows } = await parseOutreachImportFile(req.file);
@@ -1786,6 +2039,25 @@ app.patch("/api/inbox/:id/classification", asyncHandler(async (req, res) => {
     `,
     [req.params.id, req.body.classification],
   );
+  const message = result.rows[0];
+  if (message?.lead_id) {
+    await query(
+      `
+        UPDATE outreach_conversations
+        SET classification = $2,
+            status = CASE
+              WHEN $2 = 'positive_reply' THEN 'positive'
+              WHEN $2 = 'negative_reply' THEN 'negative'
+              WHEN $2 = 'not_target' THEN 'not_target'
+              WHEN $2 = 'unsubscribe' THEN 'unsubscribed'
+              ELSE status
+            END,
+            updated_at = now()
+        WHERE lead_id = $1
+      `,
+      [message.lead_id, req.body.classification],
+    );
+  }
   await logEvent("reply_classified", { messageId: req.params.id, payload: { classification: req.body.classification, source: "manual" } });
   res.json(result.rows[0]);
 }));

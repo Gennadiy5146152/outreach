@@ -5,6 +5,7 @@ const state = {
   outreachImports: [],
   outreachDrafts: [],
   selectedOutreachDraftIds: new Set(),
+  outreachConversations: [],
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
@@ -192,6 +193,8 @@ const STATUS_LABELS = {
   queued: "в очереди",
   active_sequence: "цепочка идет",
   needs_approval: "ждет подтверждения",
+  waiting_reply_review: "требует решения",
+  manual_reply_needed: "нужен ручной ответ",
   skipped: "пропущено",
   retrying: "повтор",
   failed: "ошибка",
@@ -464,6 +467,7 @@ function switchView(view) {
     start: "Что делать",
     outreachImport: "Импорт Excel",
     outreachDrafts: "Черновики",
+    conversations: "Диалоги",
     leads: "База",
     mailboxes: "1. Почта",
     campaigns: "4. Рассылка",
@@ -1246,6 +1250,106 @@ async function loadInbox() {
     .join("");
 }
 
+function conversationQuery() {
+  const params = new URLSearchParams();
+  const status = $("#conversationStatusFilter")?.value || "";
+  const classification = $("#conversationClassificationFilter")?.value || "";
+  const review = $("#conversationReviewOnly")?.checked;
+  if (status) params.set("status", status);
+  if (classification) params.set("classification", classification);
+  if (review) params.set("review", "true");
+  return params.toString();
+}
+
+function updateConversationExportLink() {
+  const query = conversationQuery();
+  const href = `/api/outreach/conversations/export.jsonl${query ? `?${query}` : ""}`;
+  $("#conversationExportLink").setAttribute("href", href);
+}
+
+async function loadConversations() {
+  if (!$("#conversationList")) return;
+  const query = conversationQuery();
+  updateConversationExportLink();
+  state.outreachConversations = await api(`/api/outreach/conversations${query ? `?${query}` : ""}`);
+  const reviewCount = state.outreachConversations.filter((item) => ["waiting_reply_review", "manual_reply_needed"].includes(item.status)).length;
+  const approvalCount = state.outreachConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
+  $("#conversationSummary").innerHTML = `
+    <span>Диалогов на экране: <strong>${state.outreachConversations.length}</strong></span>
+    <span>Требуют решения: <strong>${reviewCount}</strong></span>
+    <span>Follow-up ждут подтверждения: <strong>${approvalCount}</strong></span>
+  `;
+  $("#conversationList").innerHTML = state.outreachConversations.length
+    ? state.outreachConversations.map((item) => `
+      <article class="card conversation-card">
+        <div class="conversation-card-head">
+          <div>
+            <strong>${esc(item.company || item.email)}</strong>
+            <p>${esc(item.contact_name || "")} · ${esc(item.email)} · ${esc(item.segment || "")}</p>
+          </div>
+          <div class="mailbox-status">
+            ${pill(item.status)}
+            ${item.classification ? pill(item.classification) : ""}
+          </div>
+        </div>
+        <p><strong>Последнее письмо:</strong> ${esc(item.latest_subject || "пока нет писем")} · ${fmtDate(item.latest_received_at || item.latest_sent_at || item.last_message_at)}</p>
+        <pre class="inbox-message">${esc((item.latest_body_text || "").slice(0, 900))}</pre>
+        <div class="summary-line">
+          <span>Всего писем: <strong>${item.messages_total}</strong></span>
+          <span>Исходящих: <strong>${item.outbound_total}</strong></span>
+          <span>Входящих: <strong>${item.inbound_total}</strong></span>
+          <span>Ждут отправки: <strong>${item.pending_total}</strong></span>
+          <span>Ждут подтверждения: <strong>${item.approval_total}</strong></span>
+        </div>
+        <div class="card-actions">
+          <button data-open-conversation="${item.id}">Открыть диалог</button>
+          <button data-stop-conversation="${item.id}">Остановить цепочку</button>
+          <button data-continue-conversation="${item.id}" ${Number(item.approval_total || 0) ? "" : "disabled"}>Продолжить follow-up</button>
+        </div>
+      </article>
+    `).join("")
+    : `<p class="muted">Диалогов по текущему фильтру нет.</p>`;
+}
+
+async function openConversation(conversationId) {
+  const detail = await api(`/api/outreach/conversations/${conversationId}`);
+  $("#conversationDialogTitle").textContent = `${detail.conversation.company || detail.conversation.email} · ${statusLabel(detail.conversation.status)}`;
+  $("#conversationDetail").innerHTML = `
+    <div class="summary-line">
+      <span>Email: <strong>${esc(detail.conversation.email)}</strong></span>
+      <span>Статус: <strong>${esc(statusLabel(detail.conversation.status))}</strong></span>
+      <span>Класс: <strong>${esc(statusLabel(detail.conversation.classification || "unknown"))}</strong></span>
+      <span>Следующее действие: <strong>${esc(detail.conversation.next_action || "не задано")}</strong></span>
+    </div>
+    <h3>Переписка</h3>
+    <div class="cards conversation-thread">
+      ${detail.messages.length
+        ? detail.messages.map((message) => `
+          <article class="card">
+            <strong>${message.direction === "outbound" ? "Исходящее" : "Входящее"} · ${esc(message.subject)}</strong>
+            ${pill(message.type)} ${message.reply_classification ? pill(message.reply_classification) : ""}
+            <p>${esc(message.mailbox_email || "")} · ${fmtDate(message.received_at || message.sent_at || message.created_at)}</p>
+            <pre>${esc(message.body_text || "")}</pre>
+          </article>
+        `).join("")
+        : `<p class="muted">Писем в диалоге пока нет.</p>`}
+    </div>
+    <h3>Очередь по этому диалогу</h3>
+    <div class="cards">
+      ${detail.queue.length
+        ? detail.queue.map((item) => `
+          <article class="card">
+            <strong>Шаг ${esc(item.outreach_step_position || "")} · ${esc(item.outreach_subject || item.subject_override || "")}</strong>
+            ${pill(item.status)} ${item.requires_approval && !item.approved_at ? pill("approval") : ""}
+            <p>${fmtDate(item.scheduled_at)} · ${esc(queueStatusHint(item))}</p>
+          </article>
+        `).join("")
+        : `<p class="muted">Очереди по этому диалогу нет.</p>`}
+    </div>
+  `;
+  $("#conversationDialog").showModal();
+}
+
 async function loadWarmup() {
   state.warmup = await api(`/api/warmup?page=${state.warmupPage}&pageSize=${state.warmupPageSize}`);
   state.warmupPage = state.warmup.pagination.page;
@@ -1376,6 +1480,7 @@ async function refresh() {
     loadCampaigns(),
     loadQueue(),
     loadInbox(),
+    loadConversations(),
     loadWarmup(),
     loadSuppressions(),
     loadEvents(),
@@ -1712,6 +1817,48 @@ document.body.addEventListener("click", (event) => {
     title: "Запуск черновика",
     button: event.target,
   }, async () => startOutreachDrafts([draftId]));
+});
+
+["conversationStatusFilter", "conversationClassificationFilter", "conversationReviewOnly"].forEach((id) => {
+  document.getElementById(id)?.addEventListener("change", () => loadConversations());
+});
+
+document.body.addEventListener("click", (event) => {
+  const openId = event.target.dataset.openConversation;
+  const stopId = event.target.dataset.stopConversation;
+  const continueId = event.target.dataset.continueConversation;
+  if (openId) {
+    runAction({ title: "Открытие диалога", button: event.target }, async () => {
+      await openConversation(openId);
+      setActionResult({ status: "success", title: "Открытие диалога", message: "Диалог загружен." });
+    });
+    return;
+  }
+  if (stopId) {
+    runAction({ title: "Остановка цепочки", button: event.target }, async () => {
+      const result = await api(`/api/outreach/conversations/${stopId}/stop`, { method: "POST" });
+      await Promise.all([loadConversations(), loadQueue(), loadOutreachDrafts()]);
+      setActionResult({
+        status: "success",
+        title: "Остановка цепочки",
+        message: `Отменено писем в очереди: ${result.cancelled_queue}.`,
+        details: result,
+      });
+    });
+    return;
+  }
+  if (continueId) {
+    runAction({ title: "Продолжение follow-up", button: event.target }, async () => {
+      const result = await api(`/api/outreach/conversations/${continueId}/continue`, { method: "POST" });
+      await Promise.all([loadConversations(), loadQueue(), loadOutreachDrafts()]);
+      setActionResult({
+        status: "success",
+        title: "Продолжение follow-up",
+        message: `Разрешено писем в очереди: ${result.approved_queue}.`,
+        details: result,
+      });
+    });
+  }
 });
 
 $("#validateBtn").addEventListener("click", (event) => runAction({
@@ -2179,6 +2326,7 @@ document.body.addEventListener("submit", (event) => {
 });
 
 $("#closeLeadDialog").addEventListener("click", () => $("#leadDialog").close());
+$("#closeConversationDialog").addEventListener("click", () => $("#conversationDialog").close());
 
 refresh();
 setInterval(loadQueue, 15000);

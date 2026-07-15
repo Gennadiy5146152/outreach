@@ -365,6 +365,22 @@ h2 {
   gap: 8px;
 }
 
+.conversation-card {
+  gap: 10px;
+}
+
+.conversation-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conversation-thread pre,
+.conversation-card pre {
+  max-height: 280px;
+  overflow: auto;
+}
+
 .mailbox-status span {
   padding: 5px 8px;
   border: 1px solid var(--line);

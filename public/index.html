@@ -23,6 +23,7 @@
         <button data-view="campaigns">4. Рассылка</button>
         <button data-view="queue">Очередь</button>
         <button data-view="inbox">Входящие</button>
+        <button data-view="conversations">Диалоги</button>
         <button data-view="suppression">Стоп-лист</button>
         <button data-view="events">События</button>
         <button data-view="settings">Настройки</button>
@@ -531,6 +532,39 @@
         </section>
       </section>
 
+      <section class="view" id="conversationsView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Диалоги и решения</h2>
+              <p class="muted">Здесь собраны цепочки по лидам. Если человек ответил, follow-up останавливается до твоего решения.</p>
+            </div>
+            <div class="lead-filters">
+              <select id="conversationStatusFilter">
+                <option value="">Все статусы</option>
+                <option value="waiting_reply_review">Требуют решения</option>
+                <option value="active_sequence">Цепочка идет</option>
+                <option value="paused">Остановлено</option>
+                <option value="completed">Завершено</option>
+                <option value="positive">Позитивный ответ</option>
+                <option value="negative">Отказ</option>
+              </select>
+              <select id="conversationClassificationFilter">
+                <option value="">Любой ответ</option>
+                <option value="positive_reply">Позитивный</option>
+                <option value="neutral_reply">Нейтральный</option>
+                <option value="negative_reply">Негативный</option>
+                <option value="auto_reply">Автоответ</option>
+              </select>
+              <label class="check"><input id="conversationReviewOnly" type="checkbox" /> Только решения</label>
+              <a id="conversationExportLink" class="button" href="/api/outreach/conversations/export.jsonl">JSONL для ИИ</a>
+            </div>
+          </div>
+          <div id="conversationSummary" class="summary-line"></div>
+          <div id="conversationList" class="cards"></div>
+        </section>
+      </section>
+
       <section class="view" id="warmupView">
         <div class="grid two">
           <section class="panel">
@@ -593,6 +627,16 @@
           <button id="closeLeadDialog">Закрыть</button>
         </div>
         <div id="leadDetail"></div>
+      </div>
+    </dialog>
+
+    <dialog id="conversationDialog">
+      <div class="dialog-card">
+        <div class="panel-head">
+          <h2 id="conversationDialogTitle">Диалог</h2>
+          <button id="closeConversationDialog">Закрыть</button>
+        </div>
+        <div id="conversationDetail"></div>
       </div>
     </dialog>
 

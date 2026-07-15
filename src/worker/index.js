@@ -801,7 +801,7 @@ async function applyInboundEffects(message, classification) {
     await query(
       `
         UPDATE outreach_conversations
-        SET status = 'reply_received',
+        SET status = 'waiting_reply_review',
             classification = $2,
             next_action = 'approve_or_pause_followup',
             last_message_at = now(),
