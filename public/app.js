@@ -487,6 +487,40 @@ function renderLeadSegmentFilter() {
   if (state.segments.includes(current)) filter.value = current;
 }
 
+function splitSegments(value) {
+  return [...new Set(String(value || "")
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean))];
+}
+
+function joinSegments(values) {
+  return splitSegments(values.join(",")).join(", ");
+}
+
+function selectedPickerSegments(picker) {
+  return splitSegments(picker.querySelector("input[name='segment']")?.value || "");
+}
+
+function renderSegmentChips(picker) {
+  const chips = picker.querySelector("[data-segment-chips]");
+  if (!chips) return;
+  const values = selectedPickerSegments(picker);
+  chips.innerHTML = values.map((segment) => `
+    <button type="button" class="segment-chip" data-remove-segment="${esc(segment)}">${esc(segment)} <span>×</span></button>
+  `).join("");
+}
+
+function setSegmentPickerValue(picker, values) {
+  if (picker.dataset.segmentMulti !== undefined) {
+    picker.querySelector("input[name='segment']").value = joinSegments(Array.isArray(values) ? values : splitSegments(values));
+    picker.querySelector(".segment-input").value = "";
+    renderSegmentChips(picker);
+    return;
+  }
+  picker.querySelector(".segment-input").value = Array.isArray(values) ? values[0] || "" : values || "";
+}
+
 function segmentMatches(value) {
   const needle = String(value || "").trim().toLowerCase();
   return state.segments
@@ -505,9 +539,13 @@ function renderSegmentPicker(input) {
   const picker = input.closest(".segment-picker");
   const menu = picker?.querySelector(".segment-menu");
   if (!picker || !menu) return;
+  const selected = new Set(selectedPickerSegments(picker).map((segment) => segment.toLowerCase()));
   const matches = segmentMatches(input.value);
+  const available = picker.dataset.segmentMulti !== undefined
+    ? matches.filter((segment) => !selected.has(segment.toLowerCase()))
+    : matches;
   menu.innerHTML = matches.length
-    ? matches.map((segment) => `<button type="button" data-segment-value="${esc(segment)}">${esc(segment)}</button>`).join("")
+    ? available.map((segment) => `<button type="button" data-segment-value="${esc(segment)}">${esc(segment)}</button>`).join("") || `<span class="segment-empty">Все найденные сегменты уже выбраны.</span>`
     : `<span class="segment-empty">Сохраненных сегментов нет. Новый сохранится после отправки формы.</span>`;
   menu.hidden = false;
   picker.classList.add("open");
@@ -617,6 +655,44 @@ function editCampaignStep(stepId) {
   switchCampaignStep("letter");
 }
 
+function syncCampaignSegmentInput() {
+  const picker = $("#campaignForm .segment-picker-multi");
+  if (!picker) return;
+  const input = picker.querySelector(".segment-input");
+  const values = selectedPickerSegments(picker);
+  if (input.value.trim()) values.push(input.value.trim());
+  setSegmentPickerValue(picker, values);
+}
+
+function resetCampaignForm() {
+  const form = $("#campaignForm");
+  form.reset();
+  form.elements.campaign_id.value = "";
+  setSegmentPickerValue(form.querySelector(".segment-picker-multi"), []);
+  form.elements.tracking_enabled.checked = true;
+  form.elements.manual_approval_required.checked = true;
+  $("#campaignSubmitBtn").textContent = "Создать кампанию";
+  $("#campaignEditResetBtn").hidden = true;
+}
+
+function editCampaign(campaignId) {
+  const campaign = state.campaigns.find((item) => item.id === campaignId);
+  if (!campaign) return;
+  const form = $("#campaignForm");
+  form.elements.campaign_id.value = campaign.id;
+  form.elements.name.value = campaign.name || "";
+  form.elements.description.value = campaign.description || "";
+  setSegmentPickerValue(form.querySelector(".segment-picker-multi"), splitSegments(campaign.segment));
+  form.elements.tracking_enabled.checked = Boolean(campaign.tracking_enabled);
+  form.elements.manual_approval_required.checked = Boolean(campaign.manual_approval_required);
+  $("#campaignSubmitBtn").textContent = "Сохранить изменения";
+  $("#campaignEditResetBtn").hidden = false;
+  $("#activeCampaign").value = campaign.id;
+  $("#stepCampaign").value = campaign.id;
+  renderCampaignStepList();
+  switchCampaignStep("campaign");
+}
+
 async function loadMailboxes() {
   state.mailboxes = await api("/api/mailboxes");
   $("#mailboxList").innerHTML = state.mailboxes.length
@@ -710,9 +786,11 @@ async function loadCampaigns() {
       (campaign) => `
         <article class="card">
           <strong>${esc(campaign.name)}</strong> ${pill(campaign.status)}
+          <p>Сегменты: ${esc(campaign.segment || "не указаны")}</p>
           <p>${esc(campaign.description || "")}</p>
           <p>Шагов: ${campaign.steps.length} · Отслеживание открытий: ${campaign.tracking_enabled ? "включено" : "выключено"} · Подтверждение перед отправкой: ${campaign.manual_approval_required ? "включено" : "выключено"}</p>
           <ol>${campaign.steps.map((step) => `<li>${esc(step.name)}: ${esc(step.subject_template)} (${step.attachments?.length || 0} влож.)</li>`).join("")}</ol>
+          <div class="card-actions"><button data-edit-campaign="${campaign.id}">Редактировать</button></div>
         </article>
       `,
     )
@@ -1078,6 +1156,7 @@ $("#leadFiltersReset").addEventListener("click", () => {
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
 $("#stepCampaign").addEventListener("change", () => renderCampaignStepList());
 $("#stepEditResetBtn").addEventListener("click", () => resetStepForm());
+$("#campaignEditResetBtn").addEventListener("click", () => resetCampaignForm());
 $("#campaignLeadSelectAll").addEventListener("change", (event) => {
   const ids = campaignAvailableLeads().map((lead) => lead.id);
   state.selectedCampaignLeadIds = event.currentTarget.checked ? new Set(ids) : new Set();
@@ -1104,9 +1183,23 @@ document.body.addEventListener("input", (event) => {
 });
 
 document.body.addEventListener("click", (event) => {
+  const editCampaignId = event.target.dataset.editCampaign;
+  if (editCampaignId) {
+    editCampaign(editCampaignId);
+    return;
+  }
+
   const editStepId = event.target.dataset.editStep;
   if (editStepId) {
     editCampaignStep(editStepId);
+    return;
+  }
+
+  const removeSegment = event.target.closest("[data-remove-segment]");
+  if (removeSegment) {
+    const picker = removeSegment.closest(".segment-picker");
+    const next = selectedPickerSegments(picker).filter((segment) => segment !== removeSegment.dataset.removeSegment);
+    setSegmentPickerValue(picker, next);
     return;
   }
 
@@ -1114,9 +1207,14 @@ document.body.addEventListener("click", (event) => {
   if (segmentOption) {
     const picker = segmentOption.closest(".segment-picker");
     const input = picker.querySelector(".segment-input");
-    input.value = segmentOption.dataset.segmentValue;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    closeSegmentPickers();
+    if (picker.dataset.segmentMulti !== undefined) {
+      setSegmentPickerValue(picker, [...selectedPickerSegments(picker), segmentOption.dataset.segmentValue]);
+      renderSegmentPicker(input);
+    } else {
+      input.value = segmentOption.dataset.segmentValue;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      closeSegmentPickers();
+    }
     return;
   }
   if (!event.target.closest(".segment-picker")) closeSegmentPickers();
@@ -1342,24 +1440,33 @@ document.body.addEventListener("submit", (event) => {
 });
 
 $("#campaignForm").addEventListener("submit", (event) => runAction({
-  title: "Создание кампании",
+  title: event.target.elements.campaign_id.value ? "Обновление кампании" : "Создание кампании",
   button: event.submitter,
 }, async () => {
   event.preventDefault();
+  syncCampaignSegmentInput();
   const payload = formJson(event.target);
+  const campaignId = payload.campaign_id;
+  delete payload.campaign_id;
   payload.tracking_enabled = event.target.elements.tracking_enabled.checked;
   payload.manual_approval_required = event.target.elements.manual_approval_required.checked;
-  const result = await api("/api/campaigns", {
-    method: "POST",
+  const result = await api(campaignId ? `/api/campaigns/${campaignId}` : "/api/campaigns", {
+    method: campaignId ? "PATCH" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  event.target.reset();
+  resetCampaignForm();
   await refresh();
   $("#activeCampaign").value = result.id;
   $("#stepCampaign").value = result.id;
-  setActionResult({ status: "success", title: "Создание кампании", message: `Кампания «${result.name}» создана.`, details: result });
-  switchCampaignStep("letter");
+  renderCampaignStepList();
+  setActionResult({
+    status: "success",
+    title: campaignId ? "Обновление кампании" : "Создание кампании",
+    message: campaignId ? `Кампания «${result.name}» обновлена.` : `Кампания «${result.name}» создана.`,
+    details: result,
+  });
+  switchCampaignStep(campaignId ? "campaign" : "letter");
 }));
 
 $("#stepForm").addEventListener("submit", (event) => runAction({

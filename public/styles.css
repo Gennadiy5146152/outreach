@@ -745,8 +745,29 @@ fieldset.field {
 
 .segment-picker {
   position: relative;
-  display: block;
+  display: grid;
+  gap: 6px;
   width: 100%;
+}
+
+.segment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.segment-chip {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.segment-chip span {
+  margin-left: 4px;
+  font-weight: 800;
 }
 
 .segment-menu {

@@ -321,18 +321,24 @@
             <h2>Кампания</h2>
             <p class="help-text">Кампания — это одна рассылка: кому пишем, с каким письмом и через какие почты.</p>
             <form id="campaignForm" class="form">
+              <input name="campaign_id" type="hidden" />
               <label class="field"><span>Название</span><input name="name" placeholder="Например: Архитектурные бюро, июль" required /></label>
               <label class="field">
-                <span>Сегмент</span>
-                <span class="segment-picker">
-                  <input class="segment-input" name="segment" autocomplete="off" placeholder="Выбери сохраненный или введи новый" />
+                <span>Сегменты</span>
+                <span class="segment-picker segment-picker-multi" data-segment-multi>
+                  <input name="segment" type="hidden" />
+                  <span class="segment-chips" data-segment-chips></span>
+                  <input class="segment-input" autocomplete="off" placeholder="Выбери один или несколько сегментов" />
                   <span class="segment-menu" hidden></span>
                 </span>
               </label>
               <label class="field"><span>Заметка</span><textarea name="description" placeholder="Для себя: гипотеза, оффер, кому пишем"></textarea></label>
               <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Open tracking</label>
               <label class="check"><input name="manual_approval_required" type="checkbox" checked /> Ручное подтверждение пачки</label>
-              <button>Создать кампанию</button>
+              <div class="form-actions">
+                <button id="campaignSubmitBtn">Создать кампанию</button>
+                <button id="campaignEditResetBtn" type="button" hidden>Отменить редактирование</button>
+              </div>
             </form>
           </section>
           <section class="panel">

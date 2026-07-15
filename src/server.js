@@ -416,7 +416,10 @@ app.get("/api/segments", asyncHandler(async (_req, res) => {
     FROM (
       SELECT btrim(segment) AS segment FROM leads WHERE segment IS NOT NULL AND btrim(segment) <> ''
       UNION
-      SELECT btrim(segment) AS segment FROM campaigns WHERE segment IS NOT NULL AND btrim(segment) <> ''
+      SELECT btrim(item.value) AS segment
+      FROM campaigns
+      CROSS JOIN regexp_split_to_table(segment, ',') AS item(value)
+      WHERE segment IS NOT NULL AND btrim(item.value) <> ''
     ) saved_segments
     GROUP BY segment
     ORDER BY lower(segment)
@@ -833,6 +836,33 @@ app.post("/api/campaigns", asyncHandler(async (req, res) => {
     ],
   );
   res.status(201).json(result.rows[0]);
+}));
+
+app.patch("/api/campaigns/:id", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
+  const result = await query(
+    `
+      UPDATE campaigns
+      SET name = $2,
+          description = $3,
+          segment = $4,
+          tracking_enabled = $5,
+          manual_approval_required = $6,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      req.params.id,
+      req.body.name,
+      req.body.description || "",
+      cleanText(req.body.segment),
+      toBool(req.body.tracking_enabled ?? true),
+      toBool(req.body.manual_approval_required ?? true),
+    ],
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "campaign_not_found" });
+  res.json(result.rows[0]);
 }));
 
 app.post("/api/campaigns/:id/steps", asyncHandler(async (req, res) => {
