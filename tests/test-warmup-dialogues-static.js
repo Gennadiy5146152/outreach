@@ -31,4 +31,12 @@ if (!worker.includes("status = 'stale'") || !worker.includes("active_thread_cont
   throw new Error("worker should expire stuck warmup threads and queue sync to continue active ones");
 }
 
+if (!worker.includes("continueWarmupThread") || !worker.includes("direct_send_after_wait")) {
+  throw new Error("worker should directly continue warmup threads after the configured delay");
+}
+
+if (!worker.includes("WHERE NOT EXISTS") || !worker.includes("payload->>'mailboxId' = $1::text")) {
+  throw new Error("worker should avoid duplicate inbox sync jobs");
+}
+
 console.log(`OK: warmup dialogues static test passed (${messageCount} messages)`);

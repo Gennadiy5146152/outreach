@@ -160,10 +160,76 @@ async function enqueueInboxSync(mailboxId, delaySeconds = 30) {
   await query(
     `
       INSERT INTO job_queue(job_type, payload, run_at)
-      VALUES ('sync_inbox', jsonb_build_object('mailboxId', $1::text), now() + (($2 || ' seconds')::interval))
+      SELECT 'sync_inbox', jsonb_build_object('mailboxId', $1::text), now() + (($2 || ' seconds')::interval)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM job_queue
+        WHERE job_type = 'sync_inbox'
+          AND status IN ('pending','running','retrying')
+          AND payload->>'mailboxId' = $1::text
+      )
     `,
     [mailboxId, delaySeconds],
   );
+}
+
+async function continueWarmupThread(thread, fromMailbox, toMailbox) {
+  const dialogues = await loadWarmupDialogues();
+  const dialogue = findWarmupDialogue(dialogues, thread.template_key);
+  const nextPosition = Number(thread.next_position || 1);
+  const replyText = warmupMessageBody(dialogue, nextPosition);
+
+  if (!replyText) {
+    await query(
+      "UPDATE warmup_threads SET status = 'completed', completed_at = now(), last_message_at = now() WHERE id = $1",
+      [thread.id],
+    );
+    return;
+  }
+
+  const sender = nextPosition % 2 === 0 ? fromMailbox : toMailbox;
+  const recipient = nextPosition % 2 === 0 ? toMailbox : fromMailbox;
+  const subject = `Re: ${thread.subject || dialogue.subject}`;
+  const info = await sendMail(sender, {
+    to: recipient.email,
+    subject,
+    text: replyText,
+    html: replyText.replace(/\n/g, "<br>"),
+    headers: { "X-Outreach-Warmup": "true" },
+  });
+
+  await query(
+    `
+      INSERT INTO messages(mailbox_id, direction, type, status, subject, body_text, body_html, provider_message_id, message_id_header, sent_at)
+      VALUES ($1,'outbound','warmup','sent',$2,$3,$4,$5,$6,now())
+    `,
+    [sender.id, subject, replyText, replyText.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
+  );
+
+  const completed = nextPosition + 1 >= dialogue.messages.length;
+  await query(
+    `
+      UPDATE warmup_threads
+      SET next_position = $2,
+          status = CASE WHEN $3 THEN 'completed' ELSE 'active' END,
+          completed_at = CASE WHEN $3 THEN now() ELSE completed_at END,
+          last_message_at = now()
+      WHERE id = $1
+    `,
+    [thread.id, nextPosition + 1, completed],
+  );
+  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [sender.id]);
+  await enqueueInboxSync(recipient.id, 45);
+  await logEvent(completed ? "warmup_dialogue_completed" : "warmup_dialogue_continued", {
+    mailboxId: sender.id,
+    payload: {
+      to: recipient.email,
+      subject,
+      nextPosition,
+      templateKey: dialogue.key,
+      fallback: "direct_send_after_wait",
+    },
+  });
 }
 
 async function handleJob(job) {
@@ -728,6 +794,12 @@ async function sendWarmup() {
   if (activeThread) {
     const nextPosition = Number(activeThread.next_position || 1);
     const receiverId = nextPosition % 2 === 0 ? activeThread.from_mailbox_id : activeThread.to_mailbox_id;
+    const minDelayMinutes = Math.max(1, Math.min(Number(from.min_delay_minutes || 1), Number(to.min_delay_minutes || 1)));
+    const waitedMs = Date.now() - new Date(activeThread.last_message_at || activeThread.created_at).getTime();
+    if (waitedMs >= minDelayMinutes * 60 * 1000) {
+      await continueWarmupThread(activeThread, from, to);
+      return;
+    }
     await enqueueInboxSync(receiverId, 15);
     await logEvent("warmup_sync_queued", {
       mailboxId: receiverId,
@@ -735,6 +807,7 @@ async function sendWarmup() {
         reason: "active_thread_continue",
         subject: activeThread.subject,
         nextPosition,
+        waitSecondsLeft: Math.ceil((minDelayMinutes * 60 * 1000 - waitedMs) / 1000),
       },
     });
     return;
