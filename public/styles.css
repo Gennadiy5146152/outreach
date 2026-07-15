@@ -690,6 +690,21 @@ h2 {
   padding: 6px 10px;
 }
 
+.send-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 92px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.send-toggle input {
+  width: auto;
+  height: auto;
+}
+
 .muted-row {
   color: var(--muted);
 }

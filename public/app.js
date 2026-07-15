@@ -5,7 +5,6 @@ const state = {
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
-  selectedCampaignEnrollmentIds: new Set(),
   segments: [],
   queue: [],
   suppressions: [],
@@ -739,25 +738,6 @@ function renderCampaignAvailableLeads() {
   updateCampaignLeadSelection();
 }
 
-function updateCampaignEnrollmentSelection() {
-  const activeIds = new Set(state.campaignLeads
-    .filter((lead) => lead.enrollment_status === "active")
-    .map((lead) => lead.enrollment_id));
-  state.selectedCampaignEnrollmentIds = new Set([...state.selectedCampaignEnrollmentIds].filter((id) => activeIds.has(id)));
-  const count = state.selectedCampaignEnrollmentIds.size;
-  const selection = $("#campaignEnrollmentSelection");
-  const selectAll = $("#campaignEnrollmentSelectAll");
-  const keepButton = $("#keepCampaignLeadsBtn");
-  if (selection) selection.textContent = `Выбрано для отправки: ${count}`;
-  if (selectAll) {
-    const active = [...activeIds];
-    selectAll.disabled = active.length === 0;
-    selectAll.checked = active.length > 0 && active.every((id) => state.selectedCampaignEnrollmentIds.has(id));
-    selectAll.indeterminate = count > 0 && !selectAll.checked;
-  }
-  if (keepButton) keepButton.disabled = count === 0 || count === activeIds.size;
-}
-
 function selectedCampaign() {
   const campaignId = $("#stepCampaign")?.value || $("#activeCampaign")?.value || "";
   return state.campaigns.find((campaign) => campaign.id === campaignId) || state.campaigns[0] || null;
@@ -976,13 +956,18 @@ async function loadCampaignLeads() {
   const mailboxCount = new Set(state.campaignLeads.map((lead) => lead.mailbox_email).filter(Boolean)).size;
   summary.textContent = `В кампании: ${state.campaignLeads.length} · отправятся: ${activeCount} · выключены: ${pausedCount} · mailbox: ${mailboxCount}`;
   table.innerHTML = `
-    <thead><tr><th></th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th><th>Mailbox</th><th>Статус</th><th>Следующая отправка</th><th></th></tr></thead>
+    <thead><tr><th>Отправлять</th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th><th>Mailbox</th><th>Статус</th><th>Следующая отправка</th></tr></thead>
     <tbody>
       ${state.campaignLeads.length
-        ? state.campaignLeads.map((lead) => `
+        ? state.campaignLeads.map((lead) => {
+          const canToggle = ["active", "paused"].includes(lead.enrollment_status);
+          return `
           <tr class="${lead.enrollment_status === "active" ? "" : "muted-row"}">
             <td>
-              <input type="checkbox" data-campaign-enrollment-id="${lead.enrollment_id}" ${state.selectedCampaignEnrollmentIds.has(lead.enrollment_id) ? "checked" : ""} ${lead.enrollment_status === "active" ? "" : "disabled"} />
+              <label class="send-toggle">
+                <input type="checkbox" data-campaign-send-toggle="${lead.enrollment_id}" ${lead.enrollment_status === "active" ? "checked" : ""} ${canToggle ? "" : "disabled"} />
+                <span>${lead.enrollment_status === "active" ? "да" : lead.enrollment_status === "paused" ? "нет" : "завершено"}</span>
+              </label>
             </td>
             <td><strong>${esc(lead.company)}</strong><br><span class="muted">${esc(lead.contact_name || "")}</span></td>
             <td>${esc(lead.email)}</td>
@@ -991,19 +976,12 @@ async function loadCampaignLeads() {
             <td>${esc(lead.mailbox_email || "не назначен")}</td>
             <td>${pill(lead.enrollment_status)}</td>
             <td>${fmtDate(lead.next_send_at) || "по запуску"}</td>
-            <td>
-              ${lead.enrollment_status === "active"
-                ? `<button class="small-button" data-pause-enrollment="${lead.enrollment_id}">Убрать из кампании</button>`
-                : lead.enrollment_status === "paused"
-                ? `<button class="small-button" data-resume-enrollment="${lead.enrollment_id}">Вернуть в отправку</button>`
-                : `<span class="muted">не отправляется</span>`}
-            </td>
           </tr>
-        `).join("")
-        : `<tr><td colspan="9" class="muted">В этой кампании пока нет лидов. Выбери нужных лидов выше и нажми “Добавить выбранных лидов”.</td></tr>`}
+        `;
+        }).join("")
+        : `<tr><td colspan="8" class="muted">В этой кампании пока нет лидов. Выбери нужных лидов выше и нажми “Добавить выбранных лидов”.</td></tr>`}
     </tbody>
   `;
-  updateCampaignEnrollmentSelection();
   await loadCampaignAvailableLeads();
 }
 
@@ -1334,37 +1312,6 @@ $("#campaignLeadSelectAll").addEventListener("change", (event) => {
   renderCampaignAvailableLeads();
 });
 
-$("#campaignEnrollmentSelectAll").addEventListener("change", (event) => {
-  const ids = state.campaignLeads
-    .filter((lead) => lead.enrollment_status === "active")
-    .map((lead) => lead.enrollment_id);
-  state.selectedCampaignEnrollmentIds = event.currentTarget.checked ? new Set(ids) : new Set();
-  $$("[data-campaign-enrollment-id]").forEach((input) => {
-    input.checked = state.selectedCampaignEnrollmentIds.has(input.dataset.campaignEnrollmentId);
-  });
-  updateCampaignEnrollmentSelection();
-});
-
-$("#keepCampaignLeadsBtn").addEventListener("click", (event) => runAction({
-  title: "Оставить выбранных лидов",
-  button: event.currentTarget,
-}, async () => {
-  const campaignId = $("#activeCampaign").value;
-  const enrollmentIds = [...state.selectedCampaignEnrollmentIds];
-  const result = await api(`/api/campaigns/${campaignId}/enrollments/keep-selected`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enrollment_ids: enrollmentIds }),
-  });
-  await loadCampaignLeads();
-  setActionResult({
-    status: "success",
-    title: "Оставить выбранных лидов",
-    message: `Оставлено для отправки: ${result.kept}. Выключено из кампании: ${result.paused}. Отменено писем в очереди: ${result.cancelled_queue}.`,
-    details: result,
-  });
-}));
-
 $("#campaignAvailableLeadsTable").addEventListener("change", (event) => {
   const leadId = event.target.dataset.campaignLeadId;
   if (!leadId) return;
@@ -1377,14 +1324,24 @@ $("#campaignAvailableLeadsTable").addEventListener("change", (event) => {
 });
 
 $("#campaignLeadsTable").addEventListener("change", (event) => {
-  const enrollmentId = event.target.dataset.campaignEnrollmentId;
+  const enrollmentId = event.target.dataset.campaignSendToggle;
   if (!enrollmentId) return;
-  if (event.target.checked) {
-    state.selectedCampaignEnrollmentIds.add(enrollmentId);
-  } else {
-    state.selectedCampaignEnrollmentIds.delete(enrollmentId);
-  }
-  updateCampaignEnrollmentSelection();
+  const enabled = event.target.checked;
+  runAction({
+    title: enabled ? "Вернуть лида в отправку" : "Выключить лида из отправки",
+    button: event.target,
+  }, async () => {
+    const result = await api(`/api/enrollments/${enrollmentId}/${enabled ? "resume" : "pause"}`, { method: "POST" });
+    await loadCampaignLeads();
+    setActionResult({
+      status: "success",
+      title: enabled ? "Вернуть лида в отправку" : "Выключить лида из отправки",
+      message: enabled
+        ? "Лид снова активен и попадет в следующий запуск."
+        : `Лид больше не будет отправляться. Отменено писем в очереди: ${result.cancelled_queue}.`,
+      details: result,
+    });
+  });
 });
 
 document.body.addEventListener("focusin", (event) => {
@@ -1405,42 +1362,6 @@ document.body.addEventListener("click", (event) => {
   const editStepId = event.target.dataset.editStep;
   if (editStepId) {
     editCampaignStep(editStepId);
-    return;
-  }
-
-  const pauseEnrollment = event.target.closest("[data-pause-enrollment]");
-  if (pauseEnrollment) {
-    runAction({
-      title: "Убрать лида из кампании",
-      button: pauseEnrollment,
-    }, async () => {
-      const result = await api(`/api/enrollments/${pauseEnrollment.dataset.pauseEnrollment}/pause`, { method: "POST" });
-      await loadCampaignLeads();
-      setActionResult({
-        status: "success",
-        title: "Убрать лида из кампании",
-        message: `Лид больше не будет отправляться. Отменено писем в очереди: ${result.cancelled_queue}.`,
-        details: result,
-      });
-    });
-    return;
-  }
-
-  const resumeEnrollment = event.target.closest("[data-resume-enrollment]");
-  if (resumeEnrollment) {
-    runAction({
-      title: "Вернуть лида в отправку",
-      button: resumeEnrollment,
-    }, async () => {
-      const result = await api(`/api/enrollments/${resumeEnrollment.dataset.resumeEnrollment}/resume`, { method: "POST" });
-      await loadCampaignLeads();
-      setActionResult({
-        status: "success",
-        title: "Вернуть лида в отправку",
-        message: "Лид снова активен и попадет в следующий запуск.",
-        details: result,
-      });
-    });
     return;
   }
 
