@@ -254,24 +254,29 @@ function renderEnvChecklist() {
 async function loadDashboard() {
   const data = await api("/api/dashboard");
   state.dashboard = data;
+  const readyLeads = Number(data.leads.valid || 0) + Number(data.leads.risky || 0);
   const metrics = [
-    ["Лидов", data.leads.total],
-    ["Valid", data.leads.valid],
-    ["Sent", data.messages.sent],
-    ["Open rate", `${data.rates.openRate}%`],
-    ["Reply rate", `${data.rates.replyRate}%`],
+    ["Всего лидов", data.leads.total, "в базе"],
+    ["Готовы к отправке", readyLeads, "valid + risky"],
+    ["Отправлено писем", data.messages.sent, "успешные отправки"],
+    ["Уникальные открытия", data.opens.unique, `${data.rates.openRate}% от отправленных`],
+    ["Ответы", data.replies.total, `${data.rates.replyRate}% от отправленных`],
+    ["Положительные ответы", data.replies.positive, "есть интерес"],
   ];
-  $("#metrics").innerHTML = metrics.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join("");
+  $("#metrics").innerHTML = metrics
+    .map(([label, value, hint]) => `<div class="metric"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`)
+    .join("");
   $("#queueSummary").innerHTML = `
-    <p>Pending: <strong>${data.queue.pending}</strong></p>
-    <p>Failed: <strong>${data.queue.failed}</strong></p>
-    <p>Sent: <strong>${data.queue.sent}</strong></p>
+    <p>Ждут отправки: <strong>${data.queue.pending}</strong></p>
+    <p>Отправлены из очереди: <strong>${data.queue.sent}</strong></p>
+    <p>Ошибки отправки: <strong>${data.queue.failed}</strong></p>
   `;
   $("#kpi").innerHTML = `
-    <p>Raw opens: <strong>${data.opens.raw}</strong></p>
-    <p>Unique opens: <strong>${data.opens.unique}</strong></p>
-    <p>Ответы: <strong>${data.replies.total}</strong></p>
-    <p>Положительные: <strong>${data.replies.positive}</strong></p>
+    <p>Все открытия: <strong>${data.opens.raw}</strong></p>
+    <p>Уникальные открытия: <strong>${data.opens.unique}</strong></p>
+    <p>Доля открытий: <strong>${data.rates.openRate}%</strong></p>
+    <p>Доля ответов: <strong>${data.rates.replyRate}%</strong></p>
+    <p>Недоставки: <strong>${data.messages.bounced}</strong></p>
   `;
   renderSetupChecklist();
 }

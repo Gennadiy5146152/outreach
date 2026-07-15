@@ -159,7 +159,7 @@ h2 {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
   gap: 12px;
 }
 
@@ -439,13 +439,20 @@ h2 {
 }
 
 .metric span,
-.metric strong {
+.metric strong,
+.metric small {
   display: block;
 }
 
 .metric strong {
   margin-top: 6px;
   font-size: 28px;
+}
+
+.metric small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .form {
