@@ -549,15 +549,22 @@ async function loadWarmup() {
   $("#warmupMailboxList").innerHTML = state.warmup.mailboxes
     .map(
       (mailbox) => `
-        <article class="card">
-          <strong>${esc(mailbox.name)}</strong>
-          <p>${esc(mailbox.email)} · ${pill(mailbox.health_status)} · лимит ${mailbox.daily_warmup_limit}/день</p>
+        <article class="card warmup-mailbox-card">
+          <div class="warmup-mailbox-head">
+            <div>
+              <strong>${esc(mailbox.name)}</strong>
+              <p>${esc(mailbox.email)}</p>
+            </div>
+            ${pill(mailbox.health_status)}
+          </div>
           <div id="mailboxActionResult-${mailbox.id}">${actionResultHtml(state.actionResults.mailboxes[mailbox.id])}</div>
-          <form class="warmup-limit-form" data-warmup-limit="${mailbox.id}">
-            <label><span>Лимит в день</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" required /></label>
-            <button>Сохранить лимит</button>
-          </form>
-          <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить" : "Включить"}</button>
+          <div class="warmup-controls">
+            <form class="warmup-limit-form" data-warmup-limit="${mailbox.id}">
+              <label><span>Лимит</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" required /></label>
+              <button>Сохранить</button>
+            </form>
+            <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить" : "Включить"}</button>
+          </div>
         </article>
       `,
     )

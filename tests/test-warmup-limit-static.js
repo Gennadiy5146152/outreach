@@ -7,6 +7,10 @@ if (!app.includes("data-warmup-limit")) {
   throw new Error("warmup page should expose editable daily warmup limit form");
 }
 
+if (!app.includes("warmup-controls") || !app.includes("warmup-mailbox-head")) {
+  throw new Error("warmup mailbox controls should use compact layout classes");
+}
+
 if (!app.includes("Сохранение лимита прогрева")) {
   throw new Error("warmup limit save action should show a clear result");
 }

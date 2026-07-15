@@ -384,6 +384,55 @@ h2 {
   align-self: end;
 }
 
+.warmup-mailbox-card {
+  display: grid;
+  gap: 10px;
+}
+
+.warmup-mailbox-head,
+.warmup-controls,
+.warmup-limit-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.warmup-mailbox-head {
+  justify-content: space-between;
+}
+
+.warmup-mailbox-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.warmup-controls {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.warmup-limit-form label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.warmup-limit-form input {
+  width: 72px;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.warmup-controls button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 #actionResult {
   margin: -8px 0 18px;
 }
