@@ -8,6 +8,10 @@ const state = {
   dashboard: null,
   settings: null,
   envCheck: null,
+  actionResults: {
+    global: null,
+    mailboxes: {},
+  },
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -16,7 +20,12 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error || data?.errors?.join("\n") || response.statusText);
+  if (!response.ok) {
+    const error = new Error(data?.error || data?.errors?.join("\n") || response.statusText);
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
   return data;
 }
 
@@ -41,6 +50,80 @@ function toast(message) {
   node.classList.add("show");
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => node.classList.remove("show"), 2500);
+}
+
+function actionDetails(details) {
+  if (!details) return "";
+  const body = typeof details === "string" ? details : JSON.stringify(details, null, 2);
+  return `<details><summary>Детали</summary><pre>${esc(body)}</pre></details>`;
+}
+
+function actionResultHtml(result) {
+  if (!result) return "";
+  const statusText = {
+    pending: "Выполняется",
+    success: "Успешно",
+    error: "Ошибка",
+    warn: "Внимание",
+  }[result.status] || result.status;
+  return `
+    <div class="action-result ${esc(result.status)}">
+      <div>
+        <strong>${esc(statusText)}: ${esc(result.title)}</strong>
+        <p>${esc(result.message)}</p>
+        <span>${fmtDate(result.createdAt)}</span>
+      </div>
+      ${actionDetails(result.details)}
+    </div>
+  `;
+}
+
+function renderGlobalActionResult() {
+  const node = $("#actionResult");
+  if (!node) return;
+  node.hidden = !state.actionResults.global;
+  node.innerHTML = actionResultHtml(state.actionResults.global);
+}
+
+function renderMailboxActionResult(mailboxId) {
+  const node = document.getElementById(`mailboxActionResult-${mailboxId}`);
+  if (!node) return;
+  node.innerHTML = actionResultHtml(state.actionResults.mailboxes[mailboxId]);
+}
+
+function setActionResult({ status = "success", title, message, details, target }) {
+  const result = { status, title, message, details, createdAt: new Date().toISOString() };
+  state.actionResults.global = result;
+  if (target?.type === "mailbox" && target.id) {
+    state.actionResults.mailboxes[target.id] = result;
+    renderMailboxActionResult(target.id);
+  }
+  renderGlobalActionResult();
+  toast(`${title}: ${message}`);
+}
+
+function errorMessage(error) {
+  const prefix = error.status ? `HTTP ${error.status}: ` : "";
+  return `${prefix}${error.message || "неизвестная ошибка"}`;
+}
+
+async function runAction({ title, pending = "Запрос отправлен, жду ответ сервера...", target, button }, task) {
+  if (button) button.disabled = true;
+  setActionResult({ status: "pending", title, message: pending, target });
+  try {
+    return await task();
+  } catch (error) {
+    setActionResult({
+      status: "error",
+      title,
+      message: errorMessage(error),
+      details: error.data || error.message,
+      target,
+    });
+    return null;
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function esc(value = "") {
@@ -224,6 +307,7 @@ async function loadMailboxes() {
         </div>
         <p>MX/SPF/DKIM/DMARC: ${mailbox.mx_status || "-"} / ${mailbox.spf_status || "-"} / ${mailbox.dkim_status || "-"} / ${mailbox.dmarc_status || "-"}</p>
         <p class="mailbox-guide">${esc(mailboxNextStep(mailbox))}</p>
+        <div id="mailboxActionResult-${mailbox.id}">${actionResultHtml(state.actionResults.mailboxes[mailbox.id])}</div>
         <div class="mailbox-actions">
           <button data-check-mailbox="${mailbox.id}" title="Проверяет SMTP-логин для отправки, IMAP-логин для входящих и DNS домена">Проверить SMTP/IMAP</button>
           <button data-sync-mailbox="${mailbox.id}" title="Ставит задачу worker на чтение новых писем из INBOX через IMAP">Синхронизировать входящие</button>
@@ -496,7 +580,13 @@ async function refresh() {
 }
 
 $$("nav button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
-$("#refreshBtn").addEventListener("click", () => refresh().then(() => toast("Обновлено")));
+$("#refreshBtn").addEventListener("click", (event) => runAction({
+  title: "Обновление данных",
+  button: event.currentTarget,
+}, async () => {
+  await refresh();
+  setActionResult({ status: "success", title: "Обновление данных", message: "Данные с сервера обновлены." });
+}));
 $("#leadSearch").addEventListener("input", () => loadLeads());
 
 document.body.addEventListener("click", (event) => {
@@ -544,101 +634,154 @@ $("#leadsTable").addEventListener("click", async (event) => {
   $("#leadDialog").showModal();
 });
 
-$("#leadForm").addEventListener("submit", async (event) => {
+$("#leadForm").addEventListener("submit", (event) => runAction({
+  title: "Добавление лида",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
-  await api("/api/leads", {
+  const result = await api("/api/leads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(formJson(event.target)),
   });
   event.target.reset();
   await refresh();
-  toast("Лид добавлен");
-});
+  setActionResult({ status: "success", title: "Добавление лида", message: "Лид добавлен в базу.", details: result });
+}));
 
-$("#importForm").addEventListener("submit", async (event) => {
+$("#importForm").addEventListener("submit", (event) => runAction({
+  title: "Импорт CSV",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
   const body = new FormData(event.target);
   const result = await api("/api/leads/import", { method: "POST", body });
   await refresh();
-  toast(`Импорт: ${result.imported}, дубли: ${result.duplicates}, пропуск: ${result.skipped}`);
-});
+  setActionResult({
+    status: "success",
+    title: "Импорт CSV",
+    message: `Импортировано: ${result.imported}, дубли: ${result.duplicates}, пропущено: ${result.skipped}.`,
+    details: result,
+  });
+}));
 
-$("#validateBtn").addEventListener("click", async () => {
+$("#validateBtn").addEventListener("click", (event) => runAction({
+  title: "Проверка email",
+  button: event.currentTarget,
+}, async () => {
   const result = await api("/api/validation/run", { method: "POST" });
-  toast(`Поставлено в очередь: ${result.queued}`);
-});
+  setActionResult({
+    status: "success",
+    title: "Проверка email",
+    message: `В очередь поставлено ${result.queued} задач.`,
+    details: result,
+  });
+}));
 
-$("#mailboxForm").addEventListener("submit", async (event) => {
+$("#mailboxForm").addEventListener("submit", (event) => runAction({
+  title: "Сохранение mailbox",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
   const payload = formJson(event.target);
   payload.warmup_enabled = event.target.elements.warmup_enabled.checked;
-  await api("/api/mailboxes", {
+  const result = await api("/api/mailboxes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   event.target.reset();
   await refresh();
-  toast("Mailbox сохранен");
-});
+  setActionResult({
+    status: "success",
+    title: "Сохранение mailbox",
+    message: `Mailbox ${result.email} сохранен. Теперь нажми «Проверить SMTP/IMAP».`,
+    details: result,
+  });
+}));
 
-$("#campaignForm").addEventListener("submit", async (event) => {
+$("#campaignForm").addEventListener("submit", (event) => runAction({
+  title: "Создание кампании",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
   const payload = formJson(event.target);
   payload.tracking_enabled = event.target.elements.tracking_enabled.checked;
   payload.manual_approval_required = event.target.elements.manual_approval_required.checked;
-  await api("/api/campaigns", {
+  const result = await api("/api/campaigns", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   event.target.reset();
   await refresh();
-  toast("Кампания создана");
-});
+  setActionResult({ status: "success", title: "Создание кампании", message: `Кампания «${result.name}» создана.`, details: result });
+}));
 
-$("#stepForm").addEventListener("submit", async (event) => {
+$("#stepForm").addEventListener("submit", (event) => runAction({
+  title: "Добавление шага",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
   const payload = formJson(event.target);
   payload.body_template_html = $("#htmlEditor").innerHTML;
-  await api(`/api/campaigns/${payload.campaign_id}/steps`, {
+  const result = await api(`/api/campaigns/${payload.campaign_id}/steps`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   await refresh();
-  toast("Шаг добавлен");
-});
+  setActionResult({ status: "success", title: "Добавление шага", message: `Шаг «${result.name}» добавлен.`, details: result });
+}));
 
-$("#attachmentForm").addEventListener("submit", async (event) => {
+$("#attachmentForm").addEventListener("submit", (event) => runAction({
+  title: "Загрузка вложения",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
   const form = new FormData(event.target);
   const stepId = form.get("step_id");
   form.delete("step_id");
-  await api(`/api/steps/${stepId}/attachments`, { method: "POST", body: form });
+  const result = await api(`/api/steps/${stepId}/attachments`, { method: "POST", body: form });
   event.target.reset();
   await refresh();
-  toast("Вложение добавлено");
-});
+  setActionResult({ status: "success", title: "Загрузка вложения", message: "Вложение добавлено к шагу.", details: result });
+}));
 
-$("#enrollBtn").addEventListener("click", async () => {
+$("#enrollBtn").addEventListener("click", (event) => runAction({
+  title: "Добавление лидов в кампанию",
+  button: event.currentTarget,
+}, async () => {
   const campaignId = $("#activeCampaign").value;
   const leadIds = state.leads.filter((lead) => ["valid", "risky"].includes(lead.validation_status)).map((lead) => lead.id);
   const mailboxIds = state.mailboxes.map((mailbox) => mailbox.id);
-  await api(`/api/campaigns/${campaignId}/enroll`, {
+  const result = await api(`/api/campaigns/${campaignId}/enroll`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lead_ids: leadIds, mailbox_ids: mailboxIds }),
   });
   await refresh();
-  toast("Лиды добавлены в кампанию");
-});
+  setActionResult({
+    status: "success",
+    title: "Добавление лидов в кампанию",
+    message: `Добавлены valid/risky лиды: ${leadIds.length}. Mailbox для отправки: ${mailboxIds.length}.`,
+    details: result,
+  });
+}));
 
-$("#preflightBtn").addEventListener("click", async () => {
+$("#preflightBtn").addEventListener("click", (event) => runAction({
+  title: "Проверка перед запуском",
+  button: event.currentTarget,
+}, async () => {
   const result = await api(`/api/campaigns/${$("#activeCampaign").value}/preflight`);
   $("#preflightResult").textContent = JSON.stringify(result, null, 2);
-});
+  setActionResult({
+    status: result.ok ? "success" : "error",
+    title: "Проверка перед запуском",
+    message: result.ok ? "Кампания готова к запуску." : `Запуск заблокирован: ${result.errors?.length || 0} ошибок.`,
+    details: result,
+  });
+}));
 
 async function startCampaign(mode) {
   const result = await api(`/api/campaigns/${$("#activeCampaign").value}/start`, {
@@ -648,18 +791,31 @@ async function startCampaign(mode) {
   });
   $("#preflightResult").textContent = JSON.stringify(result, null, 2);
   await refresh();
-  toast(`Очередь: ${result.queued}`);
+  setActionResult({
+    status: "success",
+    title: mode === "test" ? "Тестовый запуск кампании" : "Запуск кампании",
+    message: `Режим ${mode}: в очередь поставлено ${result.queued} писем.`,
+    details: result,
+  });
 }
 
-$("#startManualBtn").addEventListener("click", () => startCampaign("manual"));
-$("#startAutoBtn").addEventListener("click", () => startCampaign("auto"));
-$("#startTestBtn").addEventListener("click", () => startCampaign("test"));
+$("#startManualBtn").addEventListener("click", (event) => runAction({ title: "Запуск кампании", button: event.currentTarget }, () => startCampaign("manual")));
+$("#startAutoBtn").addEventListener("click", (event) => runAction({ title: "Автозапуск кампании", button: event.currentTarget }, () => startCampaign("auto")));
+$("#startTestBtn").addEventListener("click", (event) => runAction({ title: "Тестовый запуск кампании", button: event.currentTarget }, () => startCampaign("test")));
 
-$("#approveAllBtn").addEventListener("click", async () => {
-  await api(`/api/campaigns/${$("#activeCampaign").value}/approve-pending`, { method: "POST" });
+$("#approveAllBtn").addEventListener("click", (event) => runAction({
+  title: "Подтверждение pending",
+  button: event.currentTarget,
+}, async () => {
+  const result = await api(`/api/campaigns/${$("#activeCampaign").value}/approve-pending`, { method: "POST" });
   await refresh();
-  toast("Pending подтверждены");
-});
+  setActionResult({
+    status: "success",
+    title: "Подтверждение pending",
+    message: "Pending-письма подтверждены.",
+    details: result,
+  });
+}));
 
 document.body.addEventListener("click", async (event) => {
   const mailboxId = event.target.dataset.checkMailbox;
@@ -669,75 +825,166 @@ document.body.addEventListener("click", async (event) => {
   const deleteAttachmentId = event.target.dataset.deleteAttachment;
   const deleteSuppressionId = event.target.dataset.deleteSuppression;
   if (mailboxId) {
-    const result = await api(`/api/mailboxes/${mailboxId}/check`, { method: "POST" });
-    await refresh();
-    toast(result.smtp?.dryRun || result.imap?.dryRun
-      ? "Проверка записана в dry-run. Для реальной проверки выключи MAIL_DRY_RUN."
-      : `SMTP/IMAP проверены. DNS: ${JSON.stringify(result.domain)}`);
+    await runAction({
+      title: "Проверка SMTP/IMAP",
+      target: { type: "mailbox", id: mailboxId },
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/mailboxes/${mailboxId}/check`, { method: "POST" });
+      await refresh();
+      const dryRun = result.smtp?.dryRun || result.imap?.dryRun;
+      setActionResult({
+        status: dryRun ? "warn" : "success",
+        title: "Проверка SMTP/IMAP",
+        message: dryRun
+          ? "MAIL_DRY_RUN=true: сервис записал проверку как успешную, но к SMTP/IMAP реально не подключался."
+          : `SMTP подключился, IMAP открыл INBOX. DNS: MX ${result.domain?.mxStatus || "-"}, SPF ${result.domain?.spfStatus || "-"}, DKIM ${result.domain?.dkimStatus || "-"}, DMARC ${result.domain?.dmarcStatus || "-"}.`,
+        details: result,
+        target: { type: "mailbox", id: mailboxId },
+      });
+    });
+    return;
   }
   if (approveId) {
-    await api(`/api/sending/${approveId}/approve`, { method: "POST" });
-    await refresh();
-    toast("Письмо подтверждено");
+    await runAction({
+      title: "Подтверждение письма",
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/sending/${approveId}/approve`, { method: "POST" });
+      await refresh();
+      setActionResult({ status: "success", title: "Подтверждение письма", message: "Письмо подтверждено для отправки.", details: result });
+    });
+    return;
   }
   if (syncMailboxId) {
-    await api(`/api/mailboxes/${syncMailboxId}/sync`, { method: "POST" });
-    await refresh();
-    toast("Синхронизация входящих поставлена в очередь");
+    await runAction({
+      title: "Синхронизация входящих",
+      target: { type: "mailbox", id: syncMailboxId },
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/mailboxes/${syncMailboxId}/sync`, { method: "POST" });
+      await refresh();
+      setActionResult({
+        status: "success",
+        title: "Синхронизация входящих",
+        message: "Задача поставлена в очередь worker. Новые письма появятся во «Входящих» после обработки.",
+        details: result,
+        target: { type: "mailbox", id: syncMailboxId },
+      });
+    });
+    return;
   }
   if (toggleWarmupId) {
-    await api(`/api/mailboxes/${toggleWarmupId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ warmup_enabled: event.target.dataset.enabled }),
+    const enabled = event.target.dataset.enabled === "true";
+    await runAction({
+      title: enabled ? "Включение прогрева" : "Выключение прогрева",
+      target: { type: "mailbox", id: toggleWarmupId },
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/mailboxes/${toggleWarmupId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ warmup_enabled: event.target.dataset.enabled }),
+      });
+      await refresh();
+      setActionResult({
+        status: "success",
+        title: enabled ? "Включение прогрева" : "Выключение прогрева",
+        message: enabled ? "Прогрев включен для mailbox." : "Прогрев выключен для mailbox.",
+        details: result,
+        target: { type: "mailbox", id: toggleWarmupId },
+      });
     });
-    await refresh();
-    toast("Настройка прогрева обновлена");
+    return;
   }
   if (deleteAttachmentId) {
-    await api(`/api/attachments/${deleteAttachmentId}`, { method: "DELETE" });
-    await refresh();
-    toast("Вложение удалено");
+    await runAction({
+      title: "Удаление вложения",
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/attachments/${deleteAttachmentId}`, { method: "DELETE" });
+      await refresh();
+      setActionResult({ status: "success", title: "Удаление вложения", message: "Вложение удалено.", details: result });
+    });
+    return;
   }
   if (deleteSuppressionId) {
-    await api(`/api/suppressions/${deleteSuppressionId}`, { method: "DELETE" });
-    await refresh();
-    toast("Запись удалена");
+    await runAction({
+      title: "Удаление из стоп-листа",
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/suppressions/${deleteSuppressionId}`, { method: "DELETE" });
+      await refresh();
+      setActionResult({ status: "success", title: "Удаление из стоп-листа", message: "Запись удалена из стоп-листа.", details: result });
+    });
   }
 });
 
 document.body.addEventListener("change", async (event) => {
   const id = event.target.dataset.classify;
   if (!id) return;
-  await api(`/api/inbox/${id}/classification`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ classification: event.target.value }),
+  await runAction({
+    title: "Классификация ответа",
+  }, async () => {
+    const result = await api(`/api/inbox/${id}/classification`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classification: event.target.value }),
+    });
+    setActionResult({
+      status: "success",
+      title: "Классификация ответа",
+      message: `Класс ответа обновлен на ${event.target.value}.`,
+      details: result,
+    });
   });
-  toast("Класс ответа обновлен");
 });
 
-$("#syncInboxBtn").addEventListener("click", async () => {
+$("#syncInboxBtn").addEventListener("click", (event) => runAction({
+  title: "Синхронизация всех входящих",
+  button: event.currentTarget,
+}, async () => {
   const result = await api("/api/inbox/sync", { method: "POST" });
-  toast(`IMAP sync: ${result.queued} задач`);
-});
+  setActionResult({
+    status: "success",
+    title: "Синхронизация всех входящих",
+    message: `В очередь поставлено ${result.queued} IMAP-задач.`,
+    details: result,
+  });
+}));
 
-$("#warmupNowBtn").addEventListener("click", async () => {
-  await api("/api/warmup/send-now", { method: "POST" });
-  toast("Warmup поставлен в очередь");
-});
+$("#warmupNowBtn").addEventListener("click", (event) => runAction({
+  title: "Warmup сейчас",
+  button: event.currentTarget,
+}, async () => {
+  const result = await api("/api/warmup/send-now", { method: "POST" });
+  setActionResult({
+    status: "success",
+    title: "Warmup сейчас",
+    message: "Warmup-письмо поставлено в очередь worker.",
+    details: result,
+  });
+}));
 
-$("#suppressionForm").addEventListener("submit", async (event) => {
+$("#suppressionForm").addEventListener("submit", (event) => runAction({
+  title: "Добавление в стоп-лист",
+  button: event.submitter,
+}, async () => {
   event.preventDefault();
-  await api("/api/suppressions", {
+  const result = await api("/api/suppressions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(formJson(event.target)),
   });
   event.target.reset();
   await refresh();
-  toast("Добавлено в стоп-лист");
-});
+  setActionResult({
+    status: "success",
+    title: "Добавление в стоп-лист",
+    message: "Запись добавлена в стоп-лист.",
+    details: result,
+  });
+}));
 
 $("#closeLeadDialog").addEventListener("click", () => $("#leadDialog").close());
 

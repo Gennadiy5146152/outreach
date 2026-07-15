@@ -345,6 +345,51 @@ h2 {
   color: var(--ink);
 }
 
+#actionResult {
+  margin: -8px 0 18px;
+}
+
+.action-result {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.action-result.success {
+  border-left-color: var(--accent);
+}
+
+.action-result.pending,
+.action-result.warn {
+  border-left-color: var(--warn);
+  background: #fffaf0;
+}
+
+.action-result.error {
+  border-left-color: var(--danger);
+  background: #fff7f6;
+}
+
+.action-result p {
+  margin: 4px 0;
+}
+
+.action-result span,
+.action-result summary {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.action-result pre {
+  max-height: 180px;
+  margin: 8px 0 0;
+}
+
 .env-panel {
   border-color: rgba(161, 92, 7, 0.22);
 }
