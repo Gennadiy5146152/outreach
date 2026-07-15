@@ -546,6 +546,11 @@ h2 {
   gap: 14px;
 }
 
+.env-grid section,
+.env-grid .cards {
+  min-width: 0;
+}
+
 .env-grid h3 {
   margin: 0 0 8px;
 }
@@ -559,6 +564,21 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fffaf2;
+  min-width: 0;
+}
+
+.env-item > div {
+  min-width: 0;
+}
+
+.env-item strong,
+.env-item p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.env-item .pill {
+  flex: 0 0 auto;
 }
 
 .env-item.done {
@@ -574,6 +594,9 @@ h2 {
   min-height: 250px;
   margin: 0;
   white-space: pre-wrap;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .metric,
