@@ -5,6 +5,8 @@ const state = {
   queue: [],
   suppressions: [],
   warmup: null,
+  warmupPage: 1,
+  warmupPageSize: 20,
   dashboard: null,
   settings: null,
   envCheck: null,
@@ -508,7 +510,8 @@ async function loadInbox() {
 }
 
 async function loadWarmup() {
-  state.warmup = await api("/api/warmup");
+  state.warmup = await api(`/api/warmup?page=${state.warmupPage}&pageSize=${state.warmupPageSize}`);
+  state.warmupPage = state.warmup.pagination.page;
   $("#warmupStats").innerHTML = `
     <p>Отправлено warmup: <strong>${state.warmup.stats.sent}</strong></p>
     <p>Ответов warmup: <strong>${state.warmup.stats.replies}</strong></p>
@@ -525,11 +528,23 @@ async function loadWarmup() {
       `,
     )
     .join("");
+  const pagination = state.warmup.pagination;
+  const from = pagination.total ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
+  const to = Math.min(pagination.page * pagination.pageSize, pagination.total);
   $("#warmupEventsTable").innerHTML = `
     <thead><tr><th>Время</th><th>Тип</th><th>Payload</th></tr></thead>
-    <tbody>${state.warmup.events
-      .map((event) => `<tr><td>${fmtDate(event.created_at)}</td><td>${event.event_type}</td><td><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></td></tr>`)
-      .join("")}</tbody>
+    <tbody>${state.warmup.events.length
+      ? state.warmup.events
+        .map((event) => `<tr><td>${fmtDate(event.created_at)}</td><td>${event.event_type}</td><td><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></td></tr>`)
+        .join("")
+      : `<tr><td colspan="3" class="muted">Warmup событий пока нет.</td></tr>`}</tbody>
+  `;
+  $("#warmupPagination").innerHTML = `
+    <span>${from}-${to} из ${pagination.total} · страница ${pagination.page} из ${pagination.totalPages}</span>
+    <div>
+      <button data-warmup-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>Назад</button>
+      <button data-warmup-page="${pagination.page + 1}" ${pagination.page >= pagination.totalPages ? "disabled" : ""}>Вперёд</button>
+    </div>
   `;
 }
 
@@ -852,6 +867,12 @@ document.body.addEventListener("click", async (event) => {
   const approveId = event.target.dataset.approve;
   const deleteAttachmentId = event.target.dataset.deleteAttachment;
   const deleteSuppressionId = event.target.dataset.deleteSuppression;
+  const warmupPage = event.target.dataset.warmupPage;
+  if (warmupPage) {
+    state.warmupPage = Number(warmupPage);
+    await loadWarmup();
+    return;
+  }
   if (mailboxId) {
     await runAction({
       title: "Проверка SMTP/IMAP",

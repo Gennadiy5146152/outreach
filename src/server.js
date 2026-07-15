@@ -793,8 +793,11 @@ app.get("/api/events", asyncHandler(async (_req, res) => {
   res.json(result.rows);
 }));
 
-app.get("/api/warmup", asyncHandler(async (_req, res) => {
-  const [mailboxes, stats, events] = await Promise.all([
+app.get("/api/warmup", asyncHandler(async (req, res) => {
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize || 20), 5), 100);
+  const page = Math.max(Number(req.query.page || 1), 1);
+  const offset = (page - 1) * pageSize;
+  const [mailboxes, stats, totalEvents, events] = await Promise.all([
     query("SELECT id, name, email, warmup_enabled, daily_warmup_limit, health_status FROM mailboxes ORDER BY created_at DESC"),
     query(`
       SELECT
@@ -804,9 +807,20 @@ app.get("/api/warmup", asyncHandler(async (_req, res) => {
       FROM events
       WHERE created_at > now() - interval '30 days'
     `),
-    query("SELECT * FROM events WHERE event_type LIKE 'warmup_%' ORDER BY created_at DESC LIMIT 100"),
+    query("SELECT count(*)::int AS total FROM events WHERE event_type LIKE 'warmup_%'"),
+    query("SELECT * FROM events WHERE event_type LIKE 'warmup_%' ORDER BY created_at DESC LIMIT $1 OFFSET $2", [pageSize, offset]),
   ]);
-  res.json({ mailboxes: mailboxes.rows, stats: stats.rows[0], events: events.rows });
+  res.json({
+    mailboxes: mailboxes.rows,
+    stats: stats.rows[0],
+    events: events.rows,
+    pagination: {
+      page,
+      pageSize,
+      total: totalEvents.rows[0].total,
+      totalPages: Math.max(Math.ceil(totalEvents.rows[0].total / pageSize), 1),
+    },
+  });
 }));
 
 app.post("/api/warmup/send-now", asyncHandler(async (_req, res) => {

@@ -687,6 +687,26 @@ pre {
   margin-bottom: 12px;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
+.pagination button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 .bar {
   height: 10px;
   overflow: hidden;
@@ -779,6 +799,11 @@ dialog::backdrop {
   }
 
   .settings-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pagination {
     align-items: stretch;
     flex-direction: column;
   }
