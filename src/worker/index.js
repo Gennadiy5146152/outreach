@@ -110,6 +110,16 @@ async function failJob(job, error) {
   );
 }
 
+async function enqueueInboxSync(mailboxId, delaySeconds = 30) {
+  await query(
+    `
+      INSERT INTO job_queue(job_type, payload, run_at)
+      VALUES ('sync_inbox', jsonb_build_object('mailboxId', $1::text), now() + (($2 || ' seconds')::interval))
+    `,
+    [mailboxId, delaySeconds],
+  );
+}
+
 async function handleJob(job) {
   if (job.job_type === "validate_lead") {
     const lead = (await query("SELECT * FROM leads WHERE id = $1", [job.payload.leadId])).rows[0];
@@ -450,6 +460,12 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
     [mailbox.id, `Re: ${subject}`, replyText, replyText.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
   await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [mailbox.id]);
+  await enqueueInboxSync(fromMailbox.id, 45);
+  await logEvent("warmup_sync_queued", {
+    mailboxId: fromMailbox.id,
+    messageId: message.id,
+    payload: { reason: "reply_sent", from: mailbox.email },
+  });
 }
 
 async function findLinkedOutbound(parsed, fromEmail) {
@@ -589,7 +605,12 @@ async function sendWarmup() {
     [from.id, draft.subject, draft.body, draft.body.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
   await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [from.id]);
+  await enqueueInboxSync(to.id, 45);
   await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, subject: draft.subject, dryRun: runtime.dryRun } });
+  await logEvent("warmup_sync_queued", {
+    mailboxId: to.id,
+    payload: { reason: "warmup_sent", from: from.email, subject: draft.subject },
+  });
 }
 
 async function tick() {
