@@ -336,8 +336,10 @@ async function loadMailboxes() {
           <form class="mailbox-edit-form" data-mailbox-edit="${mailbox.id}">
             <label><span>SMTP</span><input name="smtp_host" value="${esc(mailbox.smtp_host)}" required /></label>
             <label><span>SMTP порт</span><input name="smtp_port" type="number" min="1" max="65535" value="${mailbox.smtp_port}" required /></label>
+            <label class="mailbox-edit-check"><input name="smtp_secure" type="checkbox" ${mailbox.smtp_secure ? "checked" : ""} /> SMTP SSL/TLS сразу</label>
             <label><span>IMAP</span><input name="imap_host" value="${esc(mailbox.imap_host)}" required /></label>
             <label><span>IMAP порт</span><input name="imap_port" type="number" min="1" max="65535" value="${mailbox.imap_port}" required /></label>
+            <label class="mailbox-edit-check"><input name="imap_secure" type="checkbox" ${mailbox.imap_secure ? "checked" : ""} /> IMAP SSL/TLS сразу</label>
             <label><span>Логин</span><input name="username" value="${esc(mailbox.username || mailbox.email)}" /></label>
             <label><span>Новый пароль</span><input name="password" type="password" autocomplete="new-password" placeholder="Оставь пустым, если не меняешь" /></label>
             <label><span>Имя отправителя</span><input name="from_name" value="${esc(mailbox.from_name || mailbox.name)}" /></label>
@@ -822,6 +824,8 @@ document.body.addEventListener("submit", (event) => {
     payload.smtp_port = Number(payload.smtp_port);
     payload.imap_port = Number(payload.imap_port);
     payload.daily_warmup_limit = Number(payload.daily_warmup_limit);
+    payload.smtp_secure = event.target.elements.smtp_secure.checked;
+    payload.imap_secure = event.target.elements.imap_secure.checked;
     const result = await api(`/api/mailboxes/${mailboxId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

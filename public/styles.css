@@ -370,6 +370,16 @@ h2 {
   font-weight: 700;
 }
 
+.mailbox-edit-form .mailbox-edit-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mailbox-edit-check input {
+  width: auto;
+}
+
 .mailbox-edit-form button {
   align-self: end;
 }
