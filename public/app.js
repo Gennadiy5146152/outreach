@@ -522,7 +522,7 @@ async function loadCampaigns() {
         <article class="card">
           <strong>${esc(campaign.name)}</strong> ${pill(campaign.status)}
           <p>${esc(campaign.description || "")}</p>
-          <p>Шаги: ${campaign.steps.length} · tracking: ${campaign.tracking_enabled ? "on" : "off"} · manual: ${campaign.manual_approval_required ? "да" : "нет"}</p>
+          <p>Шагов: ${campaign.steps.length} · Отслеживание открытий: ${campaign.tracking_enabled ? "включено" : "выключено"} · Подтверждение перед отправкой: ${campaign.manual_approval_required ? "включено" : "выключено"}</p>
           <ol>${campaign.steps.map((step) => `<li>${esc(step.name)}: ${esc(step.subject_template)} (${step.attachments?.length || 0} влож.)</li>`).join("")}</ol>
         </article>
       `,

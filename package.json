@@ -7,7 +7,7 @@
     "dev": "node src/server.js",
     "worker": "node src/worker/index.js",
     "migrate": "node src/db/migrate.js",
-    "check": "node --check src/server.js && node --check src/worker/index.js && node --check src/services/mail.js && node --check public/app.js && node --check tests/smoke.js && node tests/test-warmup-dialogues-static.js && node tests/test-warmup-limit-static.js && node tests/test-mailbox-edit-settings-static.js && node tests/test-env-layout-static.js && node tests/test-auth-static.js && node tests/test-leads-validation-labels-static.js && node tests/test-attachment-form-layout-static.js && node tests/test-segments-ui-static.js && node tests/test-campaign-leads-static.js",
+    "check": "node --check src/server.js && node --check src/worker/index.js && node --check src/services/mail.js && node --check public/app.js && node --check tests/smoke.js && node tests/test-warmup-dialogues-static.js && node tests/test-warmup-limit-static.js && node tests/test-mailbox-edit-settings-static.js && node tests/test-env-layout-static.js && node tests/test-auth-static.js && node tests/test-leads-validation-labels-static.js && node tests/test-attachment-form-layout-static.js && node tests/test-segments-ui-static.js && node tests/test-campaign-leads-static.js && node tests/test-campaign-card-labels-static.js",
     "check:smoke": "node tests/smoke.js"
   },
   "dependencies": {
