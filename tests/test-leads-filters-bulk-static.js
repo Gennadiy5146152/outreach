@@ -12,6 +12,8 @@ for (const expected of [
   "campaignAvailableLeadsTable",
   "campaignLeadSelectAll",
   "Добавить выбранных лидов",
+  "Новые лиды для добавления",
+  "Уже в кампании",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`lead filtering UI should include ${expected}`);
@@ -26,6 +28,9 @@ for (const expected of [
   "/available-leads",
   "data-campaign-lead-id",
   "Выбери хотя бы одного лида",
+  "Все подходящие лиды уже добавлены",
+  "selectAll.disabled = available.length === 0",
+  "enrollButton.disabled = count === 0",
   "leadValidationFilter",
 ]) {
   if (!app.includes(expected)) {
@@ -45,7 +50,7 @@ for (const expected of [
   }
 }
 
-for (const expected of [".lead-filters", ".lead-bulkbar"]) {
+for (const expected of [".lead-filters", ".lead-bulkbar", ".subsection-title"]) {
   if (!css.includes(expected)) {
     throw new Error(`lead filtering styles should include ${expected}`);
   }

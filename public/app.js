@@ -573,18 +573,24 @@ function updateCampaignLeadSelection() {
   const count = state.selectedCampaignLeadIds.size;
   const selection = $("#campaignLeadSelection");
   const selectAll = $("#campaignLeadSelectAll");
+  const enrollButton = $("#enrollBtn");
   if (selection) selection.textContent = `Выбрано: ${count}`;
   if (selectAll) {
     const available = state.campaignAvailableLeads;
+    selectAll.disabled = available.length === 0;
     selectAll.checked = available.length > 0 && available.every((lead) => state.selectedCampaignLeadIds.has(lead.id));
     selectAll.indeterminate = count > 0 && !selectAll.checked;
   }
+  if (enrollButton) enrollButton.disabled = count === 0;
 }
 
 function renderCampaignAvailableLeads() {
   const table = $("#campaignAvailableLeadsTable");
   if (!table) return;
   const available = state.campaignAvailableLeads;
+  const emptyText = state.campaignLeads.length
+    ? "Все подходящие лиды уже добавлены в эту кампанию. Проверь список ниже и переходи к шагу 4 “Проверка”."
+    : "Нет доступных лидов для этой кампании. Проверь, что у лидов выбран один из сегментов кампании, а email проверен как “можно отправлять” или “нужна проверка”.";
   table.innerHTML = `
     <thead><tr><th></th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th></tr></thead>
     <tbody>
@@ -598,7 +604,7 @@ function renderCampaignAvailableLeads() {
             <td>${pill(lead.validation_status)}<br><span class="muted">${esc(validationReasonText(lead.validation_reason))}</span></td>
           </tr>
         `).join("")
-        : `<tr><td colspan="5" class="muted">Нет доступных лидов для этой кампании. Проверь, что у лидов выбран один из сегментов кампании, email проверен как “можно отправлять” или “нужна проверка”, и лиды еще не добавлены в эту кампанию.</td></tr>`}
+        : `<tr><td colspan="5" class="muted">${esc(emptyText)}</td></tr>`}
     </tbody>
   `;
   updateCampaignLeadSelection();

@@ -662,6 +662,11 @@ h2 {
   font-weight: 700;
 }
 
+.subsection-title {
+  margin: 16px 0 6px;
+  font-size: 18px;
+}
+
 .lead-filters {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(170px, 0.8fr) auto;
