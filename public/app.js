@@ -159,9 +159,48 @@ function fmtCountdown(value) {
   return `${minutes} мин ${String(seconds).padStart(2, "0")} сек`;
 }
 
+const STATUS_LABELS = {
+  new: "новый",
+  validated: "проверен",
+  invalid: "не отправлять",
+  enrolled: "в кампании",
+  sent: "отправлено",
+  opened: "открыто",
+  replied: "ответил",
+  meeting: "встреча",
+  won: "успех",
+  lost: "потерян",
+  suppressed: "в стоп-листе",
+  unknown: "еще не проверяли",
+  valid: "можно отправлять",
+  risky: "нужна проверка",
+  pending: "в очереди",
+  retrying: "повтор",
+  failed: "ошибка",
+  bounced: "недоставка",
+};
+
+const VALIDATION_REASON_LABELS = {
+  invalid_syntax: "некорректный формат email",
+  domain_not_found: "домен email не найден",
+  mx_not_found: "у домена нет почтовых MX-записей",
+  disposable_domain: "одноразовый почтовый домен",
+  role_based: "общий ящик вроде info@, sales@ или team@",
+  safe_checks_passed: "формат, домен и почтовые записи в порядке",
+  bounce: "почтовый сервер вернул недоставку",
+};
+
+function statusLabel(value) {
+  return STATUS_LABELS[value] || value || "";
+}
+
+function validationReasonText(value) {
+  return VALIDATION_REASON_LABELS[value] || value || "";
+}
+
 function pill(value) {
   const cls = ["failed", "invalid", "bounced"].includes(value) ? "bad" : ["pending", "risky", "retrying"].includes(value) ? "warn" : "";
-  return `<span class="pill ${cls}">${value || ""}</span>`;
+  return `<span class="pill ${cls}">${esc(statusLabel(value))}</span>`;
 }
 
 function mailboxNextStep(mailbox) {
@@ -312,7 +351,7 @@ async function loadLeads() {
   const search = encodeURIComponent($("#leadSearch")?.value || "");
   state.leads = await api(`/api/leads?search=${search}`);
   $("#leadsTable").innerHTML = `
-    <thead><tr><th>Компания</th><th>Email</th><th>Сегмент</th><th>Статус</th><th>Валидация</th><th>Источник</th></tr></thead>
+    <thead><tr><th>Компания</th><th>Email</th><th>Сегмент</th><th>Статус</th><th>Проверка email</th><th>Источник</th></tr></thead>
     <tbody>
       ${state.leads.length
         ? state.leads
@@ -323,7 +362,7 @@ async function loadLeads() {
               <td>${esc(lead.email)}</td>
               <td>${esc(lead.segment || "")}</td>
               <td>${pill(lead.status)}</td>
-              <td>${pill(lead.validation_status)}<br><span class="muted">${esc(lead.validation_reason || "")}</span></td>
+              <td>${pill(lead.validation_status)}<br><span class="muted">${esc(validationReasonText(lead.validation_reason))}</span></td>
               <td>${esc(lead.source || "")}</td>
             </tr>
           `,
