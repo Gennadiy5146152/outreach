@@ -14,6 +14,10 @@ export function smtpTransport(mailbox) {
     host: mailbox.smtp_host,
     port: mailbox.smtp_port,
     secure: mailbox.smtp_secure,
+    connectionTimeout: 12000,
+    greetingTimeout: 12000,
+    socketTimeout: 20000,
+    dnsTimeout: 8000,
     auth: {
       user: mailbox.username || mailbox.email,
       pass: mailboxPassword(mailbox),
@@ -73,6 +77,9 @@ export async function createImapClient(mailbox) {
       user: mailbox.username || mailbox.email,
       pass: mailboxPassword(mailbox),
     },
+    connectionTimeout: 12000,
+    greetingTimeout: 12000,
+    socketTimeout: 20000,
     logger: false,
   });
 }

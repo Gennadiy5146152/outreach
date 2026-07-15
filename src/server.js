@@ -68,6 +68,15 @@ async function saveSecretToDotenv(key, value) {
   return normalizedKey;
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timeout after ${Math.round(ms / 1000)}s`)), ms);
+    }),
+  ]);
+}
+
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const [db, runtime] = await Promise.all([query("SELECT now() AS now"), getRuntimeSettings()]);
   res.json({
@@ -418,6 +427,12 @@ app.get("/api/mailboxes", asyncHandler(async (_req, res) => {
 }));
 
 app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
+  const current = (await query("SELECT * FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
+  if (!current) return res.status(404).json({ error: "not_found" });
+  const password = String(req.body.password || "");
+  const passwordEnvKey = password
+    ? await saveSecretToDotenv(current.password_env_key || mailboxPasswordEnvKey(current.email), password)
+    : null;
   const result = await query(
     `
       UPDATE mailboxes
@@ -437,6 +452,7 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
           username = COALESCE($15, username),
           from_name = COALESCE($16, from_name),
           provider = COALESCE($17, provider),
+          password_env_key = COALESCE($18, password_env_key),
           smtp_verified_at = CASE WHEN $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL THEN NULL ELSE smtp_verified_at END,
           imap_verified_at = CASE WHEN $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL THEN NULL ELSE imap_verified_at END,
           updated_at = now()
@@ -461,6 +477,7 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
       req.body.username || null,
       req.body.from_name || null,
       req.body.provider || null,
+      passwordEnvKey,
     ],
   );
   res.json(result.rows[0]);
@@ -520,18 +537,28 @@ app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
   const mailbox = (await query("SELECT * FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
   if (!mailbox) return res.status(404).json({ error: "not_found" });
 
-  const smtp = await verifySmtp(mailbox);
-  const imap = await verifyImap(mailbox);
-  const domain = await checkSendingDomain(mailbox);
+  const smtp = await withTimeout(verifySmtp(mailbox), 15000, "SMTP")
+    .then((result) => ({ ...result, ok: true }))
+    .catch((error) => ({ ok: false, error: error.message, code: error.code, command: error.command }));
+  const imap = await withTimeout(verifyImap(mailbox), 15000, "IMAP")
+    .then((result) => ({ ...result, ok: true }))
+    .catch((error) => ({ ok: false, error: error.message, code: error.code }));
+  const domain = await checkSendingDomain(mailbox)
+    .catch((error) => ({ ok: false, error: error.message }));
+
   await query(
     `
       UPDATE mailboxes
-      SET smtp_verified_at = now(), imap_verified_at = now(), health_status = 'ok', updated_at = now()
+      SET smtp_verified_at = CASE WHEN $2 THEN now() ELSE NULL END,
+          imap_verified_at = CASE WHEN $3 THEN now() ELSE NULL END,
+          health_status = CASE WHEN $2 AND $3 THEN 'ok' ELSE 'error' END,
+          error_count = CASE WHEN $2 AND $3 THEN error_count ELSE error_count + 1 END,
+          updated_at = now()
       WHERE id = $1
     `,
-    [mailbox.id],
+    [mailbox.id, smtp.ok, imap.ok],
   );
-  res.json({ smtp, imap, domain });
+  res.json({ ok: smtp.ok && imap.ok, smtp, imap, domain });
 }));
 
 app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {

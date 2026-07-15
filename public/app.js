@@ -339,6 +339,7 @@ async function loadMailboxes() {
             <label><span>IMAP</span><input name="imap_host" value="${esc(mailbox.imap_host)}" required /></label>
             <label><span>IMAP порт</span><input name="imap_port" type="number" min="1" max="65535" value="${mailbox.imap_port}" required /></label>
             <label><span>Логин</span><input name="username" value="${esc(mailbox.username || mailbox.email)}" /></label>
+            <label><span>Новый пароль</span><input name="password" type="password" autocomplete="new-password" placeholder="Оставь пустым, если не меняешь" /></label>
             <label><span>Имя отправителя</span><input name="from_name" value="${esc(mailbox.from_name || mailbox.name)}" /></label>
             <label><span>Лимит прогрева</span><input name="daily_warmup_limit" type="number" min="1" value="${mailbox.daily_warmup_limit}" /></label>
             <button>Сохранить подключение</button>
@@ -983,12 +984,14 @@ document.body.addEventListener("click", async (event) => {
       const result = await api(`/api/mailboxes/${mailboxId}/check`, { method: "POST" });
       await refresh();
       const dryRun = result.smtp?.dryRun || result.imap?.dryRun;
+      const smtpText = result.smtp?.ok ? "SMTP: ok" : `SMTP: ошибка ${result.smtp?.error || "unknown"}`;
+      const imapText = result.imap?.ok ? "IMAP: ok" : `IMAP: ошибка ${result.imap?.error || "unknown"}`;
       setActionResult({
-        status: dryRun ? "warn" : "success",
+        status: dryRun ? "warn" : result.ok ? "success" : "error",
         title: "Проверка SMTP/IMAP",
         message: dryRun
           ? "Включен dry-run: сервис записал проверку как успешную, но к SMTP/IMAP реально не подключался."
-          : `SMTP подключился, IMAP открыл INBOX. DNS: MX ${result.domain?.mxStatus || "-"}, SPF ${result.domain?.spfStatus || "-"}, DKIM ${result.domain?.dkimStatus || "-"}, DMARC ${result.domain?.dmarcStatus || "-"}.`,
+          : `${smtpText}. ${imapText}. DNS: MX ${result.domain?.mxStatus || "-"}, SPF ${result.domain?.spfStatus || "-"}, DKIM ${result.domain?.dkimStatus || "-"}, DMARC ${result.domain?.dmarcStatus || "-"}.`,
         details: result,
         target: { type: "mailbox", id: mailboxId },
       });
