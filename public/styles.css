@@ -742,6 +742,29 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.draft-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.inline-edit {
+  margin-top: 8px;
+}
+
+.inline-edit summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.outreach-draft-edit-form {
+  min-width: min(520px, 76vw);
+  margin-top: 8px;
+}
+
 .form {
   display: grid;
   gap: 10px;

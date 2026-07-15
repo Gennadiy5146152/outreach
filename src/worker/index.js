@@ -285,15 +285,22 @@ async function lockNextSend() {
       `
         SELECT q.*, l.email AS lead_email, l.company, l.contact_name, l.position, l.website, l.domain, l.segment, l.city, l.pain,
                l.validation_status, l.suppressed_at,
-               c.tracking_enabled, c.send_window_start, c.send_window_end, c.send_days, c.min_delay_minutes, c.max_delay_minutes,
+               COALESCE(c.tracking_enabled, false) AS tracking_enabled,
+               COALESCE(c.send_window_start, m.send_window_start) AS send_window_start,
+               COALESCE(c.send_window_end, m.send_window_end) AS send_window_end,
+               COALESCE(c.send_days, m.send_days) AS send_days,
+               COALESCE(c.min_delay_minutes, m.min_delay_minutes) AS min_delay_minutes,
+               COALESCE(c.max_delay_minutes, m.max_delay_minutes) AS max_delay_minutes,
                s.name AS step_name, s.position AS step_position, s.subject_template, s.body_template_text, s.body_template_html,
+               ods.position AS outreach_step_position, ods.delay_days AS outreach_delay_days,
                m.name AS mailbox_name, m.email AS mailbox_email, m.from_name,
                m.smtp_host, m.smtp_port, m.smtp_secure, m.imap_host, m.imap_port, m.imap_secure,
                m.username, m.password_env_key
         FROM sending_queue q
         JOIN leads l ON l.id = q.lead_id
-        JOIN campaigns c ON c.id = q.campaign_id
-        JOIN campaign_steps s ON s.id = q.campaign_step_id
+        LEFT JOIN campaigns c ON c.id = q.campaign_id
+        LEFT JOIN campaign_steps s ON s.id = q.campaign_step_id
+        LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
         JOIN mailboxes m ON m.id = q.mailbox_id
         WHERE q.status IN ('pending','retrying')
           AND q.scheduled_at <= now()
@@ -352,26 +359,42 @@ async function processSend(item) {
   };
   const settings = (await query("SELECT value FROM settings WHERE key = 'sender'")).rows[0]?.value || {};
   const runtime = await getRuntimeSettings();
-  const subject = renderTemplate(item.subject_template, lead, mailbox, settings);
-  const text = renderTemplate(item.body_template_text || htmlToText(item.body_template_html), lead, mailbox, settings);
+  const subjectTemplate = item.subject_override || item.subject_template || "";
+  const textTemplate = item.body_text_override || item.body_template_text || htmlToText(item.body_template_html) || "";
+  const htmlTemplate = item.body_html_override || item.body_template_html || textTemplate.replace(/\n/g, "<br>");
+  const subject = renderTemplate(subjectTemplate, lead, mailbox, settings);
+  const text = renderTemplate(textTemplate, lead, mailbox, settings);
   const trackingId = crypto.randomUUID();
   const pixel =
     item.tracking_enabled && runtime.publicTrackingUrl
       ? `<img src="${runtime.publicTrackingUrl.replace(/\/$/, "")}/t/open/${trackingId}.gif" width="1" height="1" alt="" style="display:none" />`
       : "";
-  const html = `${renderTemplate(item.body_template_html || text.replace(/\n/g, "<br>"), lead, mailbox, settings)}${pixel}`;
+  const html = `${renderTemplate(htmlTemplate, lead, mailbox, settings)}${pixel}`;
   const to = item.mode === "test" ? item.mailbox_email : item.lead_email;
 
   const messageInsert = await query(
     `
       INSERT INTO messages(
-        lead_id, campaign_id, campaign_step_id, mailbox_id, enrollment_id, direction, type,
+        lead_id, campaign_id, campaign_step_id, mailbox_id, enrollment_id, outreach_draft_id, outreach_step_id, direction, type,
         status, subject, body_text, body_html, tracking_id
       )
-      VALUES ($1,$2,$3,$4,$5,'outbound',$6,'created',$7,$8,$9,$10)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'outbound',$8,'created',$9,$10,$11,$12)
       RETURNING *
     `,
-    [item.lead_id, item.campaign_id, item.campaign_step_id, item.mailbox_id, item.enrollment_id, item.mode === "test" ? "test" : "outreach", subject, text, html, trackingId],
+    [
+      item.lead_id,
+      item.campaign_id,
+      item.campaign_step_id,
+      item.mailbox_id,
+      item.enrollment_id,
+      item.outreach_draft_id,
+      item.outreach_step_id,
+      item.mode === "test" ? "test" : "outreach",
+      subject,
+      text,
+      html,
+      trackingId,
+    ],
   );
   const message = messageInsert.rows[0];
   const attachments = (
@@ -404,6 +427,71 @@ async function processSend(item) {
     [item.id, message.id],
   );
   await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [item.mailbox_id]);
+
+  if (item.outreach_draft_id) {
+    await query(
+      `
+        UPDATE outreach_draft_steps
+        SET status = 'sent', sent_message_id = $2, updated_at = now()
+        WHERE id = $1
+      `,
+      [item.outreach_step_id, message.id],
+    );
+    const nextOutreachStep = (
+      await query(
+        `
+          SELECT *
+          FROM outreach_draft_steps
+          WHERE draft_id = $1 AND position = $2
+        `,
+        [item.outreach_draft_id, Number(item.outreach_step_position || 1) + 1],
+      )
+    ).rows[0];
+
+    if (nextOutreachStep && nextOutreachStep.subject && nextOutreachStep.body_text) {
+      const delay = randomDelayMinutes(item.min_delay_minutes, item.max_delay_minutes);
+      const nextQueue = await query(
+        `
+          INSERT INTO sending_queue(
+            lead_id, mailbox_id, mode, requires_approval, scheduled_at,
+            outreach_draft_id, outreach_step_id, subject_override, body_text_override, body_html_override
+          )
+          VALUES ($1,$2,$3,false,now() + (($4 || ' days')::interval) + (($5 || ' minutes')::interval),$6,$7,$8,$9,$10)
+          RETURNING id
+        `,
+        [
+          item.lead_id,
+          item.mailbox_id,
+          item.mode,
+          nextOutreachStep.delay_days,
+          delay,
+          item.outreach_draft_id,
+          nextOutreachStep.id,
+          nextOutreachStep.subject,
+          nextOutreachStep.body_text,
+          nextOutreachStep.body_text.replace(/\n/g, "<br>"),
+        ],
+      );
+      await query(
+        "UPDATE outreach_draft_steps SET status = 'queued', queue_id = $2, updated_at = now() WHERE id = $1",
+        [nextOutreachStep.id, nextQueue.rows[0].id],
+      );
+      await query("UPDATE outreach_drafts SET status = 'active_sequence', updated_at = now() WHERE id = $1", [item.outreach_draft_id]);
+    } else {
+      await query("UPDATE outreach_drafts SET status = 'completed', updated_at = now() WHERE id = $1", [item.outreach_draft_id]);
+    }
+  }
+
+  if (item.outreach_draft_id) {
+    await query("UPDATE leads SET status = 'sent', updated_at = now() WHERE id = $1 AND status NOT IN ('replied','meeting','won','lost')", [item.lead_id]);
+    await logEvent("email_sent", {
+      leadId: item.lead_id,
+      mailboxId: item.mailbox_id,
+      messageId: message.id,
+      payload: { mode: item.mode, to, dryRun: runtime.dryRun, outreachDraftId: item.outreach_draft_id },
+    });
+    return;
+  }
 
   const nextStep = (
     await query(
@@ -492,17 +580,19 @@ async function syncInbox(mailbox) {
       const inserted = await query(
         `
           INSERT INTO messages(
-            lead_id, campaign_id, mailbox_id, direction, type, status, subject, body_text, body_html,
+            lead_id, campaign_id, mailbox_id, outreach_draft_id, outreach_step_id, direction, type, status, subject, body_text, body_html,
             message_id_header, in_reply_to, references_header, raw_headers, received_at,
             reply_classification, reply_classification_source
           )
-          VALUES ($1,$2,$3,'inbound',$4,'received',$5,$6,$7,$8,$9,$10,$11,$12,$13,'auto')
+          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,'auto')
           RETURNING *
         `,
         [
           isWarmup ? null : linked?.lead_id || null,
           isWarmup ? null : linked?.campaign_id || null,
           mailbox.id,
+          isWarmup ? null : linked?.outreach_draft_id || null,
+          isWarmup ? null : linked?.outreach_step_id || null,
           isWarmup ? "warmup" : classification === "bounce" ? "bounce" : "reply",
           subject,
           bodyText,
@@ -688,6 +778,38 @@ async function applyInboundEffects(message, classification) {
   } else if (classification !== "auto_reply") {
     await query("UPDATE leads SET status = 'replied', updated_at = now() WHERE id = $1", [message.lead_id]);
     await query("UPDATE enrollments SET status = 'replied', stopped_at = now(), stop_reason = 'reply' WHERE lead_id = $1 AND status = 'active'", [message.lead_id]);
+    const held = await query(
+      `
+        UPDATE sending_queue
+        SET requires_approval = true,
+            approved_at = NULL,
+            updated_at = now()
+        WHERE lead_id = $1
+          AND outreach_draft_id IS NOT NULL
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id
+      `,
+      [message.lead_id],
+    );
+    const heldStepIds = held.rows.map((row) => row.outreach_step_id).filter(Boolean);
+    if (heldStepIds.length) {
+      await query(
+        "UPDATE outreach_draft_steps SET status = 'needs_approval', updated_at = now() WHERE id = ANY($1::uuid[])",
+        [heldStepIds],
+      );
+    }
+    await query(
+      `
+        UPDATE outreach_conversations
+        SET status = 'reply_received',
+            classification = $2,
+            next_action = 'approve_or_pause_followup',
+            last_message_at = now(),
+            updated_at = now()
+        WHERE lead_id = $1
+      `,
+      [message.lead_id, classification],
+    );
   }
 
   await logEvent(eventType, {

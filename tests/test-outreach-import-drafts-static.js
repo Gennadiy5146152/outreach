@@ -5,6 +5,8 @@ const app = fs.readFileSync("public/app.js", "utf8");
 const server = fs.readFileSync("src/server.js", "utf8");
 const csv = fs.readFileSync("src/services/csv.js", "utf8");
 const migration = fs.readFileSync("db/migrations/003_outreach_imports.sql", "utf8");
+const sequenceMigration = fs.readFileSync("db/migrations/004_outreach_draft_sequences.sql", "utf8");
+const worker = fs.readFileSync("src/worker/index.js", "utf8");
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
 for (const expected of [
@@ -15,6 +17,18 @@ for (const expected of [
 ]) {
   if (!migration.includes(expected)) {
     throw new Error(`outreach migration should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "outreach_draft_steps",
+  "outreach_draft_id uuid REFERENCES outreach_drafts",
+  "subject_override text",
+  "body_text_override text",
+  "messages_outreach_draft_idx",
+]) {
+  if (!sequenceMigration.includes(expected)) {
+    throw new Error(`outreach sequence migration should include ${expected}`);
   }
 }
 
@@ -31,9 +45,14 @@ for (const expected of [
   "parseOutreachImportFile",
   "app.get(\"/api/outreach/imports\"",
   "app.get(\"/api/outreach/drafts\"",
+  "app.patch(\"/api/outreach/drafts/:id\"",
+  "app.post(\"/api/outreach/drafts/start\"",
   "app.post(\"/api/outreach/imports\"",
   "INSERT INTO outreach_drafts",
   "INSERT INTO outreach_conversations",
+  "INSERT INTO outreach_draft_steps",
+  "outreachStepsFromRow",
+  "outreachDraftStatus",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`outreach import API should include ${expected}`);
@@ -59,9 +78,11 @@ for (const expected of [
   "outreachImportForm",
   "outreachImportsTable",
   "outreachDraftStatus",
+  "startSelectedDraftsBtn",
   "outreachDraftsTable",
   "Импортировать письма",
   "Черновики персональных писем",
+  "Запустить выбранные",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`outreach import UI should include ${expected}`);
@@ -73,13 +94,31 @@ for (const expected of [
   "outreachDrafts: []",
   "async function loadOutreachImports()",
   "async function loadOutreachDrafts()",
+  "startOutreachDrafts",
   "$(\"#outreachImportForm\").addEventListener",
   "$(\"#outreachDraftStatus\").addEventListener",
+  "$(\"#startSelectedDraftsBtn\").addEventListener",
+  "data-outreach-draft-form",
+  "data-start-draft",
   "switchView(\"outreachDrafts\")",
   "нужно исправить",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`outreach import frontend should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "subject_override || item.subject_template",
+  "body_text_override || item.body_template_text",
+  "outreach_draft_id, outreach_step_id",
+  "UPDATE outreach_draft_steps",
+  "UPDATE outreach_drafts SET status = 'active_sequence'",
+  "requires_approval = true",
+  "approve_or_pause_followup",
+]) {
+  if (!worker.includes(expected)) {
+    throw new Error(`worker should support outreach draft sequences: ${expected}`);
   }
 }
 

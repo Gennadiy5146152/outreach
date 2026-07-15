@@ -4,6 +4,7 @@ const state = {
   leads: [],
   outreachImports: [],
   outreachDrafts: [],
+  selectedOutreachDraftIds: new Set(),
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
@@ -188,6 +189,9 @@ const STATUS_LABELS = {
   ready: "готово",
   blocked: "нужно исправить",
   draft: "черновик",
+  queued: "в очереди",
+  active_sequence: "цепочка идет",
+  needs_approval: "ждет подтверждения",
   skipped: "пропущено",
   retrying: "повтор",
   failed: "ошибка",
@@ -629,30 +633,66 @@ async function loadOutreachImports() {
 
 async function loadOutreachDrafts() {
   if (!$("#outreachDraftsTable")) return;
+  if (!state.mailboxes.length) {
+    state.mailboxes = await api("/api/mailboxes");
+  }
   const status = encodeURIComponent($("#outreachDraftStatus")?.value || "");
   state.outreachDrafts = await api(`/api/outreach/drafts?status=${status}`);
+  const visibleIds = new Set(state.outreachDrafts.map((draft) => draft.id));
+  state.selectedOutreachDraftIds = new Set([...state.selectedOutreachDraftIds].filter((id) => visibleIds.has(id)));
   const ready = state.outreachDrafts.filter((draft) => draft.status === "ready").length;
   const blocked = state.outreachDrafts.filter((draft) => draft.status === "blocked").length;
+  const readySelected = state.outreachDrafts
+    .filter((draft) => draft.status === "ready" && state.selectedOutreachDraftIds.has(draft.id))
+    .length;
+  const mailboxOptions = (selectedId) => [
+    `<option value="">Выбрать автоматически</option>`,
+    ...state.mailboxes
+      .filter((mailbox) => mailbox.is_active)
+      .map((mailbox) => `<option value="${mailbox.id}" ${mailbox.id === selectedId ? "selected" : ""}>${esc(mailbox.email)}</option>`),
+  ].join("");
   $("#outreachDraftsSummary").innerHTML = `
     <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
     <span>Готовы: <strong>${ready}</strong></span>
     <span>Нужно исправить: <strong>${blocked}</strong></span>
+    <span>Выбрано: <strong>${state.selectedOutreachDraftIds.size}</strong></span>
   `;
   $("#outreachDraftsTable").innerHTML = `
-    <thead><tr><th>Статус</th><th>Email</th><th>Компания</th><th>Тема</th><th>Отправитель</th><th>Ошибка</th></tr></thead>
+    <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${ready && readySelected === ready ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
         ? state.outreachDrafts.map((draft) => `
           <tr>
+            <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
-            <td>${esc(draft.to_email)}</td>
+            <td>${esc(draft.to_email)}${draft.error_reason ? `<br><span class="muted">${esc(draft.error_reason)}</span>` : ""}</td>
             <td><strong>${esc(draft.company || "Без компании")}</strong><br><span class="muted">${esc(draft.contact_name || "")}</span></td>
-            <td><strong>${esc(draft.subject)}</strong><br><span class="muted">${esc((draft.body_text || "").slice(0, 140))}${draft.body_text && draft.body_text.length > 140 ? "..." : ""}</span></td>
+            <td>
+              <strong>${esc(draft.subject)}</strong><br>
+              <span class="muted">${esc((draft.body_text || "").slice(0, 140))}${draft.body_text && draft.body_text.length > 140 ? "..." : ""}</span>
+              <div class="draft-steps">${(draft.steps || []).map((step) => `<span>${pill(step.status)} шаг ${step.position}${step.delay_days ? ` · +${step.delay_days} дн.` : ""}</span>`).join("")}</div>
+            </td>
             <td>${esc(draft.mailbox_email || "выберется позже")}</td>
-            <td>${esc(draft.error_reason || "")}</td>
+            <td>
+              <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Запустить</button>
+              <details class="inline-edit">
+                <summary>Редактировать</summary>
+                <form class="form outreach-draft-edit-form" data-outreach-draft-form="${draft.id}">
+                  <input name="to_email" type="email" value="${esc(draft.to_email)}" placeholder="Email" required />
+                  <input name="company" value="${esc(draft.company || "")}" placeholder="Компания" />
+                  <input name="contact_name" value="${esc(draft.contact_name || "")}" placeholder="Контакт" />
+                  <input name="segment" value="${esc(draft.segment || "")}" placeholder="Сегмент" />
+                  <select name="mailbox_id">${mailboxOptions(draft.mailbox_id)}</select>
+                  <input name="subject" value="${esc(draft.subject)}" placeholder="Тема" required />
+                  <textarea name="body_text" placeholder="Текст письма" required>${esc(draft.body_text)}</textarea>
+                  <input name="send_after" type="datetime-local" value="${draft.send_after ? new Date(draft.send_after).toISOString().slice(0, 16) : ""}" />
+                  <button>Сохранить</button>
+                </form>
+              </details>
+            </td>
           </tr>
         `).join("")
-        : `<tr><td colspan="6" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
+        : `<tr><td colspan="7" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
     </tbody>
   `;
 }
@@ -1592,6 +1632,87 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
 }));
 
 $("#outreachDraftStatus").addEventListener("change", () => loadOutreachDrafts());
+
+async function startOutreachDrafts(draftIds) {
+  const result = await api("/api/outreach/drafts/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draft_ids: draftIds, mode: "auto" }),
+  });
+  state.selectedOutreachDraftIds.clear();
+  await Promise.all([loadOutreachDrafts(), loadQueue()]);
+  switchView("queue");
+  setActionResult({
+    status: result.errors?.length ? "warn" : "success",
+    title: "Запуск персональных писем",
+    message: `В очередь поставлено: ${result.queued}. Ошибок: ${result.errors?.length || 0}.`,
+    details: result,
+  });
+}
+
+$("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
+  title: "Запуск выбранных черновиков",
+  button: event.currentTarget,
+}, async () => {
+  const draftIds = [...state.selectedOutreachDraftIds];
+  if (!draftIds.length) {
+    setActionResult({
+      status: "warn",
+      title: "Запуск выбранных черновиков",
+      message: "Сначала отметь один или несколько готовых черновиков.",
+    });
+    return;
+  }
+  await startOutreachDrafts(draftIds);
+}));
+
+document.body.addEventListener("change", (event) => {
+  if (event.target.id === "outreachDraftSelectAll") {
+    state.selectedOutreachDraftIds = event.target.checked
+      ? new Set(state.outreachDrafts.filter((draft) => draft.status === "ready").map((draft) => draft.id))
+      : new Set();
+    loadOutreachDrafts();
+    return;
+  }
+  const draftId = event.target.dataset.outreachDraftSelect;
+  if (!draftId) return;
+  if (event.target.checked) state.selectedOutreachDraftIds.add(draftId);
+  else state.selectedOutreachDraftIds.delete(draftId);
+  loadOutreachDrafts();
+});
+
+document.body.addEventListener("submit", (event) => {
+  const draftId = event.target.dataset.outreachDraftForm;
+  if (!draftId) return;
+  event.preventDefault();
+  runAction({
+    title: "Сохранение черновика",
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    const result = await api(`/api/outreach/drafts/${draftId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await loadOutreachDrafts();
+    setActionResult({
+      status: result.status === "ready" ? "success" : "warn",
+      title: "Сохранение черновика",
+      message: result.status === "ready" ? "Черновик готов к запуску." : "Черновик сохранен, но еще есть ошибки.",
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("click", (event) => {
+  const draftId = event.target.dataset.startDraft;
+  if (!draftId) return;
+  runAction({
+    title: "Запуск черновика",
+    button: event.target,
+  }, async () => startOutreachDrafts([draftId]));
+});
 
 $("#validateBtn").addEventListener("click", (event) => runAction({
   title: "Проверка email",

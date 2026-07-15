@@ -255,6 +255,53 @@ async function parseOutreachImportFile(file) {
   throw error;
 }
 
+function outreachStepsFromRow(row) {
+  const items = [
+    {
+      position: 1,
+      subject: row.subject || "",
+      body: row.body || "",
+      delayDays: 0,
+    },
+    {
+      position: 2,
+      subject: row.followup_1_subject || row.subject || "",
+      body: row.followup_1_body || "",
+      delayDays: Number(row.followup_1_delay_days || 3),
+    },
+    {
+      position: 3,
+      subject: row.followup_2_subject || row.subject || "",
+      body: row.followup_2_body || "",
+      delayDays: Number(row.followup_2_delay_days || 4),
+    },
+    {
+      position: 4,
+      subject: row.followup_3_subject || row.subject || "",
+      body: row.followup_3_body || "",
+      delayDays: Number(row.followup_3_delay_days || 5),
+    },
+  ];
+
+  return items
+    .filter((item) => item.position === 1 || item.body)
+    .map((item) => ({
+      ...item,
+      subject: cleanText(item.subject),
+      body: cleanText(item.body),
+      delayDays: Number.isFinite(item.delayDays) && item.delayDays >= 0 ? item.delayDays : 0,
+    }));
+}
+
+function outreachDraftStatus({ email, subject, body }) {
+  const parsed = parseEmail(email);
+  const errors = [];
+  if (!email || !parsed.syntaxValid) errors.push("Некорректный email");
+  if (!subject) errors.push("Нет темы письма");
+  if (!body) errors.push("Нет текста письма");
+  return { parsed, errors, status: errors.length ? "blocked" : "ready" };
+}
+
 function optionalPositiveInteger(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -677,18 +724,206 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
   const importId = req.query.import_id || "";
   const result = await query(
     `
-      SELECT d.*, i.file_name, m.email AS mailbox_email
+      SELECT d.*, i.file_name, m.email AS mailbox_email,
+             COALESCE(
+               json_agg(
+                 json_build_object(
+                   'id', ods.id,
+                   'position', ods.position,
+                   'subject', ods.subject,
+                   'body_text', ods.body_text,
+                   'delay_days', ods.delay_days,
+                   'status', ods.status,
+                   'queue_id', ods.queue_id
+                 )
+                 ORDER BY ods.position
+               ) FILTER (WHERE ods.id IS NOT NULL),
+               '[]'::json
+             ) AS steps
       FROM outreach_drafts d
       LEFT JOIN outreach_imports i ON i.id = d.import_id
       LEFT JOIN mailboxes m ON m.id = d.mailbox_id
+      LEFT JOIN outreach_draft_steps ods ON ods.draft_id = d.id
       WHERE ($1 = '' OR d.status = $1)
         AND ($2 = '' OR d.import_id = $2::uuid)
+      GROUP BY d.id, i.file_name, m.email
       ORDER BY d.created_at DESC
       LIMIT 500
     `,
     [status, importId],
   );
   res.json(result.rows);
+}));
+
+app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
+  const email = cleanText(req.body.to_email);
+  const company = cleanText(req.body.company);
+  const contactName = cleanText(req.body.contact_name);
+  const segment = cleanText(req.body.segment);
+  const subject = cleanText(req.body.subject);
+  const bodyText = cleanText(req.body.body_text);
+  const mailboxId = req.body.mailbox_id && isUuid(req.body.mailbox_id) ? req.body.mailbox_id : null;
+  const sendAfter = parseOptionalDate(req.body.send_after);
+  const check = outreachDraftStatus({ email, subject, body: bodyText });
+  if (mailboxId) {
+    const mailbox = await query("SELECT id FROM mailboxes WHERE id = $1 AND is_active = true", [mailboxId]);
+    if (!mailbox.rowCount) return res.status(400).json({ error: "mailbox_not_found" });
+  }
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const updated = await client.query(
+        `
+          UPDATE outreach_drafts
+          SET to_email = $2,
+              company = $3,
+              contact_name = $4,
+              segment = $5,
+              subject = $6,
+              body_text = $7,
+              mailbox_id = $8,
+              send_after = $9,
+              status = $10,
+              error_reason = $11,
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [req.params.id, email, company, contactName, segment, subject, bodyText, mailboxId, sendAfter, check.status, check.errors.join("; ")],
+      );
+      if (!updated.rowCount) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query(
+        `
+          INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
+          VALUES ($1,1,$2,$3,0,$4)
+          ON CONFLICT (draft_id, position) DO UPDATE SET
+            subject = EXCLUDED.subject,
+            body_text = EXCLUDED.body_text,
+            status = EXCLUDED.status,
+            updated_at = now()
+        `,
+        [req.params.id, subject, bodyText, check.status === "ready" ? "draft" : "blocked"],
+      );
+      await client.query("COMMIT");
+      return updated.rows[0];
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  if (!result) return res.status(404).json({ error: "not_found" });
+  res.json(result);
+}));
+
+app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
+  const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
+  const mode = req.body.mode === "manual" ? "manual" : "auto";
+  if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
+
+  const summary = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const drafts = (await client.query(
+        `
+          SELECT d.*, s.id AS step_id, s.subject AS step_subject, s.body_text AS step_body_text
+          FROM outreach_drafts d
+          JOIN outreach_draft_steps s ON s.draft_id = d.id AND s.position = 1
+          WHERE d.id = ANY($1::uuid[])
+          ORDER BY d.created_at ASC
+        `,
+        [draftIds],
+      )).rows;
+      const fallbackMailboxes = (await client.query(
+        `
+          SELECT id, email
+          FROM mailboxes
+          WHERE is_active = true AND smtp_verified_at IS NOT NULL
+          ORDER BY updated_at DESC, created_at ASC
+        `,
+      )).rows;
+      const errors = [];
+      const queued = [];
+
+      for (const [index, draft] of drafts.entries()) {
+        if (draft.status !== "ready") {
+          errors.push({ id: draft.id, email: draft.to_email, error: "Черновик не готов: сначала исправь ошибки." });
+          continue;
+        }
+        const mailboxId = draft.mailbox_id || fallbackMailboxes[index % Math.max(fallbackMailboxes.length, 1)]?.id;
+        if (!mailboxId) {
+          errors.push({ id: draft.id, email: draft.to_email, error: "Нет активного SMTP-проверенного mailbox для отправки." });
+          continue;
+        }
+
+        const lead = await client.query(
+          `
+            INSERT INTO leads(company, email, contact_name, domain, segment, source)
+            VALUES ($1,$2,$3,$4,$5,'outreach_import')
+            ON CONFLICT (email) DO UPDATE SET
+              company = COALESCE(NULLIF(EXCLUDED.company, ''), leads.company),
+              contact_name = COALESCE(NULLIF(EXCLUDED.contact_name, ''), leads.contact_name),
+              segment = COALESCE(NULLIF(EXCLUDED.segment, ''), leads.segment),
+              updated_at = now()
+            RETURNING id
+          `,
+          [draft.company || draft.to_email, draft.to_email, draft.contact_name, parseEmail(draft.to_email).domain, draft.segment],
+        );
+        const leadId = draft.lead_id || lead.rows[0].id;
+        const scheduledAt = draft.send_after
+          ? new Date(draft.send_after)
+          : new Date(Date.now() + index * 7 * 60 * 1000);
+        const queue = await client.query(
+          `
+            INSERT INTO sending_queue(
+              lead_id, mailbox_id, mode, requires_approval, scheduled_at,
+              outreach_draft_id, outreach_step_id, subject_override, body_text_override, body_html_override
+            )
+            SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+            WHERE NOT EXISTS (
+              SELECT 1 FROM sending_queue
+              WHERE outreach_draft_id = $6
+                AND outreach_step_id = $7
+                AND status IN ('pending','running','retrying','sent')
+            )
+            RETURNING id
+          `,
+          [
+            leadId,
+            mailboxId,
+            mode,
+            mode === "manual",
+            scheduledAt,
+            draft.id,
+            draft.step_id,
+            draft.step_subject,
+            draft.step_body_text,
+            draft.step_body_text.replace(/\n/g, "<br>"),
+          ],
+        );
+        if (!queue.rowCount) {
+          errors.push({ id: draft.id, email: draft.to_email, error: "Первый шаг уже есть в очереди или уже отправлен." });
+          continue;
+        }
+        await client.query("UPDATE outreach_drafts SET lead_id = $2, mailbox_id = $3, status = 'queued', updated_at = now() WHERE id = $1", [draft.id, leadId, mailboxId]);
+        await client.query("UPDATE outreach_draft_steps SET status = 'queued', queue_id = $2, updated_at = now() WHERE id = $1", [draft.step_id, queue.rows[0].id]);
+        queued.push({ id: draft.id, email: draft.to_email, queueId: queue.rows[0].id });
+      }
+
+      await client.query("COMMIT");
+      await logEvent("outreach_drafts_queued", { payload: { mode, queued: queued.length, errors: errors.length } });
+      return { queued: queued.length, errors, items: queued, mode };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  res.json(summary);
 }));
 
 app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (req, res) => {
@@ -784,13 +1019,14 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
           errors.push({ row: row.source_row_number, email: row.email, errors: rowErrors });
         }
 
-        await client.query(
+        const draftInsert = await client.query(
           `
             INSERT INTO outreach_drafts(
               import_id, source_row_number, lead_id, conversation_id, mailbox_id, to_email,
               company, contact_name, segment, subject, body_text, send_after, status, error_reason, raw_row
             )
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            RETURNING id
           `,
           [
             importRow.id,
@@ -810,6 +1046,16 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
             row,
           ],
         );
+        const steps = outreachStepsFromRow(row);
+        for (const step of steps) {
+          await client.query(
+            `
+              INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
+              VALUES ($1,$2,$3,$4,$5,$6)
+            `,
+            [draftInsert.rows[0].id, step.position, step.subject, step.body, step.delayDays, status === "ready" ? "draft" : "blocked"],
+          );
+        }
       }
 
       const updated = await client.query(
@@ -1451,6 +1697,9 @@ app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {
     "UPDATE sending_queue SET approved_at = now(), updated_at = now() WHERE id = $1 RETURNING *",
     [req.params.id],
   );
+  if (result.rows[0]?.outreach_step_id) {
+    await query("UPDATE outreach_draft_steps SET status = 'queued', updated_at = now() WHERE id = $1", [result.rows[0].outreach_step_id]);
+  }
   res.json(result.rows[0]);
 }));
 
@@ -1464,12 +1713,16 @@ app.post("/api/campaigns/:id/approve-pending", asyncHandler(async (req, res) => 
 
 app.get("/api/sending", asyncHandler(async (_req, res) => {
   const result = await query(`
-    SELECT q.*, l.company, l.email, c.name AS campaign_name, m.email AS mailbox_email, s.name AS step_name
+    SELECT q.*, l.company, l.email,
+           COALESCE(c.name, 'Персональный импорт') AS campaign_name,
+           m.email AS mailbox_email,
+           COALESCE(s.name, 'Шаг ' || ods.position::text) AS step_name
     FROM sending_queue q
     JOIN leads l ON l.id = q.lead_id
-    JOIN campaigns c ON c.id = q.campaign_id
+    LEFT JOIN campaigns c ON c.id = q.campaign_id
     LEFT JOIN mailboxes m ON m.id = q.mailbox_id
     LEFT JOIN campaign_steps s ON s.id = q.campaign_step_id
+    LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
     ORDER BY q.scheduled_at ASC
     LIMIT 300
   `);
