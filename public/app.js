@@ -208,6 +208,34 @@ const REPLY_CLASS_LABELS = {
   unknown: "не разобрано",
 };
 
+const EVENT_LABELS = {
+  lead_created: "Лид добавлен",
+  email_validated: "Email проверен",
+  email_sent: "Письмо отправлено",
+  email_opened: "Письмо открыто",
+  mailbox_error: "Ошибка почтового ящика",
+  reply_classified: "Ответ классифицирован",
+  positive_reply_received: "Получен позитивный ответ",
+  neutral_reply_received: "Получен нейтральный ответ",
+  negative_reply_received: "Получен негативный ответ",
+  auto_reply_received: "Получен автоответ",
+  unsubscribe_received: "Получена отписка",
+  not_target_received: "Получен ответ “не целевой”",
+  warmup_sent: "Прогрев: письмо отправлено",
+  warmup_reply_received: "Прогрев: получен ответ",
+  warmup_sync_queued: "Прогрев: синхронизация входящих поставлена в очередь",
+  warmup_dialogue_continued: "Прогрев: диалог продолжен",
+  warmup_dialogue_completed: "Прогрев: диалог завершен",
+  warmup_dialogue_skipped: "Прогрев: письмо пропущено",
+};
+
+const EVENT_REASON_LABELS = {
+  warmup_sent: "после отправки прогрева",
+  reply_sent: "после отправки ответа",
+  active_thread_continue: "продолжение активного диалога",
+  not_expected_sender: "письмо пришло не от ожидаемого ящика",
+};
+
 function statusLabel(value) {
   return STATUS_LABELS[value] || REPLY_CLASS_LABELS[value] || value || "";
 }
@@ -231,6 +259,27 @@ function queueStatusHint(item) {
   if (item.status === "sent") return "Письмо уже отправлено.";
   if (item.status === "failed") return item.last_error || "Отправка завершилась ошибкой.";
   return "";
+}
+
+function eventLabel(value) {
+  return EVENT_LABELS[value] || value || "";
+}
+
+function eventSummary(event) {
+  const payload = event.payload || {};
+  const parts = [];
+  if (payload.email) parts.push(payload.email);
+  if (payload.to) parts.push(`кому: ${payload.to}`);
+  if (payload.from) parts.push(`от: ${payload.from}`);
+  if (payload.subject) parts.push(`тема: ${payload.subject}`);
+  if (payload.classification) parts.push(`класс: ${statusLabel(payload.classification)}`);
+  if (payload.mode) parts.push(`режим: ${queueModeLabel(payload.mode)}`);
+  if (payload.reason) parts.push(`причина: ${EVENT_REASON_LABELS[payload.reason] || payload.reason}`);
+  if (payload.error) parts.push(`ошибка: ${payload.error}`);
+  if (payload.dryRun !== undefined) parts.push(`dry-run: ${payload.dryRun ? "да" : "нет"}`);
+  if (payload.provider) parts.push(`провайдер: ${payload.provider}`);
+  if (payload.status) parts.push(`статус: ${statusLabel(payload.status)}`);
+  return parts.join(" · ") || "Подробности доступны в деталях.";
 }
 
 function pill(value) {
@@ -913,9 +962,18 @@ async function loadSettings() {
 async function loadEvents() {
   const events = await api("/api/events");
   $("#eventsTable").innerHTML = `
-    <thead><tr><th>Время</th><th>Тип</th><th>Payload</th></tr></thead>
+    <thead><tr><th>Когда</th><th>Что произошло</th><th>Кратко</th><th>Детали</th></tr></thead>
     <tbody>
-      ${events.map((event) => `<tr><td>${fmtDate(event.created_at)}</td><td>${event.event_type}</td><td><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></td></tr>`).join("")}
+      ${events.length
+        ? events.map((event) => `
+          <tr>
+            <td>${fmtDate(event.created_at)}</td>
+            <td><strong>${esc(eventLabel(event.event_type))}</strong><br><span class="muted">${esc(event.event_type)}</span></td>
+            <td>${esc(eventSummary(event))}</td>
+            <td><details><summary>Показать</summary><pre>${esc(JSON.stringify(event.payload || {}, null, 2))}</pre></details></td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="4" class="muted">Событий пока нет. Когда сервис проверит email, отправит письмо или получит ответ, записи появятся здесь.</td></tr>`}
     </tbody>
   `;
 }
