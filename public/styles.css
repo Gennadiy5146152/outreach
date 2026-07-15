@@ -684,6 +684,20 @@ h2 {
   margin: 12px 0 8px;
 }
 
+.lead-bulkbar button,
+.small-button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.muted-row {
+  color: var(--muted);
+}
+
+.muted-row strong {
+  color: inherit;
+}
+
 .form-actions,
 .card-actions {
   display: flex;

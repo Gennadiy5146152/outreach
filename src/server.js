@@ -1016,6 +1016,75 @@ app.get("/api/campaigns/:id/leads", asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
+app.post("/api/campaigns/:id/enrollments/keep-selected", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
+  const enrollmentIds = parseArray(req.body.enrollment_ids);
+  if (!enrollmentIds.length || enrollmentIds.some((id) => !isUuid(id))) {
+    return res.status(400).json({ error: "valid_enrollment_ids_required" });
+  }
+
+  const result = await query(
+    `
+      WITH paused AS (
+        UPDATE enrollments
+        SET status = 'paused',
+            stopped_at = now(),
+            stop_reason = 'paused_by_user'
+        WHERE campaign_id = $1
+          AND status = 'active'
+          AND NOT (id = ANY($2::uuid[]))
+        RETURNING id
+      ),
+      cancelled AS (
+        UPDATE sending_queue
+        SET status = 'cancelled',
+            last_error = 'Отменено: лид выключен из кампании',
+            updated_at = now()
+        WHERE enrollment_id IN (SELECT id FROM paused)
+          AND status IN ('pending','retrying')
+        RETURNING id
+      )
+      SELECT
+        (SELECT count(*)::int FROM paused) AS paused,
+        (SELECT count(*)::int FROM cancelled) AS cancelled_queue
+    `,
+    [req.params.id, enrollmentIds],
+  );
+  res.json({ kept: enrollmentIds.length, ...result.rows[0] });
+}));
+
+app.post("/api/enrollments/:id/pause", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "enrollment_required" });
+  const result = await query(
+    `
+      WITH paused AS (
+        UPDATE enrollments
+        SET status = 'paused',
+            stopped_at = now(),
+            stop_reason = 'paused_by_user'
+        WHERE id = $1
+          AND status = 'active'
+        RETURNING *
+      ),
+      cancelled AS (
+        UPDATE sending_queue
+        SET status = 'cancelled',
+            last_error = 'Отменено: лид выключен из кампании',
+            updated_at = now()
+        WHERE enrollment_id = $1
+          AND status IN ('pending','retrying')
+        RETURNING id
+      )
+      SELECT
+        (SELECT row_to_json(paused) FROM paused) AS enrollment,
+        (SELECT count(*)::int FROM cancelled) AS cancelled_queue
+    `,
+    [req.params.id],
+  );
+  if (!result.rows[0]?.enrollment) return res.status(404).json({ error: "active_enrollment_not_found" });
+  res.json(result.rows[0]);
+}));
+
 app.get("/api/campaigns/:id/available-leads", asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
   const result = await query(
