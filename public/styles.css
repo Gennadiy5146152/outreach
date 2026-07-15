@@ -1046,6 +1046,52 @@ th {
 .inbox {
   display: grid;
   gap: 10px;
+  min-width: 0;
+}
+
+.card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.card strong,
+.card p {
+  overflow-wrap: anywhere;
+}
+
+.inbox-card {
+  gap: 12px;
+}
+
+.inbox-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.inbox-card-head > div {
+  min-width: 0;
+}
+
+.inbox-card-head strong {
+  display: block;
+}
+
+.inbox-card-head .pill {
+  flex: 0 0 auto;
+}
+
+.inbox-message {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.inbox-classify {
+  max-width: 320px;
 }
 
 .log,

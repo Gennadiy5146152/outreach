@@ -197,8 +197,19 @@ const VALIDATION_REASON_LABELS = {
   bounce: "почтовый сервер вернул недоставку",
 };
 
+const REPLY_CLASS_LABELS = {
+  positive_reply: "позитивный ответ",
+  neutral_reply: "нейтральный ответ",
+  negative_reply: "негативный ответ",
+  auto_reply: "автоответ",
+  unsubscribe: "отписка",
+  not_target: "не целевой",
+  bounce: "недоставка",
+  unknown: "не разобрано",
+};
+
 function statusLabel(value) {
-  return STATUS_LABELS[value] || value || "";
+  return STATUS_LABELS[value] || REPLY_CLASS_LABELS[value] || value || "";
 }
 
 function validationReasonText(value) {
@@ -781,15 +792,20 @@ async function loadInbox() {
   $("#inboxList").innerHTML = inbox
     .map(
       (item) => `
-        <article class="card">
-          <strong>${esc(item.subject)}</strong> ${pill(item.reply_classification || item.type)}
-          <p>${esc(item.company || "")} · ${esc(item.lead_email || "")} · ${fmtDate(item.received_at || item.created_at)}</p>
-          <pre>${esc((item.body_text || "").slice(0, 2500))}</pre>
-          <select data-classify="${item.id}">
+        <article class="card inbox-card">
+          <div class="inbox-card-head">
+            <div>
+              <strong>${esc(item.subject || "Без темы")}</strong>
+              <p>${esc(item.company || "Без компании")} · ${esc(item.lead_email || "")} · ${fmtDate(item.received_at || item.created_at)}</p>
+            </div>
+            ${pill(item.reply_classification || item.type)}
+          </div>
+          <pre class="inbox-message">${esc((item.body_text || "").slice(0, 2500))}</pre>
+          <label class="field inbox-classify"><span>Класс ответа</span><select data-classify="${item.id}">
             ${["positive_reply", "neutral_reply", "negative_reply", "auto_reply", "unsubscribe", "not_target", "bounce", "unknown"]
-              .map((value) => `<option value="${value}" ${value === item.reply_classification ? "selected" : ""}>${value}</option>`)
+              .map((value) => `<option value="${value}" ${value === item.reply_classification ? "selected" : ""}>${esc(statusLabel(value))}</option>`)
               .join("")}
-          </select>
+          </select></label>
         </article>
       `,
     )
