@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const server = fs.readFileSync("src/server.js", "utf8");
 const template = fs.readFileSync("src/services/template.js", "utf8");
+const preflight = fs.readFileSync("src/services/preflight.js", "utf8");
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
 const css = fs.readFileSync("public/styles.css", "utf8");
@@ -16,6 +17,15 @@ for (const expected of [
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`preflight autofix server code should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "s.id AS step_id",
+  "нет шага письма №",
+]) {
+  if (!preflight.includes(expected)) {
+    throw new Error(`preflight should catch missing campaign step: ${expected}`);
   }
 }
 

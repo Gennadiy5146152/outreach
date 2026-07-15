@@ -264,6 +264,20 @@ function queueStatusHint(item) {
   return "";
 }
 
+function launchEmptyHint(result) {
+  const plan = result.launchPlan || {};
+  if (Number(plan.active_enrollments || 0) === 0 && Number(plan.paused_enrollments || 0) > 0) {
+    return "В очереди ничего нет, потому что в кампании нет активных лидов: они выключены. Открой шаг “Лиды” и нажми “Вернуть в отправку” у нужных лидов.";
+  }
+  if (Number(plan.missing_step_enrollments || 0) > 0) {
+    return "В очереди ничего нет, потому что у активных лидов текущий шаг письма не найден. Проверь шаг 2 “Письмо” и проверку перед запуском.";
+  }
+  if (Number(plan.enrollments || 0) === 0) {
+    return "В очереди ничего нет, потому что в кампанию еще не добавлены лиды.";
+  }
+  return "В очереди ничего не появилось. Проверь шаг 4 “Проверка”: там теперь будет конкретная причина.";
+}
+
 function eventLabel(value) {
   return EVENT_LABELS[value] || value || "";
 }
@@ -980,6 +994,8 @@ async function loadCampaignLeads() {
             <td>
               ${lead.enrollment_status === "active"
                 ? `<button class="small-button" data-pause-enrollment="${lead.enrollment_id}">Убрать из кампании</button>`
+                : lead.enrollment_status === "paused"
+                ? `<button class="small-button" data-resume-enrollment="${lead.enrollment_id}">Вернуть в отправку</button>`
                 : `<span class="muted">не отправляется</span>`}
             </td>
           </tr>
@@ -1121,7 +1137,7 @@ async function loadQueue() {
           `,
         )
         .join("")
-        : `<tr><td colspan="8" class="muted">Очередь пуста. Запусти тестовую или ручную рассылку, и здесь появятся письма с временем отправки.</td></tr>`}
+        : `<tr><td colspan="8" class="muted">Очередь пуста. Нажми “Запустить отправку” или “Тест на мои почты”, и здесь появятся письма с временем отправки. Если после запуска пусто, смотри сообщение сверху: там будет причина.</td></tr>`}
     </tbody>
   `;
 }
@@ -1404,6 +1420,24 @@ document.body.addEventListener("click", (event) => {
         status: "success",
         title: "Убрать лида из кампании",
         message: `Лид больше не будет отправляться. Отменено писем в очереди: ${result.cancelled_queue}.`,
+        details: result,
+      });
+    });
+    return;
+  }
+
+  const resumeEnrollment = event.target.closest("[data-resume-enrollment]");
+  if (resumeEnrollment) {
+    runAction({
+      title: "Вернуть лида в отправку",
+      button: resumeEnrollment,
+    }, async () => {
+      const result = await api(`/api/enrollments/${resumeEnrollment.dataset.resumeEnrollment}/resume`, { method: "POST" });
+      await loadCampaignLeads();
+      setActionResult({
+        status: "success",
+        title: "Вернуть лида в отправку",
+        message: "Лид снова активен и попадет в следующий запуск.",
         details: result,
       });
     });
@@ -1785,12 +1819,16 @@ async function startCampaign(mode) {
   });
   $("#preflightResult").innerHTML = renderPreflightResult(result.preflight);
   await refresh();
+  if (result.queued > 0) switchView("queue");
+  const message = result.queued === 0
+    ? launchEmptyHint(result)
+    : result.requiresApproval
+    ? `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем, перед отправкой нужно подтвердить.`
+    : `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем, дополнительное подтверждение не нужно.`;
   setActionResult({
-    status: "success",
+    status: result.queued > 0 ? "success" : "warn",
     title: mode === "test" ? "Тестовый запуск кампании" : "Запуск кампании",
-    message: result.requiresApproval
-      ? `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем, перед отправкой нужно подтвердить.`
-      : `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем, дополнительное подтверждение не нужно.`,
+    message,
     details: result,
   });
 }

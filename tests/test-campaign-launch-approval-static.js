@@ -31,6 +31,9 @@ for (const expected of [
   "auto: \"обычная отправка\"",
   "result.requiresApproval",
   "дополнительное подтверждение не нужно",
+  "function launchEmptyHint(result)",
+  "Вернуть в отправку",
+  "switchView(\"queue\")",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`launch frontend should include ${expected}`);
@@ -41,7 +44,10 @@ for (const expected of [
   "toBool(req.body.manual_approval_required ?? false)",
   "SELECT manual_approval_required FROM campaigns",
   "mode === \"manual\" || (mode === \"auto\" && campaign.manual_approval_required)",
-  "res.json({ queued: result.rowCount, mode, requiresApproval, preflight })",
+  "async function campaignLaunchPlan(campaignId)",
+  "launchPlan",
+  "res.json({ queued: result.rowCount, mode, requiresApproval, launchPlan, preflight })",
+  "app.post(\"/api/enrollments/:id/resume\"",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`launch backend should include ${expected}`);

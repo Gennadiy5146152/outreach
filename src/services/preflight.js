@@ -12,6 +12,7 @@ export async function campaignPreflight(campaignId) {
       `
         SELECT e.*, l.email, l.company, l.validation_status, l.suppressed_at, m.email AS mailbox_email,
                m.smtp_verified_at, m.imap_verified_at, m.is_active AS mailbox_active,
+               s.id AS step_id,
                s.subject_template, s.body_template_text, s.body_template_html
         FROM enrollments e
         JOIN leads l ON l.id = e.lead_id
@@ -56,6 +57,7 @@ export async function campaignPreflight(campaignId) {
     if (item.suppressed_at) stats.suppressed += 1;
     if (item.mailbox_id) stats.mailboxes.add(item.mailbox_id);
 
+    if (!item.step_id) errors.push(`${item.email}: нет шага письма №${item.current_step}.`);
     if (!item.mailbox_id || !item.mailbox_active) errors.push(`Нет активного mailbox для ${item.email}.`);
     if (!item.smtp_verified_at || !item.imap_verified_at) errors.push(`SMTP/IMAP не проверены для ${item.mailbox_email || item.email}.`);
     if (item.validation_status === "invalid") errors.push(`${item.email}: email invalid.`);

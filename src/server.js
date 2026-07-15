@@ -210,6 +210,30 @@ async function checkMailboxConnection(mailbox) {
   return { ok: smtp.ok && imap.ok, smtp, imap, domain };
 }
 
+async function campaignLaunchPlan(campaignId) {
+  const result = await query(
+    `
+      SELECT
+        count(*)::int AS enrollments,
+        count(*) FILTER (WHERE e.status = 'active')::int AS active_enrollments,
+        count(*) FILTER (WHERE e.status = 'paused')::int AS paused_enrollments,
+        count(*) FILTER (WHERE e.status = 'active' AND s.id IS NOT NULL)::int AS ready_enrollments,
+        count(*) FILTER (WHERE e.status = 'active' AND s.id IS NULL)::int AS missing_step_enrollments
+      FROM enrollments e
+      LEFT JOIN campaign_steps s ON s.campaign_id = e.campaign_id AND s.position = e.current_step
+      WHERE e.campaign_id = $1
+    `,
+    [campaignId],
+  );
+  return result.rows[0] || {
+    enrollments: 0,
+    active_enrollments: 0,
+    paused_enrollments: 0,
+    ready_enrollments: 0,
+    missing_step_enrollments: 0,
+  };
+}
+
 function optionalPositiveInteger(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -1085,6 +1109,25 @@ app.post("/api/enrollments/:id/pause", asyncHandler(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
+app.post("/api/enrollments/:id/resume", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "enrollment_required" });
+  const result = await query(
+    `
+      UPDATE enrollments
+      SET status = 'active',
+          stopped_at = NULL,
+          stop_reason = NULL,
+          next_send_at = COALESCE(next_send_at, now())
+      WHERE id = $1
+        AND status = 'paused'
+      RETURNING *
+    `,
+    [req.params.id],
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "paused_enrollment_not_found" });
+  res.json(result.rows[0]);
+}));
+
 app.get("/api/campaigns/:id/available-leads", asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
   const result = await query(
@@ -1173,6 +1216,7 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
   const preflight = await campaignPreflight(req.params.id);
   if (!preflight.ok && !toBool(req.body.force)) return res.status(400).json(preflight);
 
+  const launchPlan = await campaignLaunchPlan(req.params.id);
   const campaign = (await query("SELECT manual_approval_required FROM campaigns WHERE id = $1", [req.params.id])).rows[0];
   if (!campaign) return res.status(404).json({ error: "not_found" });
   const requiresApproval = mode === "manual" || (mode === "auto" && campaign.manual_approval_required);
@@ -1190,7 +1234,7 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
     [req.params.id, mode, requiresApproval],
   );
   await query("UPDATE campaigns SET status = 'active', test_mode = $2 WHERE id = $1", [req.params.id, mode === "test"]);
-  res.json({ queued: result.rowCount, mode, requiresApproval, preflight });
+  res.json({ queued: result.rowCount, mode, requiresApproval, launchPlan, preflight });
 }));
 
 app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {

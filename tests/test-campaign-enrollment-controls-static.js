@@ -21,6 +21,8 @@ for (const expected of [
   "function updateCampaignEnrollmentSelection()",
   "data-campaign-enrollment-id",
   "data-pause-enrollment",
+  "data-resume-enrollment",
+  "Вернуть в отправку",
   "enrollments/keep-selected",
   "/api/enrollments/${pauseEnrollment.dataset.pauseEnrollment}/pause",
   "Выбрано для отправки",
@@ -34,7 +36,9 @@ for (const expected of [
 for (const expected of [
   "app.post(\"/api/campaigns/:id/enrollments/keep-selected\"",
   "app.post(\"/api/enrollments/:id/pause\"",
+  "app.post(\"/api/enrollments/:id/resume\"",
   "status = 'paused'",
+  "status = 'active'",
   "stop_reason = 'paused_by_user'",
   "status = 'cancelled'",
   "status IN ('pending','retrying')",
