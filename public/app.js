@@ -550,14 +550,13 @@ function renderEnvChecklist() {
 async function loadDashboard() {
   const data = await api("/api/dashboard");
   state.dashboard = data;
-  const readyLeads = Number(data.leads.valid || 0) + Number(data.leads.risky || 0);
   const metrics = [
-    ["Всего лидов", data.leads.total, "в базе"],
-    ["Готовы к отправке", readyLeads, "valid + risky"],
-    ["Отправлено писем", data.messages.sent, "рассылки, без прогрева"],
-    ["Уникальные открытия", data.opens.unique, `${data.rates.openRate}% от отправленных`],
-    ["Ответы", data.replies.total, `${data.rates.replyRate}% от отправленных, без прогрева`],
-    ["Положительные ответы", data.replies.positive, "по рассылкам, без прогрева"],
+    ["Импортировано строк", data.outreach.imported_rows, "Excel/CSV для персонального аутрича"],
+    ["Готово черновиков", data.outreach.drafts_ready, "можно ставить в очередь"],
+    ["Нужно исправить", data.outreach.drafts_blocked, "ошибки email, темы или текста"],
+    ["Первые письма", data.outreach.sent_first, "отправлено без прогрева и тестов"],
+    ["Follow-up", data.outreach.sent_followups, "отправленные следующие касания"],
+    ["Требуют решения", data.outreach.review_needed, "после входящего ответа"],
   ];
   $("#metrics").innerHTML = metrics
     .map(([label, value, hint]) => `<div class="metric"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`)
@@ -566,13 +565,15 @@ async function loadDashboard() {
     <p>Ждут отправки: <strong>${data.queue.pending}</strong></p>
     <p>Отправлены из очереди: <strong>${data.queue.sent}</strong></p>
     <p>Ошибки отправки: <strong>${data.queue.failed}</strong></p>
+    <p>Активные цепочки: <strong>${data.outreach.drafts_active}</strong></p>
   `;
   $("#kpi").innerHTML = `
     <p>Все открытия: <strong>${data.opens.raw}</strong></p>
     <p>Уникальные открытия: <strong>${data.opens.unique}</strong></p>
-    <p>Доля открытий: <strong>${data.rates.openRate}%</strong></p>
-    <p>Доля ответов: <strong>${data.rates.replyRate}%</strong></p>
+    <p>Диалогов с ответом: <strong>${data.outreach.replied_dialogs}</strong></p>
+    <p>Позитивные ответы: <strong>${data.outreach.positive_replies}</strong></p>
     <p>Недоставки: <strong>${data.messages.bounced}</strong></p>
+    <p class="muted">Метрики считаются по outreach, без прогрева и тестовых писем.</p>
   `;
   renderSetupChecklist();
 }
@@ -1758,7 +1759,25 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
 
 $("#outreachDraftStatus").addEventListener("change", () => loadOutreachDrafts());
 
+async function preflightOutreachDrafts(draftIds) {
+  return api("/api/outreach/drafts/preflight", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draft_ids: draftIds }),
+  });
+}
+
 async function startOutreachDrafts(draftIds) {
+  const preflight = await preflightOutreachDrafts(draftIds);
+  if (!preflight.ok) {
+    setActionResult({
+      status: "warn",
+      title: "Проверка выбранных черновиков",
+      message: `Запуск остановлен: ошибок ${preflight.errors.length}, предупреждений ${preflight.warnings.length}.`,
+      details: preflight,
+    });
+    return;
+  }
   const result = await api("/api/outreach/drafts/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1774,6 +1793,30 @@ async function startOutreachDrafts(draftIds) {
     details: result,
   });
 }
+
+$("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction({
+  title: "Проверка выбранных черновиков",
+  button: event.currentTarget,
+}, async () => {
+  const draftIds = [...state.selectedOutreachDraftIds];
+  if (!draftIds.length) {
+    setActionResult({
+      status: "warn",
+      title: "Проверка выбранных черновиков",
+      message: "Сначала отметь один или несколько готовых черновиков.",
+    });
+    return;
+  }
+  const result = await preflightOutreachDrafts(draftIds);
+  setActionResult({
+    status: result.ok ? "success" : "warn",
+    title: "Проверка выбранных черновиков",
+    message: result.ok
+      ? `Можно запускать: выбрано ${result.stats.selected}, предупреждений ${result.warnings.length}.`
+      : `Нужно исправить: ошибок ${result.errors.length}, предупреждений ${result.warnings.length}.`,
+    details: result,
+  });
+}));
 
 $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
   title: "Запуск выбранных черновиков",

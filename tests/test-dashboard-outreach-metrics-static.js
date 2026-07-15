@@ -9,6 +9,10 @@ const dashboardCode = server.slice(dashboardStart, dashboardEnd);
 
 for (const expected of [
   "direction = 'outbound' AND type = 'outreach' AND status = 'sent'",
+  "outreach_imports",
+  "outreach_drafts",
+  "outreach_conversations",
+  "outreach_step_id IS NOT NULL",
   "JOIN messages msg ON msg.id = o.message_id",
   "WHERE msg.type = 'outreach'",
   "direction = 'inbound'",
@@ -30,9 +34,10 @@ for (const forbidden of [
 }
 
 for (const expected of [
-  "рассылки, без прогрева",
-  "без прогрева",
-  "по рассылкам, без прогрева",
+  "Импортировано строк",
+  "Готово черновиков",
+  "Требуют решения",
+  "Метрики считаются по outreach, без прогрева и тестовых писем.",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`dashboard UI should explain filtered metrics: ${expected}`);

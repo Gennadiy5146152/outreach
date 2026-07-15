@@ -458,7 +458,7 @@ app.put("/api/settings/:key", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/dashboard", asyncHandler(async (_req, res) => {
-  const [leadStats, messageStats, queueStats, opens, replies] = await Promise.all([
+  const [leadStats, messageStats, queueStats, opens, replies, outreachStats] = await Promise.all([
     query(`
       SELECT
         count(*)::int AS total,
@@ -498,6 +498,38 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
         AND type = 'reply'
         AND campaign_id IS NOT NULL
     `),
+    query(`
+      SELECT
+        (SELECT COALESCE(sum(rows_total), 0)::int FROM outreach_imports) AS imported_rows,
+        (SELECT COALESCE(sum(rows_ready), 0)::int FROM outreach_imports) AS imported_ready,
+        (SELECT COALESCE(sum(rows_blocked), 0)::int FROM outreach_imports) AS imported_blocked,
+        (SELECT count(*)::int FROM outreach_drafts) AS drafts_total,
+        (SELECT count(*)::int FROM outreach_drafts WHERE status = 'ready') AS drafts_ready,
+        (SELECT count(*)::int FROM outreach_drafts WHERE status = 'blocked') AS drafts_blocked,
+        (SELECT count(*)::int FROM outreach_drafts WHERE status IN ('queued','active_sequence')) AS drafts_active,
+        (SELECT count(*)::int FROM outreach_conversations WHERE status IN ('waiting_reply_review','manual_reply_needed')) AS review_needed,
+        (SELECT count(*)::int FROM messages WHERE direction = 'outbound' AND type = 'outreach' AND outreach_step_id IS NOT NULL AND status = 'sent') AS sent_total,
+        (
+          SELECT count(*)::int
+          FROM messages msg
+          JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+          WHERE msg.direction = 'outbound'
+            AND msg.type = 'outreach'
+            AND msg.status = 'sent'
+            AND ods.position = 1
+        ) AS sent_first,
+        (
+          SELECT count(*)::int
+          FROM messages msg
+          JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+          WHERE msg.direction = 'outbound'
+            AND msg.type = 'outreach'
+            AND msg.status = 'sent'
+            AND ods.position > 1
+        ) AS sent_followups,
+        (SELECT count(DISTINCT lead_id)::int FROM messages WHERE direction = 'inbound' AND type = 'reply' AND outreach_draft_id IS NOT NULL) AS replied_dialogs,
+        (SELECT count(*)::int FROM messages WHERE direction = 'inbound' AND type = 'reply' AND outreach_draft_id IS NOT NULL AND reply_classification = 'positive_reply') AS positive_replies
+    `),
   ]);
   const sent = messageStats.rows[0].sent || 0;
   res.json({
@@ -506,6 +538,7 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
     queue: queueStats.rows[0],
     opens: opens.rows[0],
     replies: replies.rows[0],
+    outreach: outreachStats.rows[0],
     rates: {
       openRate: sent ? Math.round((opens.rows[0].unique / sent) * 100) : 0,
       replyRate: sent ? Math.round((replies.rows[0].total / sent) * 100) : 0,
@@ -950,6 +983,97 @@ app.post("/api/outreach/drafts/:id/cancel", asyncHandler(async (req, res) => {
     payload: { draftId: req.params.id, cancelledQueue: result.rows[0].cancelled_queue },
   });
   res.json(result.rows[0]);
+}));
+
+app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
+  const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
+  if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
+  const runtime = await getRuntimeSettings();
+  const [drafts, readyMailboxes] = await Promise.all([
+    query(
+      `
+        SELECT d.id, d.to_email, d.company, d.status, d.error_reason, d.mailbox_id,
+               m.email AS mailbox_email, m.is_active AS mailbox_active,
+               m.smtp_verified_at, m.imap_verified_at,
+               first_step.id AS first_step_id,
+               COALESCE(followups.followup_count, 0)::int AS followup_count,
+               EXISTS (
+                 SELECT 1
+                 FROM sending_queue q
+                 WHERE q.outreach_draft_id = d.id
+                   AND q.outreach_step_id = first_step.id
+                   AND q.status IN ('pending','running','retrying','sent')
+               ) AS first_step_already_queued
+        FROM outreach_drafts d
+        LEFT JOIN mailboxes m ON m.id = d.mailbox_id
+        LEFT JOIN outreach_draft_steps first_step ON first_step.draft_id = d.id AND first_step.position = 1
+        LEFT JOIN LATERAL (
+          SELECT count(*) AS followup_count
+          FROM outreach_draft_steps s
+          WHERE s.draft_id = d.id AND s.position > 1
+        ) followups ON true
+        WHERE d.id = ANY($1::uuid[])
+        ORDER BY d.created_at ASC
+      `,
+      [draftIds],
+    ),
+    query(`
+      SELECT count(*)::int AS count
+      FROM mailboxes
+      WHERE is_active = true
+        AND smtp_verified_at IS NOT NULL
+        AND imap_verified_at IS NOT NULL
+    `),
+  ]);
+  const rows = drafts.rows;
+  const foundIds = new Set(rows.map((row) => row.id));
+  const errors = [];
+  const warnings = [];
+  const fallbackMailboxes = Number(readyMailboxes.rows[0]?.count || 0);
+  const draftStatusText = {
+    ready: "готово",
+    blocked: "нужно исправить",
+    queued: "в очереди",
+    active_sequence: "цепочка идет",
+    cancelled: "отменено",
+    completed: "завершено",
+  };
+
+  for (const draftId of draftIds) {
+    if (!foundIds.has(draftId)) errors.push(`Черновик ${draftId} не найден.`);
+  }
+
+  for (const draft of rows) {
+    const label = `${draft.company || "Без компании"} · ${draft.to_email}`;
+    if (draft.status !== "ready") errors.push(`${label}: статус “${draftStatusText[draft.status] || draft.status}”, запускать можно только готовые черновики.`);
+    if (!draft.first_step_id) errors.push(`${label}: нет первого письма.`);
+    if (draft.first_step_already_queued) errors.push(`${label}: первое письмо уже есть в очереди или уже отправлено.`);
+    if (draft.mailbox_id) {
+      if (!draft.mailbox_active) errors.push(`${label}: выбранный mailbox выключен.`);
+      if (!draft.smtp_verified_at) errors.push(`${label}: у выбранного mailbox не проверен SMTP.`);
+      if (!draft.imap_verified_at) errors.push(`${label}: у выбранного mailbox не проверен IMAP для ответов.`);
+    } else if (!fallbackMailboxes) {
+      errors.push(`${label}: mailbox не выбран, и нет активного mailbox с проверенными SMTP/IMAP.`);
+    }
+    if (!draft.followup_count) warnings.push(`${label}: follow-up шаги не заполнены, будет отправлено только первое письмо.`);
+  }
+
+  if (runtime.dryRun) warnings.push("Сейчас включен dry-run: письма попадут в очередь и будут показаны как отправленные без реальной отправки наружу.");
+
+  res.json({
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    stats: {
+      selected: draftIds.length,
+      found: rows.length,
+      ready: rows.filter((row) => row.status === "ready").length,
+      blocked: rows.filter((row) => row.status === "blocked").length,
+      withMailbox: rows.filter((row) => row.mailbox_id).length,
+      fallbackMailboxes,
+      withFollowups: rows.filter((row) => Number(row.followup_count || 0) > 0).length,
+    },
+  });
 }));
 
 app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
