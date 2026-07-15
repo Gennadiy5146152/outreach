@@ -678,7 +678,11 @@ async function scheduleMaintenance() {
         AND NOT EXISTS (
           SELECT 1 FROM events
           WHERE event_type = 'warmup_sent'
-            AND created_at > now() - interval '20 minutes'
+            AND created_at > now() - ((
+              SELECT GREATEST(1, MIN(min_delay_minutes))::text
+              FROM mailboxes
+              WHERE warmup_enabled = true AND is_active = true
+            ) || ' minutes')::interval
         )
     `,
   );

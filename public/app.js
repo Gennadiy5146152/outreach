@@ -173,6 +173,21 @@ function mailboxNextStep(mailbox) {
   return "Ящик готов: SMTP/IMAP проверены, входящие синхронизировались, прогрев включен.";
 }
 
+function sendDaysCheckboxes(selectedDays = []) {
+  const selected = new Set((selectedDays || []).map(Number));
+  return [
+    [1, "Пн"],
+    [2, "Вт"],
+    [3, "Ср"],
+    [4, "Чт"],
+    [5, "Пт"],
+    [6, "Сб"],
+    [7, "Вс"],
+  ].map(([value, label]) => (
+    `<label class="check"><input name="send_days" type="checkbox" value="${value}" ${selected.has(value) ? "checked" : ""} /> ${label}</label>`
+  )).join("");
+}
+
 function switchView(view) {
   $$(".view").forEach((node) => node.classList.remove("active"));
   $(`#${view}View`).classList.add("active");
@@ -332,8 +347,14 @@ async function loadMailboxes() {
         <p class="mailbox-guide">${esc(mailboxNextStep(mailbox))}</p>
         <div id="mailboxActionResult-${mailbox.id}">${actionResultHtml(state.actionResults.mailboxes[mailbox.id])}</div>
         <details class="mailbox-edit">
-          <summary>Настройки подключения</summary>
+          <summary>Все настройки mailbox</summary>
           <form class="mailbox-edit-form" data-mailbox-edit="${mailbox.id}">
+            <label><span>Провайдер</span><select name="provider">
+              <option value="custom" ${mailbox.provider === "custom" ? "selected" : ""}>Корпоративный SMTP/IMAP</option>
+              <option value="yandex" ${mailbox.provider === "yandex" ? "selected" : ""}>Яндекс</option>
+              <option value="timeweb" ${mailbox.provider === "timeweb" ? "selected" : ""}>Timeweb</option>
+            </select></label>
+            <label class="mailbox-edit-check"><input name="is_active" type="checkbox" ${mailbox.is_active ? "checked" : ""} /> Ящик активен</label>
             <label><span>SMTP</span><input name="smtp_host" value="${esc(mailbox.smtp_host)}" required /></label>
             <label><span>SMTP порт</span><input name="smtp_port" type="number" min="1" max="65535" value="${mailbox.smtp_port}" required /></label>
             <label class="mailbox-edit-check"><input name="smtp_secure" type="checkbox" ${mailbox.smtp_secure ? "checked" : ""} /> SMTP SSL/TLS сразу</label>
@@ -343,8 +364,18 @@ async function loadMailboxes() {
             <label><span>Логин</span><input name="username" value="${esc(mailbox.username || mailbox.email)}" /></label>
             <label><span>Новый пароль</span><input name="password" type="password" autocomplete="new-password" placeholder="Оставь пустым, если не меняешь" /></label>
             <label><span>Имя отправителя</span><input name="from_name" value="${esc(mailbox.from_name || mailbox.name)}" /></label>
-            <label><span>Лимит прогрева</span><input name="daily_warmup_limit" type="number" min="1" value="${mailbox.daily_warmup_limit}" /></label>
-            <button>Сохранить подключение</button>
+            <label><span>Лимит рассылки в день</span><input name="daily_send_limit" type="number" min="1" step="1" value="${mailbox.daily_send_limit || ""}" placeholder="Без лимита" /></label>
+            <label><span>Лимит прогрева в день</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" /></label>
+            <label><span>Минимальная пауза, минут</span><input name="min_delay_minutes" type="number" min="1" step="1" value="${mailbox.min_delay_minutes}" /></label>
+            <label><span>Максимальная пауза, минут</span><input name="max_delay_minutes" type="number" min="1" step="1" value="${mailbox.max_delay_minutes}" /></label>
+            <label><span>Начало окна</span><input name="send_window_start" type="time" value="${String(mailbox.send_window_start || "09:00").slice(0, 5)}" /></label>
+            <label><span>Конец окна</span><input name="send_window_end" type="time" value="${String(mailbox.send_window_end || "18:00").slice(0, 5)}" /></label>
+            <fieldset class="mailbox-edit-days">
+              <legend>Дни отправки</legend>
+              <div class="check-grid">${sendDaysCheckboxes(mailbox.send_days)}</div>
+            </fieldset>
+            <label class="mailbox-edit-check"><input name="warmup_enabled" type="checkbox" ${mailbox.warmup_enabled ? "checked" : ""} /> Прогрев включен</label>
+            <button>Сохранить все настройки</button>
           </form>
         </details>
         <div class="mailbox-actions">
@@ -862,6 +893,16 @@ document.body.addEventListener("submit", (event) => {
     payload.smtp_port = Number(payload.smtp_port);
     payload.imap_port = Number(payload.imap_port);
     payload.daily_warmup_limit = Number(payload.daily_warmup_limit);
+    payload.daily_send_limit = payload.daily_send_limit ? Number(payload.daily_send_limit) : "";
+    payload.min_delay_minutes = Number(payload.min_delay_minutes);
+    payload.max_delay_minutes = Number(payload.max_delay_minutes);
+    payload.send_days = Array.isArray(payload.send_days)
+      ? payload.send_days.map(Number)
+      : payload.send_days
+        ? [Number(payload.send_days)]
+        : [];
+    payload.is_active = event.target.elements.is_active.checked;
+    payload.warmup_enabled = event.target.elements.warmup_enabled.checked;
     payload.smtp_secure = event.target.elements.smtp_secure.checked;
     payload.imap_secure = event.target.elements.imap_secure.checked;
     const result = await api(`/api/mailboxes/${mailboxId}`, {

@@ -376,6 +376,20 @@ h2 {
   gap: 8px;
 }
 
+.mailbox-edit-days {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mailbox-edit-days legend {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .mailbox-edit-check input {
   width: auto;
 }

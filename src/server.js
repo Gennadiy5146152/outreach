@@ -88,6 +88,19 @@ function optionalPositiveInteger(value, fieldName) {
   return parsed;
 }
 
+function optionalSendDays(value) {
+  if (value === undefined) return null;
+  const days = parseArray(value)
+    .map(Number)
+    .filter((day) => Number.isInteger(day) && day >= 1 && day <= 7);
+  if (!days.length) {
+    const error = new Error("send_days_must_include_at_least_one_day");
+    error.status = 400;
+    throw error;
+  }
+  return [...new Set(days)].sort((a, b) => a - b);
+}
+
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const [db, runtime] = await Promise.all([query("SELECT now() AS now"), getRuntimeSettings()]);
   res.json({
@@ -441,6 +454,13 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
   const current = (await query("SELECT * FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
   if (!current) return res.status(404).json({ error: "not_found" });
   const dailyWarmupLimit = optionalPositiveInteger(req.body.daily_warmup_limit, "daily_warmup_limit");
+  const dailySendLimit = optionalPositiveInteger(req.body.daily_send_limit, "daily_send_limit");
+  const minDelayMinutes = optionalPositiveInteger(req.body.min_delay_minutes, "min_delay_minutes");
+  const maxDelayMinutes = optionalPositiveInteger(req.body.max_delay_minutes, "max_delay_minutes");
+  const sendDays = optionalSendDays(req.body.send_days);
+  if (minDelayMinutes !== null && maxDelayMinutes !== null && minDelayMinutes > maxDelayMinutes) {
+    return res.status(400).json({ error: "min_delay_must_be_less_or_equal_max_delay" });
+  }
   const password = String(req.body.password || "");
   const passwordEnvKey = password
     ? await saveSecretToDotenv(current.password_env_key || mailboxPasswordEnvKey(current.email), password)
@@ -465,6 +485,8 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
           from_name = COALESCE($16, from_name),
           provider = COALESCE($17, provider),
           password_env_key = COALESCE($18, password_env_key),
+          daily_send_limit = CASE WHEN $19 THEN $20 ELSE daily_send_limit END,
+          send_days = COALESCE($21, send_days),
           smtp_verified_at = CASE WHEN $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL THEN NULL ELSE smtp_verified_at END,
           imap_verified_at = CASE WHEN $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL THEN NULL ELSE imap_verified_at END,
           updated_at = now()
@@ -476,8 +498,8 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
       req.body.is_active === undefined ? null : toBool(req.body.is_active),
       req.body.warmup_enabled === undefined ? null : toBool(req.body.warmup_enabled),
       dailyWarmupLimit,
-      req.body.min_delay_minutes ? Number(req.body.min_delay_minutes) : null,
-      req.body.max_delay_minutes ? Number(req.body.max_delay_minutes) : null,
+      minDelayMinutes,
+      maxDelayMinutes,
       req.body.send_window_start || null,
       req.body.send_window_end || null,
       req.body.smtp_host || null,
@@ -490,6 +512,9 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
       req.body.from_name || null,
       req.body.provider || null,
       passwordEnvKey,
+      req.body.daily_send_limit !== undefined,
+      dailySendLimit,
+      sendDays,
     ],
   );
   res.json(result.rows[0]);
