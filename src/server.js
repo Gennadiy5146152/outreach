@@ -917,6 +917,37 @@ app.post("/api/campaigns/:id/enroll", asyncHandler(async (req, res) => {
   res.json({ enrolled: count });
 }));
 
+app.get("/api/campaigns/:id/leads", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
+  const result = await query(
+    `
+      SELECT
+        e.id AS enrollment_id,
+        e.status AS enrollment_status,
+        e.current_step,
+        e.next_send_at,
+        e.started_at,
+        l.id AS lead_id,
+        l.company,
+        l.email,
+        l.contact_name,
+        l.segment,
+        l.status AS lead_status,
+        l.validation_status,
+        l.validation_reason,
+        m.email AS mailbox_email
+      FROM enrollments e
+      JOIN leads l ON l.id = e.lead_id
+      LEFT JOIN mailboxes m ON m.id = e.mailbox_id
+      WHERE e.campaign_id = $1
+      ORDER BY e.started_at DESC
+      LIMIT 500
+    `,
+    [req.params.id],
+  );
+  res.json(result.rows);
+}));
+
 app.get("/api/campaigns/:id/preflight", asyncHandler(async (req, res) => {
   res.json(await campaignPreflight(req.params.id));
 }));

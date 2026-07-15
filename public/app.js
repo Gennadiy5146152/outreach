@@ -2,6 +2,7 @@ const state = {
   campaigns: [],
   mailboxes: [],
   leads: [],
+  campaignLeads: [],
   segments: [],
   queue: [],
   suppressions: [],
@@ -168,6 +169,9 @@ const STATUS_LABELS = {
   sent: "отправлено",
   opened: "открыто",
   replied: "ответил",
+  active: "активен",
+  paused: "пауза",
+  completed: "завершен",
   meeting: "встреча",
   won: "успех",
   lost: "потерян",
@@ -468,9 +472,13 @@ async function loadMailboxes() {
 
 async function loadCampaigns() {
   state.campaigns = await api("/api/campaigns");
-  const options = state.campaigns.map((campaign) => `<option value="${campaign.id}">${campaign.name}</option>`).join("");
+  const activeCampaignValue = $("#activeCampaign").value;
+  const options = state.campaigns.map((campaign) => `<option value="${campaign.id}">${esc(campaign.name)}</option>`).join("");
   $("#stepCampaign").innerHTML = options;
   $("#activeCampaign").innerHTML = options;
+  if (state.campaigns.some((campaign) => campaign.id === activeCampaignValue)) {
+    $("#activeCampaign").value = activeCampaignValue;
+  }
   const attachmentSteps = state.campaigns.flatMap((campaign) => campaign.steps.map((step) => ({ ...step, campaignName: campaign.name })));
   $("#attachmentStep").innerHTML = attachmentSteps.length
     ? attachmentSteps.map((step) => `<option value="${step.id}">${esc(step.campaignName)} / ${esc(step.name)}</option>`).join("")
@@ -491,6 +499,41 @@ async function loadCampaigns() {
     .join("")
     : `<article class="card"><strong>Рассылок пока нет</strong><p>Создай кампанию, затем добавь хотя бы один шаг письма.</p></article>`;
   renderSetupChecklist();
+  await loadCampaignLeads();
+}
+
+async function loadCampaignLeads() {
+  const campaignId = $("#activeCampaign")?.value || "";
+  const summary = $("#campaignLeadsSummary");
+  const table = $("#campaignLeadsTable");
+  if (!campaignId) {
+    state.campaignLeads = [];
+    summary.textContent = "Сначала создай или выбери кампанию.";
+    table.innerHTML = "";
+    return;
+  }
+  state.campaignLeads = await api(`/api/campaigns/${campaignId}/leads`);
+  const activeCount = state.campaignLeads.filter((lead) => lead.enrollment_status === "active").length;
+  const mailboxCount = new Set(state.campaignLeads.map((lead) => lead.mailbox_email).filter(Boolean)).size;
+  summary.textContent = `В кампании: ${state.campaignLeads.length} · активных: ${activeCount} · mailbox: ${mailboxCount}`;
+  table.innerHTML = `
+    <thead><tr><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th><th>Mailbox</th><th>Статус</th><th>Следующая отправка</th></tr></thead>
+    <tbody>
+      ${state.campaignLeads.length
+        ? state.campaignLeads.map((lead) => `
+          <tr>
+            <td><strong>${esc(lead.company)}</strong><br><span class="muted">${esc(lead.contact_name || "")}</span></td>
+            <td>${esc(lead.email)}</td>
+            <td>${esc(lead.segment || "")}</td>
+            <td>${pill(lead.validation_status)}<br><span class="muted">${esc(validationReasonText(lead.validation_reason))}</span></td>
+            <td>${esc(lead.mailbox_email || "не назначен")}</td>
+            <td>${pill(lead.enrollment_status)}</td>
+            <td>${fmtDate(lead.next_send_at) || "по запуску"}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="7" class="muted">В этой кампании пока нет лидов. Нажми “Добавить всех valid/risky лидов”.</td></tr>`}
+    </tbody>
+  `;
 }
 
 function stepCard({ done, title, text, action, view }) {
@@ -785,6 +828,7 @@ $("#logoutBtn").addEventListener("click", async () => {
   window.location.href = "/login.html";
 });
 $("#leadSearch").addEventListener("input", () => loadLeads());
+$("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
 
 document.body.addEventListener("click", (event) => {
   const go = event.target.dataset.go;
