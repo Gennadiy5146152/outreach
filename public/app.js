@@ -3,6 +3,7 @@ const state = {
   mailboxes: [],
   leads: [],
   campaignLeads: [],
+  campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
   segments: [],
   queue: [],
@@ -465,7 +466,6 @@ async function loadLeads() {
         : `<tr><td colspan="6" class="muted">Лидов пока нет. Добавь одного вручную или импортируй CSV, затем нажми “Запустить проверку email”.</td></tr>`}
     </tbody>
   `;
-  renderCampaignAvailableLeads();
 }
 
 async function loadSegments() {
@@ -561,20 +561,21 @@ function renderSegmentPickers() {
   });
 }
 
-function campaignAvailableLeads() {
-  const enrolledIds = new Set(state.campaignLeads.map((lead) => lead.lead_id));
-  return state.leads.filter((lead) => ["valid", "risky"].includes(lead.validation_status) && !enrolledIds.has(lead.id));
+async function loadCampaignAvailableLeads() {
+  const campaignId = $("#activeCampaign")?.value || "";
+  state.campaignAvailableLeads = campaignId ? await api(`/api/campaigns/${campaignId}/available-leads`) : [];
+  renderCampaignAvailableLeads();
 }
 
 function updateCampaignLeadSelection() {
-  const availableIds = new Set(campaignAvailableLeads().map((lead) => lead.id));
+  const availableIds = new Set(state.campaignAvailableLeads.map((lead) => lead.id));
   state.selectedCampaignLeadIds = new Set([...state.selectedCampaignLeadIds].filter((id) => availableIds.has(id)));
   const count = state.selectedCampaignLeadIds.size;
   const selection = $("#campaignLeadSelection");
   const selectAll = $("#campaignLeadSelectAll");
   if (selection) selection.textContent = `Выбрано: ${count}`;
   if (selectAll) {
-    const available = campaignAvailableLeads();
+    const available = state.campaignAvailableLeads;
     selectAll.checked = available.length > 0 && available.every((lead) => state.selectedCampaignLeadIds.has(lead.id));
     selectAll.indeterminate = count > 0 && !selectAll.checked;
   }
@@ -583,7 +584,7 @@ function updateCampaignLeadSelection() {
 function renderCampaignAvailableLeads() {
   const table = $("#campaignAvailableLeadsTable");
   if (!table) return;
-  const available = campaignAvailableLeads();
+  const available = state.campaignAvailableLeads;
   table.innerHTML = `
     <thead><tr><th></th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th></tr></thead>
     <tbody>
@@ -597,7 +598,7 @@ function renderCampaignAvailableLeads() {
             <td>${pill(lead.validation_status)}<br><span class="muted">${esc(validationReasonText(lead.validation_reason))}</span></td>
           </tr>
         `).join("")
-        : `<tr><td colspan="5" class="muted">Нет доступных лидов по текущему фильтру. Проверь базу, сегмент или статус проверки email.</td></tr>`}
+        : `<tr><td colspan="5" class="muted">Нет доступных лидов для этой кампании. Проверь, что у лидов выбран один из сегментов кампании, email проверен как “можно отправлять” или “нужна проверка”, и лиды еще не добавлены в эту кампанию.</td></tr>`}
     </tbody>
   `;
   updateCampaignLeadSelection();
@@ -837,7 +838,7 @@ async function loadCampaignLeads() {
         : `<tr><td colspan="7" class="muted">В этой кампании пока нет лидов. Выбери нужных лидов выше и нажми “Добавить выбранных лидов”.</td></tr>`}
     </tbody>
   `;
-  renderCampaignAvailableLeads();
+  await loadCampaignAvailableLeads();
 }
 
 function stepCard({ done, title, text, action, view }) {
@@ -1162,7 +1163,7 @@ $("#stepCampaign").addEventListener("change", () => renderCampaignStepList());
 $("#stepEditResetBtn").addEventListener("click", () => resetStepForm());
 $("#campaignEditResetBtn").addEventListener("click", () => resetCampaignForm());
 $("#campaignLeadSelectAll").addEventListener("change", (event) => {
-  const ids = campaignAvailableLeads().map((lead) => lead.id);
+  const ids = state.campaignAvailableLeads.map((lead) => lead.id);
   state.selectedCampaignLeadIds = event.currentTarget.checked ? new Set(ids) : new Set();
   renderCampaignAvailableLeads();
 });

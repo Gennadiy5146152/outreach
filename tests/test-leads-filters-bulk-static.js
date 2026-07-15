@@ -21,8 +21,9 @@ for (const expected of [
 for (const expected of [
   "selectedCampaignLeadIds: new Set()",
   "function renderLeadSegmentFilter()",
-  "function campaignAvailableLeads()",
+  "async function loadCampaignAvailableLeads()",
   "function renderCampaignAvailableLeads()",
+  "/available-leads",
   "data-campaign-lead-id",
   "Выбери хотя бы одного лида",
   "leadValidationFilter",
@@ -35,6 +36,9 @@ for (const expected of [
 for (const expected of [
   "const segment = cleanText(req.query.segment)",
   "AND ($4 = '' OR segment = $4)",
+  "app.get(\"/api/campaigns/:id/available-leads\"",
+  "l.validation_status IN ('valid', 'risky')",
+  "NOT EXISTS (SELECT 1 FROM campaign_segments)",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`lead filtering API should include ${expected}`);

@@ -1010,6 +1010,35 @@ app.get("/api/campaigns/:id/leads", asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
+app.get("/api/campaigns/:id/available-leads", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
+  const result = await query(
+    `
+      WITH campaign_segments AS (
+        SELECT btrim(item.value) AS segment
+        FROM campaigns c
+        CROSS JOIN regexp_split_to_table(COALESCE(c.segment, ''), ',') AS item(value)
+        WHERE c.id = $1 AND btrim(item.value) <> ''
+      )
+      SELECT l.*
+      FROM leads l
+      WHERE l.validation_status IN ('valid', 'risky')
+        AND NOT EXISTS (
+          SELECT 1 FROM enrollments e
+          WHERE e.campaign_id = $1 AND e.lead_id = l.id
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM campaign_segments)
+          OR l.segment IN (SELECT segment FROM campaign_segments)
+        )
+      ORDER BY l.created_at DESC
+      LIMIT 500
+    `,
+    [req.params.id],
+  );
+  res.json(result.rows);
+}));
+
 app.get("/api/campaigns/:id/preflight", asyncHandler(async (req, res) => {
   res.json(await campaignPreflight(req.params.id));
 }));

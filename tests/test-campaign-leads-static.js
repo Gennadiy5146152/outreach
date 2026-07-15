@@ -30,6 +30,7 @@ for (const expected of [
 
 for (const expected of [
   "app.get(\"/api/campaigns/:id/leads\"",
+  "app.get(\"/api/campaigns/:id/available-leads\"",
   "FROM enrollments e",
   "JOIN leads l ON l.id = e.lead_id",
   "LEFT JOIN mailboxes m ON m.id = e.mailbox_id",
