@@ -662,6 +662,23 @@ h2 {
   font-weight: 700;
 }
 
+.lead-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(170px, 0.8fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: min(760px, 100%);
+}
+
+.lead-bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 8px;
+}
+
 .form {
   display: grid;
   gap: 10px;
@@ -1148,6 +1165,7 @@ dialog::backdrop {
   .form.inline,
   .settings-row,
   .field-grid.two,
+  .lead-filters,
   .setup-list,
   .setup-step,
   .hero-help,

@@ -393,6 +393,7 @@ app.get("/api/leads", asyncHandler(async (req, res) => {
   const search = `%${String(req.query.search || "").toLowerCase()}%`;
   const status = req.query.status || "";
   const validation = req.query.validation || "";
+  const segment = cleanText(req.query.segment);
   const result = await query(
     `
       SELECT *
@@ -400,10 +401,11 @@ app.get("/api/leads", asyncHandler(async (req, res) => {
       WHERE ($1 = '%%' OR lower(company || ' ' || email || ' ' || coalesce(segment,'') || ' ' || coalesce(contact_name,'')) LIKE $1)
         AND ($2 = '' OR status = $2)
         AND ($3 = '' OR validation_status = $3)
+        AND ($4 = '' OR segment = $4)
       ORDER BY created_at DESC
       LIMIT 500
     `,
-    [search, status, validation],
+    [search, status, validation, segment],
   );
   res.json(result.rows);
 }));

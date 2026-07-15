@@ -3,6 +3,7 @@ const state = {
   mailboxes: [],
   leads: [],
   campaignLeads: [],
+  selectedCampaignLeadIds: new Set(),
   segments: [],
   queue: [],
   suppressions: [],
@@ -354,8 +355,10 @@ async function loadDashboard() {
 
 async function loadLeads() {
   const search = encodeURIComponent($("#leadSearch")?.value || "");
+  const validation = encodeURIComponent($("#leadValidationFilter")?.value || "");
+  const segment = encodeURIComponent($("#leadSegmentFilter")?.value || "");
   try {
-    state.leads = await api(`/api/leads?search=${search}`);
+    state.leads = await api(`/api/leads?search=${search}&validation=${validation}&segment=${segment}`);
   } catch (error) {
     $("#leadsTable").innerHTML = `
       <thead><tr><th>База лидов</th></tr></thead>
@@ -384,16 +387,26 @@ async function loadLeads() {
         : `<tr><td colspan="6" class="muted">Лидов пока нет. Добавь одного вручную или импортируй CSV, затем нажми “Запустить проверку email”.</td></tr>`}
     </tbody>
   `;
+  renderCampaignAvailableLeads();
 }
 
 async function loadSegments() {
   try {
     state.segments = await api("/api/segments");
+    renderLeadSegmentFilter();
     renderSegmentPickers();
   } catch (error) {
     state.segments = [];
     console.warn("Не удалось загрузить сегменты", error);
   }
+}
+
+function renderLeadSegmentFilter() {
+  const filter = $("#leadSegmentFilter");
+  if (!filter) return;
+  const current = filter.value;
+  filter.innerHTML = `<option value="">Все сегменты</option>${state.segments.map((segment) => `<option value="${esc(segment)}">${esc(segment)}</option>`).join("")}`;
+  if (state.segments.includes(current)) filter.value = current;
 }
 
 function segmentMatches(value) {
@@ -426,6 +439,48 @@ function renderSegmentPickers() {
   $$(".segment-input").forEach((input) => {
     if (document.activeElement === input) renderSegmentPicker(input);
   });
+}
+
+function campaignAvailableLeads() {
+  const enrolledIds = new Set(state.campaignLeads.map((lead) => lead.lead_id));
+  return state.leads.filter((lead) => ["valid", "risky"].includes(lead.validation_status) && !enrolledIds.has(lead.id));
+}
+
+function updateCampaignLeadSelection() {
+  const availableIds = new Set(campaignAvailableLeads().map((lead) => lead.id));
+  state.selectedCampaignLeadIds = new Set([...state.selectedCampaignLeadIds].filter((id) => availableIds.has(id)));
+  const count = state.selectedCampaignLeadIds.size;
+  const selection = $("#campaignLeadSelection");
+  const selectAll = $("#campaignLeadSelectAll");
+  if (selection) selection.textContent = `Выбрано: ${count}`;
+  if (selectAll) {
+    const available = campaignAvailableLeads();
+    selectAll.checked = available.length > 0 && available.every((lead) => state.selectedCampaignLeadIds.has(lead.id));
+    selectAll.indeterminate = count > 0 && !selectAll.checked;
+  }
+}
+
+function renderCampaignAvailableLeads() {
+  const table = $("#campaignAvailableLeadsTable");
+  if (!table) return;
+  const available = campaignAvailableLeads();
+  table.innerHTML = `
+    <thead><tr><th></th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th></tr></thead>
+    <tbody>
+      ${available.length
+        ? available.map((lead) => `
+          <tr>
+            <td><input type="checkbox" data-campaign-lead-id="${lead.id}" ${state.selectedCampaignLeadIds.has(lead.id) ? "checked" : ""} /></td>
+            <td><strong>${esc(lead.company)}</strong><br><span class="muted">${esc(lead.contact_name || "")}</span></td>
+            <td>${esc(lead.email)}</td>
+            <td>${esc(lead.segment || "")}</td>
+            <td>${pill(lead.validation_status)}<br><span class="muted">${esc(validationReasonText(lead.validation_reason))}</span></td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="5" class="muted">Нет доступных лидов по текущему фильтру. Проверь базу, сегмент или статус проверки email.</td></tr>`}
+    </tbody>
+  `;
+  updateCampaignLeadSelection();
 }
 
 async function loadMailboxes() {
@@ -562,9 +617,10 @@ async function loadCampaignLeads() {
             <td>${fmtDate(lead.next_send_at) || "по запуску"}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="7" class="muted">В этой кампании пока нет лидов. Нажми “Добавить всех valid/risky лидов”.</td></tr>`}
+        : `<tr><td colspan="7" class="muted">В этой кампании пока нет лидов. Выбери нужных лидов выше и нажми “Добавить выбранных лидов”.</td></tr>`}
     </tbody>
   `;
+  renderCampaignAvailableLeads();
 }
 
 function stepCard({ done, title, text, action, view }) {
@@ -859,7 +915,31 @@ $("#logoutBtn").addEventListener("click", async () => {
   window.location.href = "/login.html";
 });
 $("#leadSearch").addEventListener("input", () => loadLeads());
+$("#leadSegmentFilter").addEventListener("change", () => loadLeads());
+$("#leadValidationFilter").addEventListener("change", () => loadLeads());
+$("#leadFiltersReset").addEventListener("click", () => {
+  $("#leadSearch").value = "";
+  $("#leadSegmentFilter").value = "";
+  $("#leadValidationFilter").value = "";
+  loadLeads();
+});
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
+$("#campaignLeadSelectAll").addEventListener("change", (event) => {
+  const ids = campaignAvailableLeads().map((lead) => lead.id);
+  state.selectedCampaignLeadIds = event.currentTarget.checked ? new Set(ids) : new Set();
+  renderCampaignAvailableLeads();
+});
+
+$("#campaignAvailableLeadsTable").addEventListener("change", (event) => {
+  const leadId = event.target.dataset.campaignLeadId;
+  if (!leadId) return;
+  if (event.target.checked) {
+    state.selectedCampaignLeadIds.add(leadId);
+  } else {
+    state.selectedCampaignLeadIds.delete(leadId);
+  }
+  updateCampaignLeadSelection();
+});
 
 document.body.addEventListener("focusin", (event) => {
   if (event.target.matches(".segment-input")) renderSegmentPicker(event.target);
@@ -1162,7 +1242,8 @@ $("#enrollBtn").addEventListener("click", (event) => runAction({
   button: event.currentTarget,
 }, async () => {
   const campaignId = $("#activeCampaign").value;
-  const leadIds = state.leads.filter((lead) => ["valid", "risky"].includes(lead.validation_status)).map((lead) => lead.id);
+  const leadIds = [...state.selectedCampaignLeadIds];
+  if (!leadIds.length) throw new Error("Выбери хотя бы одного лида в таблице ниже.");
   const mailboxIds = state.mailboxes.map((mailbox) => mailbox.id);
   const result = await api(`/api/campaigns/${campaignId}/enroll`, {
     method: "POST",
@@ -1173,9 +1254,10 @@ $("#enrollBtn").addEventListener("click", (event) => runAction({
   setActionResult({
     status: "success",
     title: "Добавление лидов в кампанию",
-    message: `Добавлены valid/risky лиды: ${leadIds.length}. Mailbox для отправки: ${mailboxIds.length}.`,
+    message: `Выбранные лиды добавлены: ${leadIds.length}. Mailbox для отправки: ${mailboxIds.length}.`,
     details: result,
   });
+  state.selectedCampaignLeadIds = new Set();
   switchCampaignStep("check");
 }));
 

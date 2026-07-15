@@ -169,7 +169,20 @@
         <section class="panel">
           <div class="panel-head">
             <h2>База</h2>
-            <input id="leadSearch" placeholder="Поиск" />
+            <div class="lead-filters">
+              <input id="leadSearch" placeholder="Поиск" />
+              <select id="leadSegmentFilter">
+                <option value="">Все сегменты</option>
+              </select>
+              <select id="leadValidationFilter">
+                <option value="">Любая проверка</option>
+                <option value="valid">Можно отправлять</option>
+                <option value="risky">Нужна проверка</option>
+                <option value="invalid">Не отправлять</option>
+                <option value="unknown">Еще не проверяли</option>
+              </select>
+              <button id="leadFiltersReset" type="button">Сбросить</button>
+            </div>
           </div>
           <div class="table-wrap"><table id="leadsTable"></table></div>
           <p class="help-text">Проверка email показывает, можно ли отправлять письма этому лиду: “можно отправлять” — формат, домен и почтовые записи в порядке; “нужна проверка” — адрес спорный, например общий ящик info@/team@; “не отправлять” — адрес некорректный или почта вернула недоставку; “еще не проверяли” — нажми “Запустить проверку email”.</p>
@@ -374,9 +387,14 @@
           <section class="panel">
             <div class="panel-head">
               <h2>Лиды кампании</h2>
-              <button id="enrollBtn">Добавить всех valid/risky лидов</button>
+              <button id="enrollBtn">Добавить выбранных лидов</button>
             </div>
-            <p class="help-text">Перед добавлением лидов проверь базу email. В кампанию попадут только valid и risky лиды.</p>
+            <p class="help-text">Выбери лидов из базы ниже. В список доступны только “можно отправлять” и “нужна проверка”.</p>
+            <div class="lead-bulkbar">
+              <label class="check"><input id="campaignLeadSelectAll" type="checkbox" /> Выбрать всех на экране</label>
+              <span id="campaignLeadSelection" class="muted">Выбрано: 0</span>
+            </div>
+            <div class="table-wrap"><table id="campaignAvailableLeadsTable"></table></div>
             <div id="campaignLeadsSummary" class="summary-line"></div>
             <div class="table-wrap"><table id="campaignLeadsTable"></table></div>
           </section>

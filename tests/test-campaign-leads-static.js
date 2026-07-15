@@ -8,7 +8,8 @@ const css = fs.readFileSync("public/styles.css", "utf8");
 for (const expected of [
   "campaignLeadsSummary",
   "campaignLeadsTable",
-  "Добавить всех valid/risky лидов",
+  "campaignAvailableLeadsTable",
+  "Добавить выбранных лидов",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`campaign leads panel should include ${expected}`);
