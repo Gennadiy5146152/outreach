@@ -55,6 +55,52 @@ function warmupReplyDraft() {
   ]);
 }
 
+function fallbackWarmupDialogues() {
+  return [
+    {
+      key: "fallback-check",
+      subject: "Короткая проверка связи",
+      messages: [
+        "Привет.\n\nПроверяю рабочую переписку между ящиками. Если письмо пришло, ответь коротко.\n\nСпасибо.",
+        "Привет. Да, письмо дошло, все нормально.",
+        "Отлично, спасибо. Тогда оставляю цепочку как рабочую.",
+        "Да, можно считать проверку успешной.",
+      ],
+    },
+  ];
+}
+
+function normalizeWarmupSubject(subject) {
+  return String(subject || "")
+    .replace(/^\s*(re|fw|fwd)\s*:\s*/i, "")
+    .trim();
+}
+
+function warmupMessageBody(dialogue, position) {
+  const item = dialogue?.messages?.[position];
+  if (typeof item === "string") return item;
+  if (item && typeof item.body === "string") return item.body;
+  return "";
+}
+
+async function loadWarmupDialogues() {
+  const row = (await query("SELECT value FROM settings WHERE key = 'warmup_dialogues'")).rows[0];
+  const value = row?.value;
+  const dialogues = Array.isArray(value?.dialogues) ? value.dialogues : [];
+  const usable = dialogues.filter((dialogue) => (
+    dialogue &&
+    typeof dialogue.key === "string" &&
+    typeof dialogue.subject === "string" &&
+    Array.isArray(dialogue.messages) &&
+    dialogue.messages.length >= 2
+  ));
+  return usable.length ? usable : fallbackWarmupDialogues();
+}
+
+function findWarmupDialogue(dialogues, key) {
+  return dialogues.find((dialogue) => dialogue.key === key) || dialogues[0] || fallbackWarmupDialogues()[0];
+}
+
 function isWithinWindow(row) {
   const now = new Date();
   const day = now.getDay() || 7;
@@ -437,14 +483,60 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
     payload: { from: fromMailbox.email, subject },
   });
 
-  const alreadyReply = /^re:/i.test(subject);
-  if (alreadyReply) return;
+  const baseSubject = normalizeWarmupSubject(subject);
+  const thread = (
+    await query(
+      `
+        SELECT *
+        FROM warmup_threads
+        WHERE status = 'active'
+          AND (
+            (from_mailbox_id = $1 AND to_mailbox_id = $2)
+            OR (from_mailbox_id = $2 AND to_mailbox_id = $1)
+          )
+          AND ($3 = '' OR subject = $3 OR subject IS NULL)
+        ORDER BY last_message_at DESC NULLS LAST, created_at DESC
+        LIMIT 1
+      `,
+      [fromMailbox.id, mailbox.id, baseSubject],
+    )
+  ).rows[0];
+  if (!thread && /^\s*re\s*:/i.test(subject)) return;
 
-  const replyText = warmupReplyDraft();
+  const dialogues = await loadWarmupDialogues();
+  const dialogue = thread ? findWarmupDialogue(dialogues, thread.template_key) : null;
+  const nextPosition = thread ? Number(thread.next_position || 1) : null;
+  const expectedSenderId = thread
+    ? (nextPosition % 2 === 0 ? thread.from_mailbox_id : thread.to_mailbox_id)
+    : mailbox.id;
+
+  if (thread && expectedSenderId !== mailbox.id) {
+    await logEvent("warmup_dialogue_skipped", {
+      mailboxId: mailbox.id,
+      messageId: message.id,
+      payload: { reason: "not_expected_sender", subject: baseSubject, nextPosition },
+    });
+    return;
+  }
+
+  let replyText = thread && dialogue ? warmupMessageBody(dialogue, nextPosition) : warmupReplyDraft();
+  if (!replyText) {
+    await query(
+      "UPDATE warmup_threads SET status = 'completed', completed_at = now(), last_message_at = now() WHERE id = $1",
+      [thread.id],
+    );
+    await logEvent("warmup_dialogue_completed", {
+      mailboxId: mailbox.id,
+      messageId: message.id,
+      payload: { subject: baseSubject, templateKey: thread.template_key },
+    });
+    return;
+  }
+
   const references = [message.references_header, message.in_reply_to, message.message_id_header].filter(Boolean).join(" ");
   const info = await sendMail(mailbox, {
     to: fromMailbox.email,
-    subject: `Re: ${subject}`,
+    subject: `Re: ${baseSubject || subject}`,
     text: replyText,
     html: replyText.replace(/\n/g, "<br>"),
     headers: { "X-Outreach-Warmup": "true" },
@@ -457,8 +549,22 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
       INSERT INTO messages(mailbox_id, direction, type, status, subject, body_text, body_html, provider_message_id, message_id_header, sent_at)
       VALUES ($1,'outbound','warmup','sent',$2,$3,$4,$5,$6,now())
     `,
-    [mailbox.id, `Re: ${subject}`, replyText, replyText.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
+    [mailbox.id, `Re: ${baseSubject || subject}`, replyText, replyText.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
+  if (thread) {
+    const completed = nextPosition + 1 >= dialogue.messages.length;
+    await query(
+      `
+        UPDATE warmup_threads
+        SET next_position = $2,
+            status = CASE WHEN $3 THEN 'completed' ELSE 'active' END,
+            completed_at = CASE WHEN $3 THEN now() ELSE completed_at END,
+            last_message_at = now()
+        WHERE id = $1
+      `,
+      [thread.id, nextPosition + 1, completed],
+    );
+  }
   await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [mailbox.id]);
   await enqueueInboxSync(fromMailbox.id, 45);
   await logEvent("warmup_sync_queued", {
@@ -589,12 +695,34 @@ async function sendWarmup() {
   `)).rows;
   if (mailboxes.length < 2) return;
   const [from, to] = mailboxes;
-  const draft = warmupDraft(from, to);
+  const activeThread = (
+    await query(
+      `
+        SELECT 1
+        FROM warmup_threads
+        WHERE status = 'active'
+          AND (
+            (from_mailbox_id = $1 AND to_mailbox_id = $2)
+            OR (from_mailbox_id = $2 AND to_mailbox_id = $1)
+          )
+          AND last_message_at > now() - interval '2 hours'
+        LIMIT 1
+      `,
+      [from.id, to.id],
+    )
+  ).rowCount;
+  if (activeThread) return;
+
+  const dialogues = await loadWarmupDialogues();
+  const dialogue = pickRandom(dialogues);
+  const fallbackDraft = warmupDraft(from, to);
+  const subject = dialogue?.subject || fallbackDraft.subject;
+  const body = warmupMessageBody(dialogue, 0) || fallbackDraft.body;
   const info = await sendMail(from, {
     to: to.email,
-    subject: draft.subject,
-    text: draft.body,
-    html: draft.body.replace(/\n/g, "<br>"),
+    subject,
+    text: body,
+    html: body.replace(/\n/g, "<br>"),
     headers: { "X-Outreach-Warmup": "true" },
   });
   await query(
@@ -602,14 +730,21 @@ async function sendWarmup() {
       INSERT INTO messages(mailbox_id, direction, type, status, subject, body_text, body_html, provider_message_id, message_id_header, sent_at)
       VALUES ($1,'outbound','warmup','sent',$2,$3,$4,$5,$6,now())
     `,
-    [from.id, draft.subject, draft.body, draft.body.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
+    [from.id, subject, body, body.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
+  );
+  await query(
+    `
+      INSERT INTO warmup_threads(from_mailbox_id, to_mailbox_id, template_key, subject, next_position, last_message_at)
+      VALUES ($1,$2,$3,$4,1,now())
+    `,
+    [from.id, to.id, dialogue?.key || "fallback-check", normalizeWarmupSubject(subject)],
   );
   await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [from.id]);
   await enqueueInboxSync(to.id, 45);
-  await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, subject: draft.subject, dryRun: runtime.dryRun } });
+  await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, subject, dryRun: runtime.dryRun, templateKey: dialogue?.key || "fallback-check" } });
   await logEvent("warmup_sync_queued", {
     mailboxId: to.id,
-    payload: { reason: "warmup_sent", from: from.email, subject: draft.subject },
+    payload: { reason: "warmup_sent", from: from.email, subject },
   });
 }
 
