@@ -12,6 +12,7 @@ const state = {
   envCheck: null,
   health: null,
   editorTarget: null,
+  campaignStep: "campaign",
   actionResults: {
     global: null,
     mailboxes: {},
@@ -189,6 +190,12 @@ function switchView(view) {
     events: "События",
     settings: "Настройки",
   }[view];
+}
+
+function switchCampaignStep(step) {
+  state.campaignStep = step;
+  $$("[data-campaign-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.campaignPanel === step));
+  $$("[data-campaign-step]").forEach((button) => button.classList.toggle("active", button.dataset.campaignStep === step));
 }
 
 async function loadHealth() {
@@ -641,6 +648,8 @@ $("#leadSearch").addEventListener("input", () => loadLeads());
 document.body.addEventListener("click", (event) => {
   const go = event.target.dataset.go;
   if (go) switchView(go);
+  const campaignStep = event.target.dataset.campaignStep;
+  if (campaignStep) switchCampaignStep(campaignStep);
 });
 
 function insertTextAtCursor(text) {
@@ -801,7 +810,10 @@ $("#campaignForm").addEventListener("submit", (event) => runAction({
   });
   event.target.reset();
   await refresh();
+  $("#activeCampaign").value = result.id;
+  $("#stepCampaign").value = result.id;
   setActionResult({ status: "success", title: "Создание кампании", message: `Кампания «${result.name}» создана.`, details: result });
+  switchCampaignStep("letter");
 }));
 
 $("#stepForm").addEventListener("submit", (event) => runAction({
@@ -818,6 +830,7 @@ $("#stepForm").addEventListener("submit", (event) => runAction({
   });
   await refresh();
   setActionResult({ status: "success", title: "Добавление шага", message: `Шаг «${result.name}» добавлен.`, details: result });
+  switchCampaignStep("leads");
 }));
 
 $("#attachmentForm").addEventListener("submit", (event) => runAction({
@@ -832,6 +845,7 @@ $("#attachmentForm").addEventListener("submit", (event) => runAction({
   event.target.reset();
   await refresh();
   setActionResult({ status: "success", title: "Загрузка вложения", message: "Вложение добавлено к шагу.", details: result });
+  switchCampaignStep("leads");
 }));
 
 $("#enrollBtn").addEventListener("click", (event) => runAction({
@@ -853,6 +867,7 @@ $("#enrollBtn").addEventListener("click", (event) => runAction({
     message: `Добавлены valid/risky лиды: ${leadIds.length}. Mailbox для отправки: ${mailboxIds.length}.`,
     details: result,
   });
+  switchCampaignStep("check");
 }));
 
 $("#preflightBtn").addEventListener("click", (event) => runAction({
@@ -867,6 +882,7 @@ $("#preflightBtn").addEventListener("click", (event) => runAction({
     message: result.ok ? "Кампания готова к запуску." : `Запуск заблокирован: ${result.errors?.length || 0} ошибок.`,
     details: result,
   });
+  if (result.ok) switchCampaignStep("launch");
 }));
 
 async function startCampaign(mode) {

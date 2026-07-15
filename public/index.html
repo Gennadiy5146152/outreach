@@ -282,14 +282,18 @@
         <section class="panel campaign-guide">
           <h2>Порядок работы</h2>
           <div class="campaign-steps">
-            <span>1. Кампания</span>
-            <span>2. Письмо</span>
-            <span>3. Лиды</span>
-            <span>4. Проверка</span>
-            <span>5. Тест и запуск</span>
+            <button class="active" data-campaign-step="campaign">1. Кампания</button>
+            <button data-campaign-step="letter">2. Письмо</button>
+            <button data-campaign-step="leads">3. Лиды</button>
+            <button data-campaign-step="check">4. Проверка</button>
+            <button data-campaign-step="launch">5. Тест и запуск</button>
           </div>
+          <label class="campaign-active">
+            <span>Активная кампания</span>
+            <select id="activeCampaign"></select>
+          </label>
         </section>
-        <div class="grid two">
+        <div class="campaign-step-panel active" data-campaign-panel="campaign">
           <section class="panel">
             <h2>Кампания</h2>
             <p class="help-text">Кампания — это одна рассылка: кому пишем, с каким письмом и через какие почты.</p>
@@ -302,6 +306,12 @@
               <button>Создать кампанию</button>
             </form>
           </section>
+          <section class="panel">
+            <h2>Созданные кампании</h2>
+            <div id="campaignList" class="cards"></div>
+          </section>
+        </div>
+        <div class="campaign-step-panel" data-campaign-panel="letter">
           <section class="panel">
             <h2>Шаг письма</h2>
             <p class="help-text">Шаг — это письмо в цепочке. Для первой проверки достаточно одного шага.</p>
@@ -328,32 +338,48 @@
               <button>Добавить шаг</button>
             </form>
           </section>
+          <section class="panel">
+            <h2>Вложения к шагу</h2>
+            <form id="attachmentForm" class="form inline">
+              <select name="step_id" id="attachmentStep"></select>
+              <input name="file" type="file" required />
+              <button>Загрузить вложение</button>
+            </form>
+            <div id="attachmentList" class="cards"></div>
+          </section>
         </div>
-        <section class="panel">
-          <h2>Вложения к шагу</h2>
-          <form id="attachmentForm" class="form inline">
-            <select name="step_id" id="attachmentStep"></select>
-            <input name="file" type="file" required />
-            <button>Загрузить вложение</button>
-          </form>
-          <div id="attachmentList" class="cards"></div>
-        </section>
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Кампании</h2>
-            <div>
-              <button id="enrollBtn">Добавить всех valid лидов</button>
+        <div class="campaign-step-panel" data-campaign-panel="leads">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Лиды кампании</h2>
+              <button id="enrollBtn">Добавить всех valid/risky лидов</button>
+            </div>
+            <p class="help-text">Перед добавлением лидов проверь базу email. В кампанию попадут только valid и risky лиды.</p>
+          </section>
+        </div>
+        <div class="campaign-step-panel" data-campaign-panel="check">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Проверка перед запуском</h2>
               <button id="preflightBtn">Проверить перед запуском</button>
+            </div>
+            <p class="help-text">Preflight проверяет лидов, ящики, DNS, шаблоны и tracking. Если есть ошибки, запуск будет заблокирован.</p>
+            <pre id="preflightResult" class="log"></pre>
+          </section>
+        </div>
+        <div class="campaign-step-panel" data-campaign-panel="launch">
+          <section class="panel">
+          <div class="panel-head">
+            <h2>Тест и запуск</h2>
+            <div>
               <button id="startTestBtn">Тест на мои почты</button>
               <button id="startManualBtn">Запуск с подтверждением</button>
               <button id="startAutoBtn">Автозапуск</button>
             </div>
           </div>
-          <p class="help-text">Правильный порядок: добавь лидов в кампанию → проверь перед запуском → сначала тест → потом запуск.</p>
-          <select id="activeCampaign"></select>
-          <pre id="preflightResult" class="log"></pre>
-          <div id="campaignList" class="cards"></div>
-        </section>
+            <p class="help-text">Сначала отправь тест на свои почты. Потом запускай ручной режим или автозапуск.</p>
+          </section>
+        </div>
       </section>
 
       <section class="view" id="queueView">

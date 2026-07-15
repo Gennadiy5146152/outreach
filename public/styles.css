@@ -581,7 +581,7 @@ fieldset.field {
   gap: 8px;
 }
 
-.campaign-steps span {
+.campaign-steps button {
   min-height: 34px;
   padding: 8px 10px;
   border: 1px solid var(--line);
@@ -590,6 +590,41 @@ fieldset.field {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+  text-align: left;
+}
+
+.campaign-steps button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.campaign-active {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.campaign-active span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.campaign-step-panel {
+  display: none;
+}
+
+.campaign-step-panel.active {
+  display: grid;
+  gap: 16px;
+}
+
+.campaign-step-panel[data-campaign-panel="campaign"].active,
+.campaign-step-panel[data-campaign-panel="letter"].active {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
 }
 
 
@@ -835,6 +870,9 @@ dialog::backdrop {
   .metrics,
   .env-grid,
   .campaign-steps,
+  .campaign-active,
+  .campaign-step-panel[data-campaign-panel="campaign"].active,
+  .campaign-step-panel[data-campaign-panel="letter"].active,
   .form.inline,
   .settings-row,
   .field-grid.two,
