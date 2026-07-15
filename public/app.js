@@ -389,12 +389,43 @@ async function loadLeads() {
 async function loadSegments() {
   try {
     state.segments = await api("/api/segments");
-    const options = state.segments.map((segment) => `<option value="${esc(segment)}"></option>`).join("");
-    $("#segmentOptions").innerHTML = options;
+    renderSegmentPickers();
   } catch (error) {
     state.segments = [];
     console.warn("Не удалось загрузить сегменты", error);
   }
+}
+
+function segmentMatches(value) {
+  const needle = String(value || "").trim().toLowerCase();
+  return state.segments
+    .filter((segment) => !needle || segment.toLowerCase().includes(needle))
+    .slice(0, 20);
+}
+
+function closeSegmentPickers() {
+  $$(".segment-picker").forEach((picker) => picker.classList.remove("open"));
+  $$(".segment-menu").forEach((menu) => {
+    menu.hidden = true;
+  });
+}
+
+function renderSegmentPicker(input) {
+  const picker = input.closest(".segment-picker");
+  const menu = picker?.querySelector(".segment-menu");
+  if (!picker || !menu) return;
+  const matches = segmentMatches(input.value);
+  menu.innerHTML = matches.length
+    ? matches.map((segment) => `<button type="button" data-segment-value="${esc(segment)}">${esc(segment)}</button>`).join("")
+    : `<span class="segment-empty">Сохраненных сегментов нет. Новый сохранится после отправки формы.</span>`;
+  menu.hidden = false;
+  picker.classList.add("open");
+}
+
+function renderSegmentPickers() {
+  $$(".segment-input").forEach((input) => {
+    if (document.activeElement === input) renderSegmentPicker(input);
+  });
 }
 
 async function loadMailboxes() {
@@ -830,11 +861,34 @@ $("#logoutBtn").addEventListener("click", async () => {
 $("#leadSearch").addEventListener("input", () => loadLeads());
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
 
+document.body.addEventListener("focusin", (event) => {
+  if (event.target.matches(".segment-input")) renderSegmentPicker(event.target);
+});
+
+document.body.addEventListener("input", (event) => {
+  if (event.target.matches(".segment-input")) renderSegmentPicker(event.target);
+});
+
 document.body.addEventListener("click", (event) => {
+  const segmentOption = event.target.closest("[data-segment-value]");
+  if (segmentOption) {
+    const picker = segmentOption.closest(".segment-picker");
+    const input = picker.querySelector(".segment-input");
+    input.value = segmentOption.dataset.segmentValue;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    closeSegmentPickers();
+    return;
+  }
+  if (!event.target.closest(".segment-picker")) closeSegmentPickers();
+
   const go = event.target.dataset.go;
   if (go) switchView(go);
   const campaignStep = event.target.dataset.campaignStep;
   if (campaignStep) switchCampaignStep(campaignStep);
+});
+
+document.body.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeSegmentPickers();
 });
 
 function insertTextAtCursor(text) {
