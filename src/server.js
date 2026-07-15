@@ -38,6 +38,10 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
 function timingSafeEqualText(left, right) {
   const leftBuffer = Buffer.from(String(left || ""));
   const rightBuffer = Buffer.from(String(right || ""));
@@ -853,7 +857,16 @@ app.post("/api/campaigns/:id/steps", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/steps/:id/attachments", attachmentUpload.single("file"), asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: "campaign_step_required" });
+  }
   if (!req.file) return res.status(400).json({ error: "file_required" });
+  const step = (await query("SELECT id FROM campaign_steps WHERE id = $1", [req.params.id])).rows[0];
+  if (!step) {
+    await fs.unlink(req.file.path).catch(() => {});
+    return res.status(404).json({ error: "campaign_step_not_found" });
+  }
   const runtime = await getRuntimeSettings();
   if (req.file.size > runtime.maxAttachmentMb * 1024 * 1024) {
     await fs.unlink(req.file.path).catch(() => {});

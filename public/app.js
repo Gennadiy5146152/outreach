@@ -458,10 +458,11 @@ async function loadCampaigns() {
   const options = state.campaigns.map((campaign) => `<option value="${campaign.id}">${campaign.name}</option>`).join("");
   $("#stepCampaign").innerHTML = options;
   $("#activeCampaign").innerHTML = options;
-  $("#attachmentStep").innerHTML = state.campaigns
-    .flatMap((campaign) => campaign.steps.map((step) => ({ ...step, campaignName: campaign.name })))
-    .map((step) => `<option value="${step.id}">${esc(step.campaignName)} / ${esc(step.name)}</option>`)
-    .join("");
+  const attachmentSteps = state.campaigns.flatMap((campaign) => campaign.steps.map((step) => ({ ...step, campaignName: campaign.name })));
+  $("#attachmentStep").innerHTML = attachmentSteps.length
+    ? attachmentSteps.map((step) => `<option value="${step.id}">${esc(step.campaignName)} / ${esc(step.name)}</option>`).join("")
+    : `<option value="">Сначала добавь шаг письма</option>`;
+  $("#attachmentForm button").disabled = attachmentSteps.length === 0;
   renderAttachments();
   $("#campaignList").innerHTML = state.campaigns.length
     ? state.campaigns.map(
@@ -1034,6 +1035,9 @@ $("#attachmentForm").addEventListener("submit", (event) => runAction({
   event.preventDefault();
   const form = new FormData(event.target);
   const stepId = form.get("step_id");
+  if (!stepId || stepId === "null") {
+    throw new Error("Сначала добавь шаг письма, затем выбери его для вложения.");
+  }
   form.delete("step_id");
   const result = await api(`/api/steps/${stepId}/attachments`, { method: "POST", body: form });
   event.target.reset();
