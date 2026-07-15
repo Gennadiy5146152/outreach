@@ -389,6 +389,62 @@ h2 {
   grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
   align-items: center;
 }
+.form-section-title {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.field,
+fieldset.field {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field > span,
+.field > legend {
+  color: var(--muted);
+}
+
+.field-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.field-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.help-text.tight {
+  margin: -2px 0 2px;
+}
+
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(42px, 1fr));
+  gap: 8px;
+}
+
+.check-grid .check {
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 
 input,
 select,
@@ -585,11 +641,16 @@ dialog::backdrop {
   .metrics,
   .env-grid,
   .form.inline,
+  .field-grid.two,
   .setup-list,
   .setup-step,
   .hero-help,
   .wizard-step {
     grid-template-columns: 1fr;
+  }
+
+  .check-grid {
+    grid-template-columns: repeat(4, minmax(52px, 1fr));
   }
 
   .next-action {

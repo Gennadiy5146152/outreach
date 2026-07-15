@@ -172,26 +172,99 @@
         <div class="grid two">
           <section class="panel">
             <h2>Подключить mailbox</h2>
-            <p class="help-text">Пароль сюда не вставляется. Вставь пароль в `.env`, а здесь укажи только имя переменной, например `MAILBOX_1_PASSWORD`.</p>
+            <p class="help-text">SMTP нужен для отправки, IMAP — для входящих, прогрева и проверки ящика. Пароль сюда не вставляется: добавь его в `.env`, а здесь укажи только имя переменной, например `MAILBOX_1_PASSWORD`.</p>
             <form id="mailboxForm" class="form">
-              <input name="name" placeholder="Название" required />
-              <input name="from_name" placeholder="Имя отправителя" />
-              <input name="email" type="email" placeholder="Email" required />
-              <select name="provider">
-                <option value="yandex">Яндекс</option>
-                <option value="custom">Корпоративный SMTP/IMAP</option>
-              </select>
-              <input name="smtp_host" placeholder="SMTP host" value="smtp.yandex.ru" required />
-              <input name="smtp_port" type="number" value="465" required />
-              <input name="imap_host" placeholder="IMAP host" value="imap.yandex.ru" required />
-              <input name="imap_port" type="number" value="993" required />
-              <input name="username" placeholder="Логин" />
-              <input name="password_env_key" placeholder="Имя переменной из .env: MAILBOX_1_PASSWORD" required />
-              <input name="min_delay_minutes" type="number" value="7" />
-              <input name="max_delay_minutes" type="number" value="18" />
-              <input name="send_window_start" type="time" value="09:00" />
-              <input name="send_window_end" type="time" value="18:00" />
-              <input name="daily_warmup_limit" type="number" value="5" />
+              <div class="form-section-title">Ящик</div>
+              <label class="field">
+                <span>Название в CRM</span>
+                <input name="name" placeholder="Например: Основная почта" required />
+              </label>
+              <label class="field">
+                <span>Имя отправителя</span>
+                <input name="from_name" placeholder="Например: Геннадий" />
+              </label>
+              <label class="field">
+                <span>Email ящика</span>
+                <input name="email" type="email" placeholder="name@domain.ru" required />
+              </label>
+              <label class="field">
+                <span>Провайдер</span>
+                <select name="provider">
+                  <option value="yandex">Яндекс</option>
+                  <option value="custom">Корпоративный SMTP/IMAP</option>
+                </select>
+              </label>
+
+              <div class="form-section-title">Отправка SMTP</div>
+              <div class="field-grid two">
+                <label class="field">
+                  <span>SMTP сервер</span>
+                  <input name="smtp_host" placeholder="Например: smtp.yandex.ru" value="smtp.yandex.ru" required />
+                </label>
+                <label class="field">
+                  <span>SMTP порт</span>
+                  <input name="smtp_port" type="number" min="1" max="65535" placeholder="465 — SSL, 587 — STARTTLS" value="465" required />
+                </label>
+              </div>
+
+              <div class="form-section-title">Входящие IMAP</div>
+              <p class="help-text tight">IMAP заполнять обязательно для проверки mailbox, входящих ответов и прогрева. Это не имя переменной `.env`: здесь указывается сервер и порт почты.</p>
+              <div class="field-grid two">
+                <label class="field">
+                  <span>IMAP сервер</span>
+                  <input name="imap_host" placeholder="Например: imap.yandex.ru" value="imap.yandex.ru" required />
+                </label>
+                <label class="field">
+                  <span>IMAP порт</span>
+                  <input name="imap_port" type="number" min="1" max="65535" placeholder="993 — защищенный IMAP" value="993" required />
+                </label>
+              </div>
+
+              <div class="form-section-title">Доступы</div>
+              <label class="field">
+                <span>Логин</span>
+                <input name="username" placeholder="Обычно тот же email: name@domain.ru" />
+              </label>
+              <label class="field">
+                <span>Имя переменной с паролем из .env</span>
+                <input name="password_env_key" placeholder="Например: MAILBOX_1_PASSWORD" required />
+              </label>
+
+              <div class="form-section-title">Расписание отправки</div>
+              <div class="field-grid two">
+                <label class="field">
+                  <span>Минимальная пауза между письмами</span>
+                  <input name="min_delay_minutes" type="number" min="1" step="1" value="7" placeholder="7 минут" />
+                </label>
+                <label class="field">
+                  <span>Максимальная пауза между письмами</span>
+                  <input name="max_delay_minutes" type="number" min="1" step="1" value="18" placeholder="18 минут" />
+                </label>
+                <label class="field">
+                  <span>Начало окна отправки</span>
+                  <input name="send_window_start" type="time" value="09:00" />
+                </label>
+                <label class="field">
+                  <span>Конец окна отправки</span>
+                  <input name="send_window_end" type="time" value="18:00" />
+                </label>
+              </div>
+              <fieldset class="field">
+                <legend>Дни отправки</legend>
+                <div class="check-grid">
+                  <label class="check"><input name="send_days" type="checkbox" value="1" checked /> Пн</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="2" checked /> Вт</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="3" checked /> Ср</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="4" checked /> Чт</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="5" checked /> Пт</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="6" /> Сб</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="7" /> Вс</label>
+                </div>
+              </fieldset>
+              <label class="field">
+                <span>Лимит прогрева в день</span>
+                <input name="daily_warmup_limit" type="number" min="1" step="1" value="5" placeholder="5 писем в день" />
+              </label>
               <label class="check"><input name="warmup_enabled" type="checkbox" /> Прогрев включен</label>
               <button>Сохранить mailbox</button>
             </form>

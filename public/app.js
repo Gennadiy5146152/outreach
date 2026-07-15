@@ -22,7 +22,17 @@ async function api(path, options = {}) {
 
 function formJson(form) {
   const data = new FormData(form);
-  return Object.fromEntries([...data.entries()].map(([key, value]) => [key, value]));
+  const payload = {};
+  for (const [key, value] of data.entries()) {
+    if (payload[key] === undefined) {
+      payload[key] = value;
+    } else if (Array.isArray(payload[key])) {
+      payload[key].push(value);
+    } else {
+      payload[key] = [payload[key], value];
+    }
+  }
+  return payload;
 }
 
 function toast(message) {
