@@ -25,6 +25,48 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
+const DOTENV_PATH = path.resolve(process.cwd(), ".env");
+
+function mailboxPasswordEnvKey(email) {
+  const mailboxKey = String(email || "mailbox")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase() || "MAILBOX";
+  return `MAILBOX_${mailboxKey}_PASSWORD`;
+}
+
+function formatDotenvValue(value) {
+  return `"${String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")}"`;
+}
+
+async function saveSecretToDotenv(key, value) {
+  const normalizedKey = String(key || "").trim();
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(normalizedKey)) {
+    throw new Error("invalid_password_env_key");
+  }
+
+  const line = `${normalizedKey}=${formatDotenvValue(value)}`;
+  let current = "";
+  try {
+    current = await fs.readFile(DOTENV_PATH, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const lines = current ? current.split(/\r?\n/) : [];
+  const index = lines.findIndex((item) => item.trim().startsWith(`${normalizedKey}=`));
+  if (index >= 0) lines[index] = line;
+  else lines.push(line);
+
+  const body = lines.filter((item, idx) => item || idx < lines.length - 1).join("\n");
+  await fs.writeFile(DOTENV_PATH, `${body}\n`);
+  process.env[normalizedKey] = String(value || "");
+  return normalizedKey;
+}
+
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const db = await query("SELECT now() AS now");
   res.json({
@@ -58,12 +100,7 @@ app.get("/api/env-check", asyncHandler(async (_req, res) => {
     key: mailbox.password_env_key,
     configured: Boolean(process.env[mailbox.password_env_key]),
   }));
-  const expectedMailboxKeys = mailboxes.length
-    ? mailboxSecrets
-    : [
-        { key: "MAILBOX_1_PASSWORD", configured: Boolean(process.env.MAILBOX_1_PASSWORD), example: true },
-        { key: "MAILBOX_2_PASSWORD", configured: Boolean(process.env.MAILBOX_2_PASSWORD), example: true },
-      ];
+  const expectedMailboxKeys = mailboxes.length ? mailboxSecrets : [];
 
   res.json({
     required: [
@@ -79,9 +116,8 @@ app.get("/api/env-check", asyncHandler(async (_req, res) => {
       "# Безопасный режим. Пока true, реальные письма не отправляются.",
       "MAIL_DRY_RUN=true",
       "",
-      "# Пароли от двух почтовых ящиков. В UI указывайте только имя переменной.",
-      "MAILBOX_1_PASSWORD=вставьте_пароль_или_app_password",
-      "MAILBOX_2_PASSWORD=вставьте_пароль_или_app_password",
+      "# Пароли mailbox создаются автоматически, когда вы вводите пароль в форме Почта.",
+      "# Пример: MAILBOX_NAME_DOMAIN_RU_PASSWORD=...",
       "",
       "# Для реального open tracking нужен публичный URL туннеля.",
       "PUBLIC_TRACKING_URL=",
@@ -390,6 +426,16 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/mailboxes", asyncHandler(async (req, res) => {
+  const password = String(req.body.password || "");
+  const requestedEnvKey = String(req.body.password_env_key || "").trim();
+  const passwordEnvKey = password
+    ? await saveSecretToDotenv(requestedEnvKey || mailboxPasswordEnvKey(req.body.email), password)
+    : requestedEnvKey;
+
+  if (!passwordEnvKey) {
+    return res.status(400).json({ error: "mailbox_password_required" });
+  }
+
   const result = await query(
     `
       INSERT INTO mailboxes(
@@ -412,7 +458,7 @@ app.post("/api/mailboxes", asyncHandler(async (req, res) => {
       Number(req.body.imap_port || 993),
       req.body.imap_secure === undefined ? true : toBool(req.body.imap_secure),
       req.body.username || req.body.email,
-      req.body.password_env_key,
+      passwordEnvKey,
       req.body.from_name || req.body.name,
       req.body.daily_send_limit ? Number(req.body.daily_send_limit) : null,
       Number(req.body.daily_warmup_limit || 5),

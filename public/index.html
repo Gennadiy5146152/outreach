@@ -79,9 +79,9 @@
               <h2>Подключить почту</h2>
               <p>Нужно добавить 2 своих ящика. Сервис проверит SMTP для отправки, IMAP для входящих и настройки домена.</p>
               <div class="example-box">
-                <strong>Что заранее добавить в `.env`</strong>
-                <code>MAILBOX_1_PASSWORD=пароль_или_app_password</code>
-                <code>MAILBOX_2_PASSWORD=пароль_или_app_password</code>
+                <strong>Пароль вводится в форме</strong>
+                <code>Например: пароль приложения Яндекс Почты</code>
+                <code>Сервис сам сохранит его в локальный .env</code>
               </div>
               <button data-go="mailboxes">Открыть раздел Почта</button>
             </div>
@@ -172,7 +172,7 @@
         <div class="grid two">
           <section class="panel">
             <h2>Подключить mailbox</h2>
-            <p class="help-text">SMTP нужен для отправки, IMAP — для входящих, прогрева и проверки ящика. Пароль сюда не вставляется: добавь его в `.env`, а здесь укажи только имя переменной, например `MAILBOX_1_PASSWORD`.</p>
+            <p class="help-text">SMTP нужен для отправки, IMAP — для входящих, прогрева и проверки ящика. Пароль можно ввести прямо здесь: сервис сохранит его в локальный `.env`, а в базе оставит только имя переменной.</p>
             <form id="mailboxForm" class="form">
               <div class="form-section-title">Ящик</div>
               <label class="field">
@@ -226,9 +226,10 @@
                 <input name="username" placeholder="Обычно тот же email: name@domain.ru" />
               </label>
               <label class="field">
-                <span>Имя переменной с паролем из .env</span>
-                <input name="password_env_key" placeholder="Например: MAILBOX_1_PASSWORD" required />
+                <span>Пароль почты или пароль приложения</span>
+                <input name="password" type="password" autocomplete="new-password" placeholder="Вставьте пароль приложения от почты" required />
               </label>
+              <p class="help-text tight">После сохранения пароль будет записан в `.env` автоматически. В базе хранится только имя переменной, например `MAILBOX_NAME_DOMAIN_RU_PASSWORD`.</p>
 
               <div class="form-section-title">Расписание отправки</div>
               <div class="field-grid two">
