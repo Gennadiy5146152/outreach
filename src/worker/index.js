@@ -5,6 +5,7 @@ import { pool, query, withClient } from "../db/pool.js";
 import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
+import { getRuntimeSettings } from "../services/runtime.js";
 import { htmlToText, renderTemplate } from "../services/template.js";
 import { persistValidation, validateEmail } from "../services/validation.js";
 
@@ -192,12 +193,13 @@ async function processSend(item) {
     pain: item.pain,
   };
   const settings = (await query("SELECT value FROM settings WHERE key = 'sender'")).rows[0]?.value || {};
+  const runtime = await getRuntimeSettings();
   const subject = renderTemplate(item.subject_template, lead, mailbox, settings);
   const text = renderTemplate(item.body_template_text || htmlToText(item.body_template_html), lead, mailbox, settings);
   const trackingId = crypto.randomUUID();
   const pixel =
-    item.tracking_enabled && env.publicTrackingUrl
-      ? `<img src="${env.publicTrackingUrl.replace(/\/$/, "")}/t/open/${trackingId}.gif" width="1" height="1" alt="" style="display:none" />`
+    item.tracking_enabled && runtime.publicTrackingUrl
+      ? `<img src="${runtime.publicTrackingUrl.replace(/\/$/, "")}/t/open/${trackingId}.gif" width="1" height="1" alt="" style="display:none" />`
       : "";
   const html = `${renderTemplate(item.body_template_html || text.replace(/\n/g, "<br>"), lead, mailbox, settings)}${pixel}`;
   const to = item.mode === "test" ? item.mailbox_email : item.lead_email;
@@ -275,7 +277,7 @@ async function processSend(item) {
     campaignId: item.campaign_id,
     mailboxId: item.mailbox_id,
     messageId: message.id,
-    payload: { mode: item.mode, to, dryRun: env.mailDryRun },
+    payload: { mode: item.mode, to, dryRun: runtime.dryRun },
   });
 }
 
@@ -302,7 +304,8 @@ async function failSend(item, error) {
 }
 
 async function syncInbox(mailbox) {
-  if (env.mailDryRun) return;
+  const runtime = await getRuntimeSettings();
+  if (runtime.dryRun) return;
 
   const client = await createImapClient(mailbox);
   try {
@@ -499,6 +502,7 @@ async function scheduleMaintenance() {
 }
 
 async function sendWarmup() {
+  const runtime = await getRuntimeSettings();
   const mailboxes = (await query("SELECT * FROM mailboxes WHERE warmup_enabled = true AND is_active = true ORDER BY random() LIMIT 2")).rows;
   if (mailboxes.length < 2) return;
   const [from, to] = mailboxes;
@@ -518,7 +522,7 @@ async function sendWarmup() {
     `,
     [from.id, subject, text, text.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
-  await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, dryRun: env.mailDryRun } });
+  await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, dryRun: runtime.dryRun } });
 }
 
 async function tick() {

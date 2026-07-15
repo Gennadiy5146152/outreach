@@ -1,8 +1,9 @@
-import { env } from "../config/env.js";
 import { query } from "../db/pool.js";
+import { getRuntimeSettings } from "./runtime.js";
 import { findMissingRequiredVariables } from "./template.js";
 
 export async function campaignPreflight(campaignId) {
+  const runtime = await getRuntimeSettings();
   const campaign = (await query("SELECT * FROM campaigns WHERE id = $1", [campaignId])).rows[0];
   if (!campaign) throw new Error("Campaign not found");
 
@@ -77,8 +78,8 @@ export async function campaignPreflight(campaignId) {
     if (missing.length) errors.push(`${item.email}: пустые переменные ${[...new Set(missing)].join(", ")}.`);
   }
 
-  if (campaign.tracking_enabled && !env.publicTrackingUrl) {
-    errors.push("PUBLIC_TRACKING_URL не задан при включенном open tracking.");
+  if (campaign.tracking_enabled && !runtime.publicTrackingUrl) {
+    errors.push("Tracking URL не задан при включенном open tracking.");
   }
   if (campaign.daily_limit === null) warnings.push("Дневной лимит кампании отключен, будут применяться задержки и рабочее окно.");
 

@@ -197,8 +197,8 @@ async function loadHealth() {
   const runtimeModeText = $("#runtimeModeText");
   if (runtimeModeText) {
     runtimeModeText.textContent = health.dryRun
-      ? "Сейчас включен безопасный режим: MAIL_DRY_RUN=true. Сервис все покажет в интерфейсе, но реальные письма наружу не отправит."
-      : "Сейчас включена реальная отправка: MAIL_DRY_RUN=false. Проверки SMTP/IMAP и отправка писем будут выполняться по-настоящему.";
+      ? "Сейчас включен безопасный режим: сервис все покажет в интерфейсе, но реальные письма наружу не отправит."
+      : "Сейчас включена реальная отправка: SMTP/IMAP и отправка писем будут выполняться по-настоящему.";
   }
 }
 
@@ -245,7 +245,7 @@ function renderEnvChecklist() {
       <section>
         <h3>Шаблон для .env</h3>
         <pre class="env-template">${esc(state.envCheck.template)}</pre>
-        <p class="muted">После изменения .env выполни: docker compose restart web worker</p>
+        <p class="muted">После изменения .env выполни: docker compose up -d --force-recreate web worker</p>
       </section>
     </div>
   `;
@@ -384,10 +384,10 @@ function renderSetupChecklist() {
       done: runtimeDryRun === true || runtimeDryRun === false,
       title: runtimeDryRun === undefined ? "Проверить режим отправки" : runtimeDryRun ? "Безопасный режим включен" : "Реальная отправка включена",
       text: runtimeDryRun === undefined
-        ? "Жду ответ backend по MAIL_DRY_RUN."
+        ? "Жду ответ backend по runtime-настройкам."
         : runtimeDryRun
         ? "Можно спокойно нажимать кнопки: реальные письма не отправятся."
-        : "MAIL_DRY_RUN=false: SMTP/IMAP и отправка работают по-настоящему.",
+        : "SMTP/IMAP и отправка работают по-настоящему.",
       action: "Открыть настройки",
       view: "settings",
     },
@@ -590,7 +590,7 @@ async function loadSettings() {
         <button>Сохранить</button>
       </div>
     </form>
-    <p class="settings-note">Сохраняется в .env. После изменения перезапусти web и worker.</p>
+    <p class="settings-note">Сохраняется в БД и применяется без пересоздания контейнеров.</p>
   `;
   renderSetupChecklist();
 }
@@ -886,7 +886,7 @@ document.body.addEventListener("click", async (event) => {
         status: dryRun ? "warn" : "success",
         title: "Проверка SMTP/IMAP",
         message: dryRun
-          ? "MAIL_DRY_RUN=true: сервис записал проверку как успешную, но к SMTP/IMAP реально не подключался."
+          ? "Включен dry-run: сервис записал проверку как успешную, но к SMTP/IMAP реально не подключался."
           : `SMTP подключился, IMAP открыл INBOX. DNS: MX ${result.domain?.mxStatus || "-"}, SPF ${result.domain?.spfStatus || "-"}, DKIM ${result.domain?.dkimStatus || "-"}, DMARC ${result.domain?.dmarcStatus || "-"}.`,
         details: result,
         target: { type: "mailbox", id: mailboxId },
@@ -1052,9 +1052,9 @@ document.body.addEventListener("submit", (event) => {
     });
     await Promise.all([loadHealth(), loadSettings(), loadEnvCheck()]);
     setActionResult({
-      status: "warn",
+      status: "success",
       title: "Сохранение runtime настроек",
-      message: `${result.message} Выполни: docker compose restart web worker.`,
+      message: result.message,
       details: result,
     });
   });

@@ -10,6 +10,7 @@ import { checkSendingDomain } from "./services/domain-check.js";
 import { verifyImap, verifySmtp } from "./services/mail.js";
 import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
+import { getRuntimeSettings, saveRuntimeSettings } from "./services/runtime.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
@@ -18,7 +19,7 @@ const app = express();
 const csvUpload = multer({ storage: multer.memoryStorage() });
 const attachmentUpload = multer({
   dest: env.attachmentDir,
-  limits: { fileSize: env.maxAttachmentMb * 1024 * 1024 },
+  limits: { fileSize: 200 * 1024 * 1024 },
 });
 
 app.use(express.json({ limit: "5mb" }));
@@ -68,26 +69,29 @@ async function saveSecretToDotenv(key, value) {
 }
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
-  const db = await query("SELECT now() AS now");
+  const [db, runtime] = await Promise.all([query("SELECT now() AS now"), getRuntimeSettings()]);
   res.json({
     ok: true,
     now: db.rows[0].now,
-    dryRun: env.mailDryRun,
-    publicTrackingUrl: env.publicTrackingUrl,
-    maxAttachmentMb: env.maxAttachmentMb,
+    dryRun: runtime.dryRun,
+    publicTrackingUrl: runtime.publicTrackingUrl,
+    maxAttachmentMb: runtime.maxAttachmentMb,
   });
 }));
 
 app.get("/api/settings", asyncHandler(async (_req, res) => {
-  const settings = (await query("SELECT key, value FROM settings ORDER BY key")).rows;
+  const [settings, runtime] = await Promise.all([
+    query("SELECT key, value FROM settings ORDER BY key"),
+    getRuntimeSettings(),
+  ]);
   res.json({
     runtime: {
-      dryRun: env.mailDryRun,
-      publicTrackingUrl: env.publicTrackingUrl,
+      dryRun: runtime.dryRun,
+      publicTrackingUrl: runtime.publicTrackingUrl,
       attachmentDir: env.attachmentDir,
-      maxAttachmentMb: env.maxAttachmentMb,
+      maxAttachmentMb: runtime.maxAttachmentMb,
     },
-    settings: Object.fromEntries(settings.map((item) => [item.key, item.value])),
+    settings: Object.fromEntries(settings.rows.map((item) => [item.key, item.value])),
   });
 }));
 
@@ -100,23 +104,21 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "max_attachment_mb_must_be_between_1_and_200" });
   }
 
-  await saveSecretToDotenv("MAIL_DRY_RUN", mailDryRun ? "true" : "false");
-  await saveSecretToDotenv("PUBLIC_TRACKING_URL", publicTrackingUrl);
-  await saveSecretToDotenv("MAX_ATTACHMENT_MB", String(maxAttachmentMb));
-
-  env.mailDryRun = mailDryRun;
-  env.publicTrackingUrl = publicTrackingUrl;
-  env.maxAttachmentMb = maxAttachmentMb;
+  const runtime = await saveRuntimeSettings({
+    dryRun: mailDryRun,
+    publicTrackingUrl,
+    maxAttachmentMb,
+  });
 
   res.json({
     runtime: {
-      dryRun: env.mailDryRun,
-      publicTrackingUrl: env.publicTrackingUrl,
+      dryRun: runtime.dryRun,
+      publicTrackingUrl: runtime.publicTrackingUrl,
       attachmentDir: env.attachmentDir,
-      maxAttachmentMb: env.maxAttachmentMb,
+      maxAttachmentMb: runtime.maxAttachmentMb,
     },
-    restartRequired: ["web", "worker"],
-    message: "Настройки сохранены в .env. Текущий web-процесс обновил режим в интерфейсе; для фоновой отправки и лимита вложений перезапусти web и worker.",
+    restartRequired: [],
+    message: "Настройки сохранены в БД и применяются без пересоздания контейнеров.",
   });
 }));
 
@@ -133,23 +135,13 @@ app.get("/api/env-check", asyncHandler(async (_req, res) => {
 
   res.json({
     required: [
-      { key: "MAIL_DRY_RUN", configured: process.env.MAIL_DRY_RUN !== undefined, value: env.mailDryRun ? "true" : "false", secret: false },
       { key: "POSTGRES_PORT", configured: process.env.POSTGRES_PORT !== undefined, value: process.env.POSTGRES_PORT || "55432", secret: false },
     ],
-    recommended: [
-      { key: "PUBLIC_TRACKING_URL", configured: Boolean(env.publicTrackingUrl), secret: false },
-      { key: "MAX_ATTACHMENT_MB", configured: process.env.MAX_ATTACHMENT_MB !== undefined, value: String(env.maxAttachmentMb), secret: false },
-    ],
+    recommended: [],
     mailboxSecrets: expectedMailboxKeys,
     template: [
-      "# Безопасный режим. Пока true, реальные письма не отправляются.",
-      "MAIL_DRY_RUN=true",
-      "",
       "# Пароли mailbox создаются автоматически, когда вы вводите пароль в форме Почта.",
       "# Пример: MAILBOX_NAME_DOMAIN_RU_PASSWORD=...",
-      "",
-      "# Для реального open tracking нужен публичный URL туннеля.",
-      "PUBLIC_TRACKING_URL=",
       "",
       "# Postgres на хосте опубликован на 55432, чтобы не конфликтовать с локальным 5432.",
       "POSTGRES_PORT=55432",
@@ -625,6 +617,11 @@ app.post("/api/campaigns/:id/steps", asyncHandler(async (req, res) => {
 
 app.post("/api/steps/:id/attachments", attachmentUpload.single("file"), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file_required" });
+  const runtime = await getRuntimeSettings();
+  if (req.file.size > runtime.maxAttachmentMb * 1024 * 1024) {
+    await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: `attachment_too_large_max_${runtime.maxAttachmentMb}_mb` });
+  }
   const result = await query(
     `
       INSERT INTO attachments(campaign_step_id, file_name, mime_type, size_bytes, storage_path)

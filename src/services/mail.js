@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import nodemailer from "nodemailer";
 import { ImapFlow } from "imapflow";
-import { env, secret } from "../config/env.js";
+import { secret } from "../config/env.js";
+import { getRuntimeSettings } from "./runtime.js";
 
 function mailboxPassword(mailbox) {
   return secret(mailbox.password_env_key || "");
@@ -21,7 +22,8 @@ export function smtpTransport(mailbox) {
 }
 
 export async function verifySmtp(mailbox) {
-  if (env.mailDryRun) return { ok: true, dryRun: true };
+  const runtime = await getRuntimeSettings();
+  if (runtime.dryRun) return { ok: true, dryRun: true };
   const transport = smtpTransport(mailbox);
   await transport.verify();
   return { ok: true, dryRun: false };
@@ -39,7 +41,8 @@ export async function sendMail(mailbox, message, attachments = []) {
     });
   }
 
-  if (env.mailDryRun) {
+  const runtime = await getRuntimeSettings();
+  if (runtime.dryRun) {
     console.log(`[DRY-RUN] ${from} -> ${message.to}: ${message.subject}`);
     return {
       messageId: `<dry-run-${crypto.randomUUID()}@outreach.local>`,
@@ -73,7 +76,8 @@ export async function createImapClient(mailbox) {
 }
 
 export async function verifyImap(mailbox) {
-  if (env.mailDryRun) return { ok: true, dryRun: true };
+  const runtime = await getRuntimeSettings();
+  if (runtime.dryRun) return { ok: true, dryRun: true };
   const client = await createImapClient(mailbox);
   try {
     await client.connect();

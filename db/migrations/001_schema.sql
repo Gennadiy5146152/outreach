@@ -290,6 +290,7 @@ CREATE TABLE IF NOT EXISTS warmup_threads (
 INSERT INTO settings(key, value)
 VALUES
   ('sender', '{"senderOffer":"помочь B2B-командам находить клиентов через аккуратный email-аутрич"}'),
+  ('runtime', '{"dryRun":true,"publicTrackingUrl":"","maxAttachmentMb":50}'),
   ('tracking', '{"publicTrackingUrl":""}'),
   ('attachments', '{"maxAttachmentMb":50}')
 ON CONFLICT (key) DO NOTHING;
