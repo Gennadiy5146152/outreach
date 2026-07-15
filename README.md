@@ -10,13 +10,23 @@
 cp .env.example .env
 ```
 
-2. Запустите сервис:
+2. Задайте логин и пароль для входа:
+
+```dotenv
+AUTH_USER=admin
+AUTH_PASSWORD=сложный_пароль
+AUTH_SESSION_SECRET=длинная_случайная_строка
+```
+
+Если сервис открыт через обычный `http://IP:3000`, оставьте `AUTH_COOKIE_SECURE=false`. Для HTTPS можно поставить `true`.
+
+3. Запустите сервис:
 
 ```bash
 docker compose up -d
 ```
 
-3. Откройте:
+4. Откройте:
 
 ```text
 http://localhost:3000

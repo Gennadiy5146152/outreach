@@ -8,6 +8,10 @@ const root = process.cwd();
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   appPort: Number(process.env.APP_PORT || 3000),
+  authUser: process.env.AUTH_USER || "",
+  authPassword: process.env.AUTH_PASSWORD || "",
+  authSessionSecret: process.env.AUTH_SESSION_SECRET || "",
+  authCookieSecure: String(process.env.AUTH_COOKIE_SECURE || "false").toLowerCase() === "true",
   databaseUrl: process.env.DATABASE_URL || "postgres://outreach:outreach@localhost:5432/outreach",
   publicTrackingUrl: process.env.PUBLIC_TRACKING_URL || "",
   mailDryRun: String(process.env.MAIL_DRY_RUN || "true").toLowerCase() !== "false",

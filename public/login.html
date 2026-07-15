@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Вход · Outreach Desk</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <section class="panel login-card">
+        <div>
+          <p class="eyebrow">Outreach Desk</p>
+          <h1>Вход в сервис</h1>
+          <p class="muted">Доступ закрыт. Логин и пароль задаются на сервере в `.env`.</p>
+        </div>
+        <form id="loginForm" class="form">
+          <label class="field">
+            <span>Логин</span>
+            <input name="username" autocomplete="username" required autofocus />
+          </label>
+          <label class="field">
+            <span>Пароль</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button>Войти</button>
+        </form>
+        <div id="loginMessage" class="login-message" hidden></div>
+      </section>
+    </main>
+    <script>
+      const form = document.querySelector("#loginForm");
+      const message = document.querySelector("#loginMessage");
+
+      async function checkStatus() {
+        const response = await fetch("/api/auth/status", { cache: "no-store" });
+        const status = await response.json().catch(() => ({}));
+        if (status.authenticated) window.location.href = "/";
+        if (!status.configured) {
+          message.hidden = false;
+          message.textContent = "Авторизация не настроена: добавьте AUTH_USER, AUTH_PASSWORD и AUTH_SESSION_SECRET в .env и перезапустите web.";
+          form.querySelector("button").disabled = true;
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        message.hidden = true;
+        const body = Object.fromEntries(new FormData(form).entries());
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (response.ok) {
+          window.location.href = "/";
+          return;
+        }
+        message.hidden = false;
+        message.textContent = response.status === 401 ? "Неверный логин или пароль." : "Не удалось войти. Проверьте настройки авторизации.";
+      });
+
+      checkStatus();
+    </script>
+  </body>
+</html>

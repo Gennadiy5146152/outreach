@@ -26,6 +26,10 @@ async function api(path, options = {}) {
   const response = await fetch(path, options);
   const data = await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status === 401) {
+      window.location.href = "/login.html";
+      return null;
+    }
     const error = new Error(data?.error || data?.errors?.join("\n") || response.statusText);
     error.status = response.status;
     error.data = data;
@@ -714,6 +718,11 @@ $("#refreshBtn").addEventListener("click", (event) => runAction({
   await refresh();
   setActionResult({ status: "success", title: "Обновление данных", message: "Данные с сервера обновлены." });
 }));
+
+$("#logoutBtn").addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  window.location.href = "/login.html";
+});
 $("#leadSearch").addEventListener("input", () => loadLeads());
 
 document.body.addEventListener("click", (event) => {
