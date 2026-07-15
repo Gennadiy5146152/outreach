@@ -19,6 +19,42 @@ function randomDelayMinutes(min, max) {
   return floor + Math.floor(Math.random() * (ceil - floor + 1));
 }
 
+function pickRandom(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function warmupDraft(from, to) {
+  const today = new Date().toLocaleDateString("ru-RU");
+  const drafts = [
+    {
+      subject: `Короткая проверка связи ${today}`,
+      body: `Добрый день.\n\nПроверяю, что рабочая почта ${from.email} нормально доходит до ${to.email}.\n\nОтветь, пожалуйста, когда увидишь.\n\nСпасибо.`,
+    },
+    {
+      subject: `Тест входящей переписки ${today}`,
+      body: "Привет.\n\nОтправляю короткое служебное письмо, чтобы проверить SMTP, IMAP и цепочку ответов.\n\nЕсли письмо пришло, можно ответить одной строкой.",
+    },
+    {
+      subject: `Рабочая заметка по почте ${today}`,
+      body: "Добрый день.\n\nПроверяю рабочую переписку между нашими ящиками. Никаких действий не нужно, только подтверждение получения.\n\nХорошего дня.",
+    },
+    {
+      subject: `Проверка маршрута письма ${today}`,
+      body: "Привет.\n\nЭто служебная проверка доставки и чтения входящих через IMAP. Напиши, пожалуйста, дошло ли письмо.\n\nСпасибо.",
+    },
+  ];
+  return pickRandom(drafts);
+}
+
+function warmupReplyDraft() {
+  return pickRandom([
+    "Добрый день.\n\nПисьмо получил, все в порядке.\n\nСпасибо.",
+    "Привет.\n\nДа, письмо дошло. Проверка выглядит нормально.",
+    "Получил, спасибо. Входящее письмо отображается корректно.",
+    "Добрый день.\n\nПодтверждаю получение. Можно продолжать проверку.",
+  ]);
+}
+
 function isWithinWindow(row) {
   const now = new Date();
   const day = now.getDay() || 7;
@@ -326,7 +362,7 @@ async function syncInbox(mailbox) {
       const bodyText = parsed.text || "";
       const headers = Object.fromEntries([...parsed.headers.entries()].map(([key, value]) => [key, String(value)]));
       const warmupPeer = await findWarmupPeer(fromEmail);
-      const isWarmup = Boolean(warmupPeer) && /рабочая заметка|warmup/i.test(subject);
+      const isWarmup = Boolean(warmupPeer) && (headers["x-outreach-warmup"] === "true" || /рабочая заметка|warmup|проверка связи|проверка маршрута|тест входящей/i.test(subject));
       const classification = classifyInbound({ subject, body: bodyText, headers });
       const linked = await findLinkedOutbound(parsed, fromEmail);
 
@@ -393,16 +429,19 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
   const alreadyReply = /^re:/i.test(subject);
   if (alreadyReply) return;
 
-  const shouldReply = Math.random() < 0.6;
+  const shouldReply = Math.random() < 0.75;
   if (!shouldReply) return;
 
-  const replyText = "Добрый день.\n\nПолучил, спасибо. Все в порядке.\n\nХорошего дня.";
+  const replyText = warmupReplyDraft();
+  const references = [message.references_header, message.in_reply_to, message.message_id_header].filter(Boolean).join(" ");
   const info = await sendMail(mailbox, {
     to: fromMailbox.email,
     subject: `Re: ${subject}`,
     text: replyText,
     html: replyText.replace(/\n/g, "<br>"),
     headers: { "X-Outreach-Warmup": "true" },
+    inReplyTo: message.message_id_header || undefined,
+    references: references || undefined,
   });
 
   await query(
@@ -476,6 +515,15 @@ async function applyInboundEffects(message, classification) {
 async function scheduleMaintenance() {
   await query(
     `
+      UPDATE job_queue
+      SET status = 'retrying', run_at = now(), updated_at = now()
+      WHERE status = 'running'
+        AND locked_at < now() - interval '10 minutes'
+    `,
+  );
+
+  await query(
+    `
       INSERT INTO job_queue(job_type, payload, run_at)
       SELECT 'sync_inbox', jsonb_build_object('mailboxId', id), now()
       FROM mailboxes m
@@ -495,24 +543,43 @@ async function scheduleMaintenance() {
     `
       INSERT INTO job_queue(job_type, payload, run_at)
       SELECT 'warmup_send', '{}'::jsonb, now()
-      WHERE EXISTS (SELECT 1 FROM mailboxes WHERE warmup_enabled = true)
+      WHERE (SELECT count(*) FROM mailboxes WHERE warmup_enabled = true AND is_active = true) >= 2
         AND NOT EXISTS (SELECT 1 FROM job_queue WHERE job_type = 'warmup_send' AND status IN ('pending','running','retrying'))
+        AND NOT EXISTS (
+          SELECT 1 FROM events
+          WHERE event_type = 'warmup_sent'
+            AND created_at > now() - interval '20 minutes'
+        )
     `,
   );
 }
 
 async function sendWarmup() {
   const runtime = await getRuntimeSettings();
-  const mailboxes = (await query("SELECT * FROM mailboxes WHERE warmup_enabled = true AND is_active = true ORDER BY random() LIMIT 2")).rows;
+  const mailboxes = (await query(`
+    SELECT m.*
+    FROM mailboxes m
+    WHERE m.warmup_enabled = true
+      AND m.is_active = true
+      AND (
+        SELECT count(*)
+        FROM messages msg
+        WHERE msg.mailbox_id = m.id
+          AND msg.direction = 'outbound'
+          AND msg.type = 'warmup'
+          AND msg.sent_at >= current_date
+      ) < m.daily_warmup_limit
+    ORDER BY random()
+    LIMIT 2
+  `)).rows;
   if (mailboxes.length < 2) return;
   const [from, to] = mailboxes;
-  const subject = `Рабочая заметка ${new Date().toISOString().slice(0, 10)}`;
-  const text = "Добрый день.\n\nПроверяю рабочую переписку и доставку писем.\n\nСпасибо.";
+  const draft = warmupDraft(from, to);
   const info = await sendMail(from, {
     to: to.email,
-    subject,
-    text,
-    html: text.replace(/\n/g, "<br>"),
+    subject: draft.subject,
+    text: draft.body,
+    html: draft.body.replace(/\n/g, "<br>"),
     headers: { "X-Outreach-Warmup": "true" },
   });
   await query(
@@ -520,9 +587,9 @@ async function sendWarmup() {
       INSERT INTO messages(mailbox_id, direction, type, status, subject, body_text, body_html, provider_message_id, message_id_header, sent_at)
       VALUES ($1,'outbound','warmup','sent',$2,$3,$4,$5,$6,now())
     `,
-    [from.id, subject, text, text.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
+    [from.id, draft.subject, draft.body, draft.body.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
-  await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, dryRun: runtime.dryRun } });
+  await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, subject: draft.subject, dryRun: runtime.dryRun } });
 }
 
 async function tick() {

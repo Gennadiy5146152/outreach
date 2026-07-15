@@ -59,6 +59,8 @@ export async function sendMail(mailbox, message, attachments = []) {
     html: message.html,
     attachments: preparedAttachments,
     headers: message.headers || {},
+    inReplyTo: message.inReplyTo,
+    references: message.references,
   });
 }
 
