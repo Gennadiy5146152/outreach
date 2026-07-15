@@ -827,6 +827,27 @@ fieldset.field {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
 }
 
+.attachment-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.attachment-form button {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 2px;
+}
+
+.attachment-form input[type="file"] {
+  min-width: 0;
+  height: auto;
+  min-height: 40px;
+  padding: 7px 10px;
+  line-height: 1.4;
+}
+
 
 input,
 select,
@@ -1074,6 +1095,7 @@ dialog::backdrop {
   .campaign-step-panel[data-campaign-panel="campaign"].active,
   .campaign-step-panel[data-campaign-panel="letter"].active,
   .mailbox-edit-form,
+  .attachment-form,
   .form.inline,
   .settings-row,
   .field-grid.two,
@@ -1086,6 +1108,11 @@ dialog::backdrop {
 
   .check-grid {
     grid-template-columns: repeat(4, minmax(52px, 1fr));
+  }
+
+  .attachment-form button {
+    grid-column: auto;
+    justify-self: stretch;
   }
 
   .next-action {

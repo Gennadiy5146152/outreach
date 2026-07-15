@@ -344,9 +344,15 @@
           </section>
           <section class="panel">
             <h2>Вложения к шагу</h2>
-            <form id="attachmentForm" class="form inline">
-              <select name="step_id" id="attachmentStep"></select>
-              <input name="file" type="file" required />
+            <form id="attachmentForm" class="attachment-form">
+              <label class="field">
+                <span>Шаг письма</span>
+                <select name="step_id" id="attachmentStep"></select>
+              </label>
+              <label class="field">
+                <span>Файл</span>
+                <input name="file" type="file" required />
+              </label>
               <button>Загрузить вложение</button>
             </form>
             <div id="attachmentList" class="cards"></div>
