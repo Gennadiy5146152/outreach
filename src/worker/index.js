@@ -281,6 +281,7 @@ async function processSend(item) {
     `,
     [item.id, message.id],
   );
+  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [item.mailbox_id]);
 
   const nextStep = (
     await query(
@@ -429,9 +430,6 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
   const alreadyReply = /^re:/i.test(subject);
   if (alreadyReply) return;
 
-  const shouldReply = Math.random() < 0.75;
-  if (!shouldReply) return;
-
   const replyText = warmupReplyDraft();
   const references = [message.references_header, message.in_reply_to, message.message_id_header].filter(Boolean).join(" ");
   const info = await sendMail(mailbox, {
@@ -451,6 +449,7 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
     `,
     [mailbox.id, `Re: ${subject}`, replyText, replyText.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
+  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [mailbox.id]);
 }
 
 async function findLinkedOutbound(parsed, fromEmail) {
@@ -589,6 +588,7 @@ async function sendWarmup() {
     `,
     [from.id, draft.subject, draft.body, draft.body.replace(/\n/g, "<br>"), info.response || "", info.messageId || ""],
   );
+  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [from.id]);
   await logEvent("warmup_sent", { mailboxId: from.id, payload: { to: to.email, subject: draft.subject, dryRun: runtime.dryRun } });
 }
 
