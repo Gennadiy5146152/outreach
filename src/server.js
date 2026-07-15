@@ -9,7 +9,7 @@ import { pool, query, withClient } from "./db/pool.js";
 import { parseCsv, rowsToObjects, rowsToOutreachRows } from "./services/csv.js";
 import { parseEmail } from "./services/validation.js";
 import { checkSendingDomain } from "./services/domain-check.js";
-import { verifyImap, verifySmtp } from "./services/mail.js";
+import { sendMail, verifyImap, verifySmtp } from "./services/mail.js";
 import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, saveRuntimeSettings } from "./services/runtime.js";
@@ -1433,6 +1433,155 @@ app.post("/api/outreach/conversations/:id/continue", asyncHandler(async (req, re
     payload: { conversationId: conversation.id, approvedQueue: result.rows[0].approved_queue },
   });
   res.json(result.rows[0]);
+}));
+
+app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) => {
+  const subject = cleanText(req.body.subject);
+  const bodyText = cleanText(req.body.body_text);
+  const mailboxId = cleanText(req.body.mailbox_id);
+  const stopSequence = req.body.stop_sequence !== false && req.body.stop_sequence !== "false";
+  if (!subject) return res.status(400).json({ error: "subject_required" });
+  if (!bodyText) return res.status(400).json({ error: "body_required" });
+  if (!isUuid(mailboxId)) return res.status(400).json({ error: "mailbox_required" });
+
+  const conversation = (await query(
+    `
+      SELECT oc.*, l.email AS lead_email
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      WHERE oc.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const to = conversation.email || conversation.lead_email;
+  const parsed = parseEmail(to);
+  if (!parsed.syntaxValid) return res.status(400).json({ error: "recipient_email_invalid" });
+
+  const mailbox = (await query(
+    `
+      SELECT *
+      FROM mailboxes
+      WHERE id = $1
+        AND is_active = true
+        AND smtp_verified_at IS NOT NULL
+    `,
+    [mailboxId],
+  )).rows[0];
+  if (!mailbox) return res.status(400).json({ error: "mailbox_smtp_not_ready" });
+
+  const previous = (await query(
+    `
+      SELECT *
+      FROM messages
+      WHERE lead_id = $1
+        AND type <> 'warmup'
+      ORDER BY COALESCE(received_at, sent_at, created_at) DESC
+      LIMIT 1
+    `,
+    [conversation.lead_id],
+  )).rows[0];
+  const references = [
+    previous?.references_header,
+    previous?.in_reply_to,
+    previous?.message_id_header,
+  ].filter(Boolean).join(" ");
+  const runtime = await getRuntimeSettings();
+  const html = bodyText.replace(/\n/g, "<br>");
+  const info = await sendMail(mailbox, {
+    to: parsed.normalized,
+    subject,
+    text: bodyText,
+    html,
+    headers: { "X-Outreach-Manual-Reply": "true" },
+    inReplyTo: previous?.message_id_header || undefined,
+    references: references || undefined,
+  });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const inserted = await client.query(
+        `
+          INSERT INTO messages(
+            lead_id, campaign_id, mailbox_id, outreach_draft_id, direction, type, status,
+            subject, body_text, body_html, provider_message_id, message_id_header,
+            in_reply_to, references_header, sent_at
+          )
+          VALUES ($1,$2,$3,$4,'outbound','manual_reply','sent',$5,$6,$7,$8,$9,$10,$11,now())
+          RETURNING *
+        `,
+        [
+          conversation.lead_id,
+          conversation.campaign_id,
+          mailbox.id,
+          null,
+          subject,
+          bodyText,
+          html,
+          info.response || "",
+          info.messageId || "",
+          previous?.message_id_header || "",
+          references,
+        ],
+      );
+
+      let cancelledQueue = 0;
+      if (stopSequence) {
+        const cancelled = await client.query(
+          `
+            UPDATE sending_queue
+            SET status = 'cancelled',
+                last_error = 'Отменено после ручного ответа',
+                updated_at = now()
+            WHERE lead_id = $1
+              AND outreach_draft_id IS NOT NULL
+              AND status IN ('pending','retrying')
+            RETURNING outreach_step_id
+          `,
+          [conversation.lead_id],
+        );
+        cancelledQueue = cancelled.rowCount;
+        const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
+        if (stepIds.length) {
+          await client.query(
+            "UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])",
+            [stepIds],
+          );
+        }
+      }
+
+      const updatedConversation = await client.query(
+        `
+          UPDATE outreach_conversations
+          SET status = $2,
+              next_action = $3,
+              last_message_at = now(),
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [
+          conversation.id,
+          stopSequence ? "paused" : "active_sequence",
+          stopSequence ? "manual_reply_sent_sequence_stopped" : "manual_reply_sent_followup_allowed",
+        ],
+      );
+      await client.query("COMMIT");
+      return { message: inserted.rows[0], conversation: updatedConversation.rows[0], cancelledQueue };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("manual_reply_sent", {
+    leadId: conversation.lead_id,
+    mailboxId: mailbox.id,
+    messageId: result.message.id,
+    payload: { conversationId: conversation.id, to: parsed.normalized, dryRun: runtime.dryRun, cancelledQueue: result.cancelledQueue },
+  });
+  res.status(201).json({ ...result, dryRun: runtime.dryRun });
 }));
 
 app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (req, res) => {

@@ -29,6 +29,9 @@ for (const expected of [
   "data-open-conversation",
   "data-stop-conversation",
   "data-continue-conversation",
+  "data-conversation-reply-form",
+  "Отправка ручного ответа",
+  "После ручного ответа остановить будущие follow-up",
   "$(\"#closeConversationDialog\").addEventListener",
 ]) {
   if (!app.includes(expected)) {
@@ -42,8 +45,11 @@ for (const expected of [
   "app.get(\"/api/outreach/conversations/:id\"",
   "app.post(\"/api/outreach/conversations/:id/stop\"",
   "app.post(\"/api/outreach/conversations/:id/continue\"",
+  "app.post(\"/api/outreach/conversations/:id/reply\"",
   "outreach_conversation_stopped",
   "outreach_conversation_continued",
+  "manual_reply_sent",
+  "sendMail(mailbox",
   "Content-Disposition",
 ]) {
   if (!server.includes(expected)) {
@@ -63,7 +69,7 @@ if (!worker.includes("status = 'waiting_reply_review'")) {
   throw new Error("worker should move replied conversations into review queue");
 }
 
-for (const expected of [".conversation-card", ".conversation-card-head", ".conversation-thread"]) {
+for (const expected of [".conversation-card", ".conversation-card-head", ".conversation-thread", ".manual-reply-form"]) {
   if (!css.includes(expected)) {
     throw new Error(`conversations CSS should include ${expected}`);
   }

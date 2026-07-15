@@ -201,6 +201,7 @@ const STATUS_LABELS = {
   cancelled: "отменено",
   bounced: "недоставка",
   approval: "ждет подтверждения",
+  manual_reply: "ручной ответ",
 };
 
 const VALIDATION_REASON_LABELS = {
@@ -237,6 +238,7 @@ const EVENT_LABELS = {
   auto_reply_received: "Получен автоответ",
   unsubscribe_received: "Получена отписка",
   not_target_received: "Получен ответ “не целевой”",
+  manual_reply_sent: "Ручной ответ отправлен",
   warmup_sent: "Прогрев: письмо отправлено",
   warmup_reply_received: "Прогрев: получен ответ",
   warmup_sync_queued: "Прогрев: синхронизация входящих поставлена в очередь",
@@ -254,6 +256,16 @@ const EVENT_REASON_LABELS = {
 
 function statusLabel(value) {
   return STATUS_LABELS[value] || REPLY_CLASS_LABELS[value] || value || "";
+}
+
+function nextActionLabel(value) {
+  return {
+    approve_or_pause_followup: "решить, продолжать ли follow-up",
+    stopped_by_user: "цепочка остановлена вручную",
+    followup_allowed: "follow-up разрешен",
+    manual_reply_sent_sequence_stopped: "ручной ответ отправлен, цепочка остановлена",
+    manual_reply_sent_followup_allowed: "ручной ответ отправлен, follow-up разрешен",
+  }[value] || value || "не задано";
 }
 
 function validationReasonText(value) {
@@ -1333,14 +1345,26 @@ async function loadConversations() {
 }
 
 async function openConversation(conversationId) {
+  if (!state.mailboxes.length) {
+    state.mailboxes = await api("/api/mailboxes");
+  }
   const detail = await api(`/api/outreach/conversations/${conversationId}`);
+  const lastMessage = detail.messages.at(-1);
+  const lastOutbound = [...detail.messages].reverse().find((message) => message.direction === "outbound" && message.mailbox_id);
+  const mailboxOptions = state.mailboxes
+    .filter((mailbox) => mailbox.is_active)
+    .map((mailbox) => `<option value="${mailbox.id}" ${mailbox.id === lastOutbound?.mailbox_id ? "selected" : ""}>${esc(mailbox.email)}</option>`)
+    .join("");
+  const replySubject = lastMessage?.subject && /^re:/i.test(lastMessage.subject)
+    ? lastMessage.subject
+    : `Re: ${lastMessage?.subject || detail.conversation.email}`;
   $("#conversationDialogTitle").textContent = `${detail.conversation.company || detail.conversation.email} · ${statusLabel(detail.conversation.status)}`;
   $("#conversationDetail").innerHTML = `
     <div class="summary-line">
       <span>Email: <strong>${esc(detail.conversation.email)}</strong></span>
       <span>Статус: <strong>${esc(statusLabel(detail.conversation.status))}</strong></span>
       <span>Класс: <strong>${esc(statusLabel(detail.conversation.classification || "unknown"))}</strong></span>
-      <span>Следующее действие: <strong>${esc(detail.conversation.next_action || "не задано")}</strong></span>
+      <span>Следующее действие: <strong>${esc(nextActionLabel(detail.conversation.next_action))}</strong></span>
     </div>
     <h3>Переписка</h3>
     <div class="cards conversation-thread">
@@ -1355,6 +1379,17 @@ async function openConversation(conversationId) {
         `).join("")
         : `<p class="muted">Писем в диалоге пока нет.</p>`}
     </div>
+    <h3>Ручной ответ</h3>
+    <form class="form manual-reply-form" data-conversation-reply-form="${detail.conversation.id}">
+      <select name="mailbox_id" required>
+        <option value="">Выбери mailbox отправителя</option>
+        ${mailboxOptions}
+      </select>
+      <input name="subject" value="${esc(replySubject)}" placeholder="Тема ответа" required />
+      <textarea name="body_text" placeholder="Текст ответа" required></textarea>
+      <label class="check"><input name="stop_sequence" type="checkbox" checked /> После ручного ответа остановить будущие follow-up</label>
+      <button>Отправить ответ</button>
+    </form>
     <h3>Очередь по этому диалогу</h3>
     <div class="cards">
       ${detail.queue.length
@@ -1894,6 +1929,34 @@ document.body.addEventListener("submit", (event) => {
       status: "success",
       title: "Сохранение follow-up",
       message: result.removed ? "Follow-up удален из цепочки." : "Follow-up сохранен.",
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("submit", (event) => {
+  const conversationId = event.target.dataset.conversationReplyForm;
+  if (!conversationId) return;
+  event.preventDefault();
+  runAction({
+    title: "Отправка ручного ответа",
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    payload.stop_sequence = payload.stop_sequence === "on";
+    const result = await api(`/api/outreach/conversations/${conversationId}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await Promise.all([loadConversations(), loadQueue(), loadOutreachDrafts()]);
+    await openConversation(conversationId);
+    setActionResult({
+      status: "success",
+      title: "Отправка ручного ответа",
+      message: result.dryRun
+        ? `Dry-run: ответ сохранен, наружу не отправлен. Отменено follow-up: ${result.cancelledQueue}.`
+        : `Ответ отправлен. Отменено follow-up: ${result.cancelledQueue}.`,
       details: result,
     });
   });
