@@ -170,104 +170,106 @@
       </section>
 
       <section class="view" id="mailboxesView">
-        <div class="grid two">
+        <div class="grid two mailbox-page">
           <section class="panel">
             <h2>Подключить mailbox</h2>
             <p class="help-text">SMTP нужен для отправки, IMAP — для входящих, прогрева и проверки ящика. Пароль можно ввести прямо здесь: сервис сохранит его в локальный `.env`, а в базе оставит только имя переменной.</p>
-            <form id="mailboxForm" class="form">
-              <div class="form-section-title">Ящик</div>
-              <label class="field">
-                <span>Название в CRM</span>
-                <input name="name" placeholder="Например: Основная почта" required />
-              </label>
-              <label class="field">
-                <span>Имя отправителя</span>
-                <input name="from_name" placeholder="Например: Геннадий" />
-              </label>
-              <label class="field">
-                <span>Email ящика</span>
-                <input name="email" type="email" placeholder="name@domain.ru" required />
-              </label>
-              <label class="field">
-                <span>Провайдер</span>
-                <select name="provider">
-                  <option value="yandex">Яндекс</option>
-                  <option value="custom">Корпоративный SMTP/IMAP</option>
-                </select>
-              </label>
+            <form id="mailboxForm" class="form mailbox-create-form">
+              <fieldset class="mailbox-form-section">
+                <legend>Основное</legend>
+                <div class="field-grid two">
+                  <label class="field">
+                    <span>Название</span>
+                    <input name="name" placeholder="Основная почта" required />
+                  </label>
+                  <label class="field">
+                    <span>Отправитель</span>
+                    <input name="from_name" placeholder="Геннадий" />
+                  </label>
+                  <label class="field">
+                    <span>Email</span>
+                    <input name="email" type="email" placeholder="name@domain.ru" required />
+                  </label>
+                  <label class="field">
+                    <span>Провайдер</span>
+                    <select name="provider">
+                      <option value="timeweb">Timeweb</option>
+                      <option value="yandex">Яндекс</option>
+                      <option value="custom">Корпоративный SMTP/IMAP</option>
+                    </select>
+                  </label>
+                </div>
+              </fieldset>
 
-              <div class="form-section-title">Отправка SMTP</div>
-              <div class="field-grid two">
-                <label class="field">
-                  <span>SMTP сервер</span>
-                  <input name="smtp_host" placeholder="Например: smtp.yandex.ru" value="smtp.yandex.ru" required />
-                </label>
-                <label class="field">
-                  <span>SMTP порт</span>
-                  <input name="smtp_port" type="number" min="1" max="65535" placeholder="465 — SSL, 587 — STARTTLS" value="465" required />
-                </label>
-              </div>
+              <fieldset class="mailbox-form-section">
+                <legend>Серверы</legend>
+                <div class="field-grid two">
+                  <label class="field">
+                    <span>SMTP сервер</span>
+                    <input name="smtp_host" placeholder="smtp.timeweb.ru" value="smtp.timeweb.ru" required />
+                  </label>
+                  <label class="field">
+                    <span>SMTP порт</span>
+                    <input name="smtp_port" type="number" min="1" max="65535" value="465" required />
+                  </label>
+                  <label class="field">
+                    <span>IMAP сервер</span>
+                    <input name="imap_host" placeholder="imap.timeweb.ru" value="imap.timeweb.ru" required />
+                  </label>
+                  <label class="field">
+                    <span>IMAP порт</span>
+                    <input name="imap_port" type="number" min="1" max="65535" value="993" required />
+                  </label>
+                </div>
+              </fieldset>
 
-              <div class="form-section-title">Входящие IMAP</div>
-              <p class="help-text tight">IMAP заполнять обязательно для проверки mailbox, входящих ответов и прогрева. Это не имя переменной `.env`: здесь указывается сервер и порт почты.</p>
-              <div class="field-grid two">
+              <fieldset class="mailbox-form-section">
+                <legend>Доступ</legend>
                 <label class="field">
-                  <span>IMAP сервер</span>
-                  <input name="imap_host" placeholder="Например: imap.yandex.ru" value="imap.yandex.ru" required />
+                  <span>Логин</span>
+                  <input name="username" placeholder="Обычно тот же email" />
                 </label>
                 <label class="field">
-                  <span>IMAP порт</span>
-                  <input name="imap_port" type="number" min="1" max="65535" placeholder="993 — защищенный IMAP" value="993" required />
+                  <span>Пароль почты или приложения</span>
+                  <input name="password" type="password" autocomplete="new-password" placeholder="Пароль приложения от почты" required />
                 </label>
-              </div>
+              </fieldset>
 
-              <div class="form-section-title">Доступы</div>
-              <label class="field">
-                <span>Логин</span>
-                <input name="username" placeholder="Обычно тот же email: name@domain.ru" />
-              </label>
-              <label class="field">
-                <span>Пароль почты или пароль приложения</span>
-                <input name="password" type="password" autocomplete="new-password" placeholder="Вставьте пароль приложения от почты" required />
-              </label>
-              <p class="help-text tight">После сохранения пароль будет записан в `.env` автоматически. В базе хранится только имя переменной, например `MAILBOX_NAME_DOMAIN_RU_PASSWORD`.</p>
-
-              <div class="form-section-title">Расписание отправки</div>
-              <div class="field-grid two">
-                <label class="field">
-                  <span>Минимальная пауза между письмами, минут</span>
-                  <input name="min_delay_minutes" type="number" min="1" step="1" value="7" placeholder="7 минут" />
-                </label>
-                <label class="field">
-                  <span>Максимальная пауза между письмами, минут</span>
-                  <input name="max_delay_minutes" type="number" min="1" step="1" value="18" placeholder="18 минут" />
-                </label>
-                <label class="field">
-                  <span>Начало окна отправки</span>
-                  <input name="send_window_start" type="time" value="09:00" />
-                </label>
-                <label class="field">
-                  <span>Конец окна отправки</span>
-                  <input name="send_window_end" type="time" value="18:00" />
-                </label>
-              </div>
-              <fieldset class="field">
-                <legend>Дни отправки</legend>
+              <fieldset class="mailbox-form-section">
+                <legend>Расписание</legend>
+                <div class="field-grid two">
+                  <label class="field">
+                    <span>Пауза мин.</span>
+                    <input name="min_delay_minutes" type="number" min="1" step="1" value="1" />
+                  </label>
+                  <label class="field">
+                    <span>Пауза макс.</span>
+                    <input name="max_delay_minutes" type="number" min="1" step="1" value="2" />
+                  </label>
+                  <label class="field">
+                    <span>Окно с</span>
+                    <input name="send_window_start" type="time" value="09:00" />
+                  </label>
+                  <label class="field">
+                    <span>Окно до</span>
+                    <input name="send_window_end" type="time" value="18:00" />
+                  </label>
+                  <label class="field">
+                    <span>Лимит прогрева</span>
+                    <input name="daily_warmup_limit" type="number" min="1" step="1" value="20" />
+                  </label>
+                </div>
                 <div class="check-grid">
                   <label class="check"><input name="send_days" type="checkbox" value="1" checked /> Пн</label>
                   <label class="check"><input name="send_days" type="checkbox" value="2" checked /> Вт</label>
                   <label class="check"><input name="send_days" type="checkbox" value="3" checked /> Ср</label>
                   <label class="check"><input name="send_days" type="checkbox" value="4" checked /> Чт</label>
                   <label class="check"><input name="send_days" type="checkbox" value="5" checked /> Пт</label>
-                  <label class="check"><input name="send_days" type="checkbox" value="6" /> Сб</label>
-                  <label class="check"><input name="send_days" type="checkbox" value="7" /> Вс</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="6" checked /> Сб</label>
+                  <label class="check"><input name="send_days" type="checkbox" value="7" checked /> Вс</label>
                 </div>
+                <label class="check compact"><input name="warmup_enabled" type="checkbox" /> Прогрев включен</label>
               </fieldset>
-              <label class="field">
-                <span>Лимит прогрева в день</span>
-                <input name="daily_warmup_limit" type="number" min="1" step="1" value="5" placeholder="5 писем в день" />
-              </label>
-              <label class="check"><input name="warmup_enabled" type="checkbox" /> Прогрев включен</label>
               <button>Сохранить mailbox</button>
             </form>
           </section>

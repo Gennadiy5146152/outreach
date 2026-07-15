@@ -349,32 +349,44 @@ async function loadMailboxes() {
         <details class="mailbox-edit">
           <summary>Все настройки mailbox</summary>
           <form class="mailbox-edit-form" data-mailbox-edit="${mailbox.id}">
-            <label><span>Провайдер</span><select name="provider">
-              <option value="custom" ${mailbox.provider === "custom" ? "selected" : ""}>Корпоративный SMTP/IMAP</option>
-              <option value="yandex" ${mailbox.provider === "yandex" ? "selected" : ""}>Яндекс</option>
-              <option value="timeweb" ${mailbox.provider === "timeweb" ? "selected" : ""}>Timeweb</option>
-            </select></label>
-            <label class="mailbox-edit-check"><input name="is_active" type="checkbox" ${mailbox.is_active ? "checked" : ""} /> Ящик активен</label>
-            <label><span>SMTP</span><input name="smtp_host" value="${esc(mailbox.smtp_host)}" required /></label>
-            <label><span>SMTP порт</span><input name="smtp_port" type="number" min="1" max="65535" value="${mailbox.smtp_port}" required /></label>
-            <label class="mailbox-edit-check"><input name="smtp_secure" type="checkbox" ${mailbox.smtp_secure ? "checked" : ""} /> SMTP SSL/TLS сразу</label>
-            <label><span>IMAP</span><input name="imap_host" value="${esc(mailbox.imap_host)}" required /></label>
-            <label><span>IMAP порт</span><input name="imap_port" type="number" min="1" max="65535" value="${mailbox.imap_port}" required /></label>
-            <label class="mailbox-edit-check"><input name="imap_secure" type="checkbox" ${mailbox.imap_secure ? "checked" : ""} /> IMAP SSL/TLS сразу</label>
-            <label><span>Логин</span><input name="username" value="${esc(mailbox.username || mailbox.email)}" /></label>
-            <label><span>Новый пароль</span><input name="password" type="password" autocomplete="new-password" placeholder="Оставь пустым, если не меняешь" /></label>
-            <label><span>Имя отправителя</span><input name="from_name" value="${esc(mailbox.from_name || mailbox.name)}" /></label>
-            <label><span>Лимит рассылки в день</span><input name="daily_send_limit" type="number" min="1" step="1" value="${mailbox.daily_send_limit || ""}" placeholder="Без лимита" /></label>
-            <label><span>Лимит прогрева в день</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" /></label>
-            <label><span>Минимальная пауза, минут</span><input name="min_delay_minutes" type="number" min="1" step="1" value="${mailbox.min_delay_minutes}" /></label>
-            <label><span>Максимальная пауза, минут</span><input name="max_delay_minutes" type="number" min="1" step="1" value="${mailbox.max_delay_minutes}" /></label>
-            <label><span>Начало окна</span><input name="send_window_start" type="time" value="${String(mailbox.send_window_start || "09:00").slice(0, 5)}" /></label>
-            <label><span>Конец окна</span><input name="send_window_end" type="time" value="${String(mailbox.send_window_end || "18:00").slice(0, 5)}" /></label>
-            <fieldset class="mailbox-edit-days">
-              <legend>Дни отправки</legend>
-              <div class="check-grid">${sendDaysCheckboxes(mailbox.send_days)}</div>
+            <fieldset class="mailbox-edit-section">
+              <legend>Основное</legend>
+              <label><span>Провайдер</span><select name="provider">
+                <option value="custom" ${mailbox.provider === "custom" ? "selected" : ""}>Корпоративный SMTP/IMAP</option>
+                <option value="timeweb" ${mailbox.provider === "timeweb" ? "selected" : ""}>Timeweb</option>
+                <option value="yandex" ${mailbox.provider === "yandex" ? "selected" : ""}>Яндекс</option>
+              </select></label>
+              <label><span>Имя отправителя</span><input name="from_name" value="${esc(mailbox.from_name || mailbox.name)}" /></label>
+              <label class="mailbox-edit-check"><input name="is_active" type="checkbox" ${mailbox.is_active ? "checked" : ""} /> Ящик активен</label>
             </fieldset>
-            <label class="mailbox-edit-check"><input name="warmup_enabled" type="checkbox" ${mailbox.warmup_enabled ? "checked" : ""} /> Прогрев включен</label>
+            <fieldset class="mailbox-edit-section">
+              <legend>Серверы</legend>
+              <label><span>SMTP</span><input name="smtp_host" value="${esc(mailbox.smtp_host)}" required /></label>
+              <label><span>SMTP порт</span><input name="smtp_port" type="number" min="1" max="65535" value="${mailbox.smtp_port}" required /></label>
+              <label class="mailbox-edit-check"><input name="smtp_secure" type="checkbox" ${mailbox.smtp_secure ? "checked" : ""} /> SMTP SSL/TLS сразу</label>
+              <label><span>IMAP</span><input name="imap_host" value="${esc(mailbox.imap_host)}" required /></label>
+              <label><span>IMAP порт</span><input name="imap_port" type="number" min="1" max="65535" value="${mailbox.imap_port}" required /></label>
+              <label class="mailbox-edit-check"><input name="imap_secure" type="checkbox" ${mailbox.imap_secure ? "checked" : ""} /> IMAP SSL/TLS сразу</label>
+            </fieldset>
+            <fieldset class="mailbox-edit-section">
+              <legend>Доступ</legend>
+              <label><span>Логин</span><input name="username" value="${esc(mailbox.username || mailbox.email)}" /></label>
+              <label><span>Новый пароль</span><input name="password" type="password" autocomplete="new-password" placeholder="Оставь пустым, если не меняешь" /></label>
+            </fieldset>
+            <fieldset class="mailbox-edit-section">
+              <legend>Расписание</legend>
+              <label><span>Лимит рассылки в день</span><input name="daily_send_limit" type="number" min="1" step="1" value="${mailbox.daily_send_limit || ""}" placeholder="Без лимита" /></label>
+              <label><span>Лимит прогрева в день</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" /></label>
+              <label><span>Пауза мин.</span><input name="min_delay_minutes" type="number" min="1" step="1" value="${mailbox.min_delay_minutes}" /></label>
+              <label><span>Пауза макс.</span><input name="max_delay_minutes" type="number" min="1" step="1" value="${mailbox.max_delay_minutes}" /></label>
+              <label><span>Окно с</span><input name="send_window_start" type="time" value="${String(mailbox.send_window_start || "09:00").slice(0, 5)}" /></label>
+              <label><span>Окно до</span><input name="send_window_end" type="time" value="${String(mailbox.send_window_end || "18:00").slice(0, 5)}" /></label>
+              <div class="mailbox-edit-days">
+                <span>Дни отправки</span>
+                <div class="check-grid">${sendDaysCheckboxes(mailbox.send_days)}</div>
+              </div>
+              <label class="mailbox-edit-check"><input name="warmup_enabled" type="checkbox" ${mailbox.warmup_enabled ? "checked" : ""} /> Прогрев включен</label>
+            </fieldset>
             <button>Сохранить все настройки</button>
           </form>
         </details>

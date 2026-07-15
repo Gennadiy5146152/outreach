@@ -148,6 +148,11 @@ h2 {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
 }
 
+.mailbox-page {
+  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+  align-items: start;
+}
+
 .panel {
   min-width: 0;
   padding: 18px;
@@ -362,6 +367,47 @@ h2 {
   margin-top: 10px;
 }
 
+.mailbox-create-form,
+.mailbox-edit-section,
+.mailbox-form-section {
+  display: grid;
+  gap: 10px;
+}
+
+.mailbox-form-section,
+.mailbox-edit-section {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.mailbox-form-section legend,
+.mailbox-edit-section legend {
+  padding: 0 4px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.mailbox-edit-section {
+  align-content: start;
+}
+
+.mailbox-edit-section .check-grid,
+.mailbox-form-section .check-grid {
+  grid-template-columns: repeat(7, minmax(34px, 1fr));
+  gap: 6px;
+}
+
+.mailbox-edit-section .check-grid .check,
+.mailbox-form-section .check-grid .check {
+  min-height: 32px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
 .mailbox-edit-form label {
   display: grid;
   gap: 5px;
@@ -377,14 +423,12 @@ h2 {
 }
 
 .mailbox-edit-days {
-  grid-column: 1 / -1;
   margin: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  display: grid;
+  gap: 6px;
 }
 
-.mailbox-edit-days legend {
+.mailbox-edit-days > span {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;

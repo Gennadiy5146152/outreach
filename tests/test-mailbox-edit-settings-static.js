@@ -1,8 +1,17 @@
 import fs from "node:fs";
 
 const app = fs.readFileSync("public/app.js", "utf8");
+const html = fs.readFileSync("public/index.html", "utf8");
 const server = fs.readFileSync("src/server.js", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
+
+if (!html.includes("mailbox-page") || !html.includes("mailbox-form-section")) {
+  throw new Error("mailbox creation view should use grouped compact layout sections");
+}
+
+if (!app.includes("mailbox-edit-section")) {
+  throw new Error("mailbox edit form should use grouped compact layout sections");
+}
 
 for (const field of [
   "daily_send_limit",
