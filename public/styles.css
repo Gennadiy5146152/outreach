@@ -571,6 +571,27 @@ fieldset.field {
   background: #fff;
 }
 
+.campaign-guide h2 {
+  margin-bottom: 10px;
+}
+
+.campaign-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.campaign-steps span {
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 
 input,
 select,
@@ -599,6 +620,33 @@ textarea,
 .editor {
   min-height: 180px;
   line-height: 1.5;
+}
+
+.editor-shell {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.editor-shell .editor {
+  border: 0;
+  border-radius: 0;
+}
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfb;
+}
+
+.editor-toolbar button {
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 13px;
 }
 
 input:focus,
@@ -786,6 +834,7 @@ dialog::backdrop {
   .grid.two,
   .metrics,
   .env-grid,
+  .campaign-steps,
   .form.inline,
   .settings-row,
   .field-grid.two,

@@ -11,6 +11,7 @@ const state = {
   settings: null,
   envCheck: null,
   health: null,
+  editorTarget: null,
   actionResults: {
     global: null,
     mailboxes: {},
@@ -640,6 +641,43 @@ $("#leadSearch").addEventListener("input", () => loadLeads());
 document.body.addEventListener("click", (event) => {
   const go = event.target.dataset.go;
   if (go) switchView(go);
+});
+
+function insertTextAtCursor(text) {
+  const active = state.editorTarget || document.activeElement;
+  if (active && ["INPUT", "TEXTAREA"].includes(active.tagName)) {
+    active.focus();
+    active.setRangeText(text, active.selectionStart, active.selectionEnd, "end");
+    active.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  (active?.id === "htmlEditor" ? active : $("#htmlEditor"))?.focus();
+  document.execCommand("insertText", false, text);
+}
+
+document.body.addEventListener("focusin", (event) => {
+  if (event.target.matches("#stepSubject, #htmlEditor, textarea[name='body_template_text']")) {
+    state.editorTarget = event.target;
+  }
+});
+
+document.body.addEventListener("click", (event) => {
+  const commandButton = event.target.closest("[data-editor-cmd]");
+  const variableButton = event.target.closest("[data-editor-var]");
+  const linkButton = event.target.closest("[data-editor-link]");
+  if (commandButton) {
+    $("#htmlEditor").focus();
+    document.execCommand(commandButton.dataset.editorCmd, false, null);
+  }
+  if (variableButton) {
+    insertTextAtCursor(variableButton.dataset.editorVar);
+  }
+  if (linkButton) {
+    const url = prompt("URL ссылки");
+    if (!url) return;
+    $("#htmlEditor").focus();
+    document.execCommand("createLink", false, url);
+  }
 });
 
 $("#leadsTable").addEventListener("click", async (event) => {

@@ -279,14 +279,24 @@
       </section>
 
       <section class="view" id="campaignsView">
+        <section class="panel campaign-guide">
+          <h2>Порядок работы</h2>
+          <div class="campaign-steps">
+            <span>1. Кампания</span>
+            <span>2. Письмо</span>
+            <span>3. Лиды</span>
+            <span>4. Проверка</span>
+            <span>5. Тест и запуск</span>
+          </div>
+        </section>
         <div class="grid two">
           <section class="panel">
             <h2>Кампания</h2>
             <p class="help-text">Кампания — это одна рассылка: кому пишем, с каким письмом и через какие почты.</p>
             <form id="campaignForm" class="form">
-              <input name="name" placeholder="Название" required />
-              <input name="segment" placeholder="Сегмент" />
-              <textarea name="description" placeholder="Описание"></textarea>
+              <label class="field"><span>Название</span><input name="name" placeholder="Например: Архитектурные бюро, июль" required /></label>
+              <label class="field"><span>Сегмент</span><input name="segment" placeholder="Например: архитекторы, Москва" /></label>
+              <label class="field"><span>Заметка</span><textarea name="description" placeholder="Для себя: гипотеза, оффер, кому пишем"></textarea></label>
               <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Open tracking</label>
               <label class="check"><input name="manual_approval_required" type="checkbox" checked /> Ручное подтверждение пачки</label>
               <button>Создать кампанию</button>
@@ -296,12 +306,25 @@
             <h2>Шаг письма</h2>
             <p class="help-text">Шаг — это письмо в цепочке. Для первой проверки достаточно одного шага.</p>
             <form id="stepForm" class="form">
-              <select name="campaign_id" id="stepCampaign"></select>
-              <input name="name" placeholder="Название шага" required />
-              <input name="delay_days" type="number" value="0" />
-              <input name="subject_template" placeholder="Тема" required />
-              <textarea name="body_template_text" placeholder="Plain text"></textarea>
-              <div class="editor" id="htmlEditor" contenteditable="true">Здравствуйте, {{contact}}.<br><br>Хочу обсудить {{company}} и {{pain}}.</div>
+              <label class="field"><span>Кампания</span><select name="campaign_id" id="stepCampaign"></select></label>
+              <div class="field-grid two">
+                <label class="field"><span>Название шага</span><input name="name" placeholder="Первое письмо" required /></label>
+                <label class="field"><span>Задержка, дней</span><input name="delay_days" type="number" min="0" value="0" /></label>
+              </div>
+              <label class="field"><span>Тема</span><input id="stepSubject" name="subject_template" placeholder="{{company}}: короткий вопрос" required /></label>
+              <div class="editor-shell">
+                <div class="editor-toolbar">
+                  <button type="button" data-editor-cmd="bold"><strong>Ж</strong></button>
+                  <button type="button" data-editor-cmd="italic"><em>К</em></button>
+                  <button type="button" data-editor-cmd="insertUnorderedList">Список</button>
+                  <button type="button" data-editor-link>Ссылка</button>
+                  <button type="button" data-editor-var="{{contact}}">Контакт</button>
+                  <button type="button" data-editor-var="{{company}}">Компания</button>
+                  <button type="button" data-editor-var="{{pain}}">Боль</button>
+                </div>
+                <div class="editor" id="htmlEditor" contenteditable="true">Здравствуйте, {{contact}}.<br><br>Хочу обсудить {{company}} и {{pain}}.</div>
+              </div>
+              <label class="field"><span>Текстовая версия, если нужна отдельно</span><textarea name="body_template_text" placeholder="Можно оставить пустым: текст будет получен из визуального письма"></textarea></label>
               <button>Добавить шаг</button>
             </form>
           </section>
