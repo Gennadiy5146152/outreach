@@ -77,6 +77,17 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+function optionalPositiveInteger(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    const error = new Error(`${fieldName}_must_be_positive_integer`);
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const [db, runtime] = await Promise.all([query("SELECT now() AS now"), getRuntimeSettings()]);
   res.json({
@@ -429,6 +440,7 @@ app.get("/api/mailboxes", asyncHandler(async (_req, res) => {
 app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
   const current = (await query("SELECT * FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
   if (!current) return res.status(404).json({ error: "not_found" });
+  const dailyWarmupLimit = optionalPositiveInteger(req.body.daily_warmup_limit, "daily_warmup_limit");
   const password = String(req.body.password || "");
   const passwordEnvKey = password
     ? await saveSecretToDotenv(current.password_env_key || mailboxPasswordEnvKey(current.email), password)
@@ -463,7 +475,7 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
       req.params.id,
       req.body.is_active === undefined ? null : toBool(req.body.is_active),
       req.body.warmup_enabled === undefined ? null : toBool(req.body.warmup_enabled),
-      req.body.daily_warmup_limit ? Number(req.body.daily_warmup_limit) : null,
+      dailyWarmupLimit,
       req.body.min_delay_minutes ? Number(req.body.min_delay_minutes) : null,
       req.body.max_delay_minutes ? Number(req.body.max_delay_minutes) : null,
       req.body.send_window_start || null,
@@ -913,7 +925,7 @@ app.get("/t/open/:trackingId.gif", asyncHandler(async (req, res) => {
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(500).json({ error: error.message || "internal_error" });
+  res.status(error.status || 500).json({ error: error.message || "internal_error" });
 });
 
 const server = app.listen(env.appPort, () => {

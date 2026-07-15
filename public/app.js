@@ -552,6 +552,11 @@ async function loadWarmup() {
         <article class="card">
           <strong>${esc(mailbox.name)}</strong>
           <p>${esc(mailbox.email)} · ${pill(mailbox.health_status)} · лимит ${mailbox.daily_warmup_limit}/день</p>
+          <div id="mailboxActionResult-${mailbox.id}">${actionResultHtml(state.actionResults.mailboxes[mailbox.id])}</div>
+          <form class="warmup-limit-form" data-warmup-limit="${mailbox.id}">
+            <label><span>Лимит в день</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" required /></label>
+            <button>Сохранить лимит</button>
+          </form>
           <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить" : "Включить"}</button>
         </article>
       `,
@@ -812,6 +817,32 @@ $("#mailboxForm").addEventListener("submit", (event) => runAction({
 }));
 
 document.body.addEventListener("submit", (event) => {
+  const warmupLimitId = event.target.dataset.warmupLimit;
+  if (warmupLimitId) {
+    event.preventDefault();
+    runAction({
+      title: "Сохранение лимита прогрева",
+      target: { type: "mailbox", id: warmupLimitId },
+      button: event.submitter,
+    }, async () => {
+      const dailyWarmupLimit = Number(event.target.elements.daily_warmup_limit.value);
+      const result = await api(`/api/mailboxes/${warmupLimitId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ daily_warmup_limit: dailyWarmupLimit }),
+      });
+      await refresh();
+      setActionResult({
+        status: "success",
+        title: "Сохранение лимита прогрева",
+        message: `Лимит для ${result.email} сохранен: ${result.daily_warmup_limit}/день.`,
+        details: result,
+        target: { type: "mailbox", id: warmupLimitId },
+      });
+    });
+    return;
+  }
+
   const mailboxId = event.target.dataset.mailboxEdit;
   if (!mailboxId) return;
   event.preventDefault();
