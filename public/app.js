@@ -561,6 +561,62 @@ function renderCampaignAvailableLeads() {
   updateCampaignLeadSelection();
 }
 
+function selectedCampaign() {
+  const campaignId = $("#stepCampaign")?.value || $("#activeCampaign")?.value || "";
+  return state.campaigns.find((campaign) => campaign.id === campaignId) || state.campaigns[0] || null;
+}
+
+function resetStepForm() {
+  const form = $("#stepForm");
+  form.reset();
+  form.elements.step_id.value = "";
+  $("#htmlEditor").innerHTML = "Здравствуйте, {{contact}}.<br><br>Хочу обсудить {{company}} и {{pain}}.";
+  $("#stepSubmitBtn").textContent = "Добавить шаг";
+  $("#stepEditResetBtn").hidden = true;
+}
+
+function renderCampaignStepList() {
+  const node = $("#campaignStepList");
+  if (!node) return;
+  const campaign = selectedCampaign();
+  const steps = campaign?.steps || [];
+  node.innerHTML = steps.length
+    ? steps.map((step) => `
+      <article class="card campaign-step-card">
+        <div>
+          <strong>${esc(step.position)}. ${esc(step.name)}</strong>
+          <p>Тема: ${esc(step.subject_template)}</p>
+          <p>Задержка: ${Number(step.delay_days || 0)} дн. · Вложения: ${step.attachments?.length || 0}</p>
+        </div>
+        <details>
+          <summary>Посмотреть письмо</summary>
+          <div class="step-preview">${step.body_template_html || esc(step.body_template_text || "")}</div>
+        </details>
+        <div class="card-actions">
+          <button data-edit-step="${step.id}">Редактировать</button>
+        </div>
+      </article>
+    `).join("")
+    : `<article class="card"><strong>Шагов пока нет</strong><p>Заполни письмо слева и нажми “Добавить шаг”. После сохранения оно появится здесь.</p></article>`;
+}
+
+function editCampaignStep(stepId) {
+  const campaign = state.campaigns.find((item) => item.steps.some((step) => step.id === stepId));
+  const step = campaign?.steps.find((item) => item.id === stepId);
+  if (!campaign || !step) return;
+  const form = $("#stepForm");
+  form.elements.step_id.value = step.id;
+  form.elements.campaign_id.value = campaign.id;
+  form.elements.name.value = step.name || "";
+  form.elements.delay_days.value = step.delay_days || 0;
+  form.elements.subject_template.value = step.subject_template || "";
+  form.elements.body_template_text.value = step.body_template_text || "";
+  $("#htmlEditor").innerHTML = step.body_template_html || "";
+  $("#stepSubmitBtn").textContent = "Сохранить изменения";
+  $("#stepEditResetBtn").hidden = false;
+  switchCampaignStep("letter");
+}
+
 async function loadMailboxes() {
   state.mailboxes = await api("/api/mailboxes");
   $("#mailboxList").innerHTML = state.mailboxes.length
@@ -663,6 +719,7 @@ async function loadCampaigns() {
     .join("")
     : `<article class="card"><strong>Рассылок пока нет</strong><p>Создай кампанию, затем добавь хотя бы один шаг письма.</p></article>`;
   renderSetupChecklist();
+  renderCampaignStepList();
   await loadCampaignLeads();
 }
 
@@ -1019,6 +1076,8 @@ $("#leadFiltersReset").addEventListener("click", () => {
   loadLeads();
 });
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
+$("#stepCampaign").addEventListener("change", () => renderCampaignStepList());
+$("#stepEditResetBtn").addEventListener("click", () => resetStepForm());
 $("#campaignLeadSelectAll").addEventListener("change", (event) => {
   const ids = campaignAvailableLeads().map((lead) => lead.id);
   state.selectedCampaignLeadIds = event.currentTarget.checked ? new Set(ids) : new Set();
@@ -1045,6 +1104,12 @@ document.body.addEventListener("input", (event) => {
 });
 
 document.body.addEventListener("click", (event) => {
+  const editStepId = event.target.dataset.editStep;
+  if (editStepId) {
+    editCampaignStep(editStepId);
+    return;
+  }
+
   const segmentOption = event.target.closest("[data-segment-value]");
   if (segmentOption) {
     const picker = segmentOption.closest(".segment-picker");
@@ -1298,20 +1363,30 @@ $("#campaignForm").addEventListener("submit", (event) => runAction({
 }));
 
 $("#stepForm").addEventListener("submit", (event) => runAction({
-  title: "Добавление шага",
+  title: event.target.elements.step_id.value ? "Обновление шага" : "Добавление шага",
   button: event.submitter,
 }, async () => {
   event.preventDefault();
   const payload = formJson(event.target);
   payload.body_template_html = $("#htmlEditor").innerHTML;
-  const result = await api(`/api/campaigns/${payload.campaign_id}/steps`, {
-    method: "POST",
+  const stepId = payload.step_id;
+  delete payload.step_id;
+  const result = await api(stepId ? `/api/steps/${stepId}` : `/api/campaigns/${payload.campaign_id}/steps`, {
+    method: stepId ? "PATCH" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   await refresh();
-  setActionResult({ status: "success", title: "Добавление шага", message: `Шаг «${result.name}» добавлен.`, details: result });
-  switchCampaignStep("leads");
+  resetStepForm();
+  $("#stepCampaign").value = payload.campaign_id;
+  renderCampaignStepList();
+  setActionResult({
+    status: "success",
+    title: stepId ? "Обновление шага" : "Добавление шага",
+    message: stepId ? `Шаг «${result.name}» обновлен.` : `Шаг «${result.name}» добавлен и показан справа.`,
+    details: result,
+  });
+  switchCampaignStep("letter");
 }));
 
 $("#attachmentForm").addEventListener("submit", (event) => runAction({

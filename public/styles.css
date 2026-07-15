@@ -679,6 +679,32 @@ h2 {
   margin: 12px 0 8px;
 }
 
+.form-actions,
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.campaign-step-list {
+  margin-bottom: 18px;
+}
+
+.campaign-step-card {
+  display: grid;
+  gap: 10px;
+}
+
+.step-preview {
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+
 .form {
   display: grid;
   gap: 10px;

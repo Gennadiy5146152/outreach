@@ -858,6 +858,36 @@ app.post("/api/campaigns/:id/steps", asyncHandler(async (req, res) => {
   res.status(201).json(result.rows[0]);
 }));
 
+app.patch("/api/steps/:id", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_step_required" });
+  const html = req.body.body_template_html || req.body.body_template_text || "";
+  const result = await query(
+    `
+      UPDATE campaign_steps
+      SET name = $2,
+          delay_days = $3,
+          subject_template = $4,
+          body_template_text = $5,
+          body_template_html = $6,
+          editor_json = $7,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      req.params.id,
+      req.body.name,
+      Number(req.body.delay_days || 0),
+      req.body.subject_template,
+      req.body.body_template_text || html.replace(/<[^>]+>/g, ""),
+      html,
+      { html },
+    ],
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "campaign_step_not_found" });
+  res.json(result.rows[0]);
+}));
+
 app.post("/api/steps/:id/attachments", attachmentUpload.single("file"), asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});

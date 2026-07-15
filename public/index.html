@@ -345,6 +345,7 @@
             <h2>Шаг письма</h2>
             <p class="help-text">Шаг — это письмо в цепочке. Для первой проверки достаточно одного шага.</p>
             <form id="stepForm" class="form">
+              <input name="step_id" type="hidden" />
               <label class="field"><span>Кампания</span><select name="campaign_id" id="stepCampaign"></select></label>
               <div class="field-grid two">
                 <label class="field"><span>Название шага</span><input name="name" placeholder="Первое письмо" required /></label>
@@ -363,11 +364,17 @@
                 </div>
                 <div class="editor" id="htmlEditor" contenteditable="true">Здравствуйте, {{contact}}.<br><br>Хочу обсудить {{company}} и {{pain}}.</div>
               </div>
-              <label class="field"><span>Текстовая версия, если нужна отдельно</span><textarea name="body_template_text" placeholder="Можно оставить пустым: текст будет получен из визуального письма"></textarea></label>
-              <button>Добавить шаг</button>
+              <label class="field"><span>Текст без оформления</span><textarea name="body_template_text" placeholder="Можно оставить пустым — сервис сам сделает текст из письма выше"></textarea></label>
+              <div class="form-actions">
+                <button id="stepSubmitBtn">Добавить шаг</button>
+                <button id="stepEditResetBtn" type="button" hidden>Отменить редактирование</button>
+              </div>
             </form>
           </section>
           <section class="panel">
+            <h2>Шаги этой кампании</h2>
+            <p class="help-text">Здесь видно, какие письма уже добавлены. Можно открыть шаг в редакторе и изменить его.</p>
+            <div id="campaignStepList" class="cards campaign-step-list"></div>
             <h2>Вложения к шагу</h2>
             <form id="attachmentForm" class="attachment-form">
               <label class="field">
