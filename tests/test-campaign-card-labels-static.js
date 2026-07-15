@@ -8,7 +8,7 @@ const campaignListCode = app.slice(campaignListStart, campaignListEnd);
 for (const expected of [
   "Шагов:",
   "Отслеживание открытий:",
-  "Подтверждение перед отправкой:",
+  "Ручная проверка писем:",
   "\"включено\" : \"выключено\"",
 ]) {
   if (!campaignListCode.includes(expected)) {

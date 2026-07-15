@@ -250,8 +250,8 @@ function validationReasonText(value) {
 function queueModeLabel(value) {
   return {
     test: "тест на свои почты",
-    manual: "ручной запуск",
-    auto: "автозапуск",
+    manual: "ручная проверка перед отправкой",
+    auto: "обычная отправка",
   }[value] || value || "";
 }
 
@@ -815,7 +815,7 @@ function resetCampaignForm() {
   form.elements.campaign_id.value = "";
   setSegmentPickerValue(form.querySelector(".segment-picker-multi"), []);
   form.elements.tracking_enabled.checked = true;
-  form.elements.manual_approval_required.checked = true;
+  form.elements.manual_approval_required.checked = false;
   $("#campaignSubmitBtn").textContent = "Создать кампанию";
   $("#campaignEditResetBtn").hidden = true;
 }
@@ -933,7 +933,7 @@ async function loadCampaigns() {
           <strong>${esc(campaign.name)}</strong> ${pill(campaign.status)}
           <p>Сегменты: ${esc(campaign.segment || "не указаны")}</p>
           <p>${esc(campaign.description || "")}</p>
-          <p>Шагов: ${campaign.steps.length} · Отслеживание открытий: ${campaign.tracking_enabled ? "включено" : "выключено"} · Подтверждение перед отправкой: ${campaign.manual_approval_required ? "включено" : "выключено"}</p>
+          <p>Шагов: ${campaign.steps.length} · Отслеживание открытий: ${campaign.tracking_enabled ? "включено" : "выключено"} · Ручная проверка писем: ${campaign.manual_approval_required ? "включена" : "выключена"}</p>
           <ol>${campaign.steps.map((step) => `<li>${esc(step.name)}: ${esc(step.subject_template)} (${step.attachments?.length || 0} влож.)</li>`).join("")}</ol>
           <div class="card-actions"><button data-edit-campaign="${campaign.id}">Редактировать</button></div>
         </article>
@@ -1788,13 +1788,15 @@ async function startCampaign(mode) {
   setActionResult({
     status: "success",
     title: mode === "test" ? "Тестовый запуск кампании" : "Запуск кампании",
-    message: `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем.`,
+    message: result.requiresApproval
+      ? `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем, перед отправкой нужно подтвердить.`
+      : `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем, дополнительное подтверждение не нужно.`,
     details: result,
   });
 }
 
-$("#startManualBtn").addEventListener("click", (event) => runAction({ title: "Запуск кампании", button: event.currentTarget }, () => startCampaign("manual")));
-$("#startAutoBtn").addEventListener("click", (event) => runAction({ title: "Автозапуск кампании", button: event.currentTarget }, () => startCampaign("auto")));
+$("#startManualBtn").addEventListener("click", (event) => runAction({ title: "Постановка на ручную проверку", button: event.currentTarget }, () => startCampaign("manual")));
+$("#startAutoBtn").addEventListener("click", (event) => runAction({ title: "Запуск отправки", button: event.currentTarget }, () => startCampaign("auto")));
 $("#startTestBtn").addEventListener("click", (event) => runAction({ title: "Тестовый запуск кампании", button: event.currentTarget }, () => startCampaign("test")));
 
 $("#approveAllBtn").addEventListener("click", (event) => runAction({

@@ -832,7 +832,7 @@ app.post("/api/campaigns", asyncHandler(async (req, res) => {
       req.body.description || "",
       cleanText(req.body.segment),
       toBool(req.body.tracking_enabled ?? true),
-      toBool(req.body.manual_approval_required ?? true),
+      toBool(req.body.manual_approval_required ?? false),
       req.body.daily_limit ? Number(req.body.daily_limit) : null,
       req.body.send_window_start || "09:00",
       req.body.send_window_end || "18:00",
@@ -864,7 +864,7 @@ app.patch("/api/campaigns/:id", asyncHandler(async (req, res) => {
       req.body.description || "",
       cleanText(req.body.segment),
       toBool(req.body.tracking_enabled ?? true),
-      toBool(req.body.manual_approval_required ?? true),
+      toBool(req.body.manual_approval_required ?? false),
     ],
   );
   if (!result.rows[0]) return res.status(404).json({ error: "campaign_not_found" });
@@ -1173,7 +1173,9 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
   const preflight = await campaignPreflight(req.params.id);
   if (!preflight.ok && !toBool(req.body.force)) return res.status(400).json(preflight);
 
-  const requiresApproval = mode === "manual";
+  const campaign = (await query("SELECT manual_approval_required FROM campaigns WHERE id = $1", [req.params.id])).rows[0];
+  if (!campaign) return res.status(404).json({ error: "not_found" });
+  const requiresApproval = mode === "manual" || (mode === "auto" && campaign.manual_approval_required);
   const result = await query(
     `
       INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at)
@@ -1188,7 +1190,7 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
     [req.params.id, mode, requiresApproval],
   );
   await query("UPDATE campaigns SET status = 'active', test_mode = $2 WHERE id = $1", [req.params.id, mode === "test"]);
-  res.json({ queued: result.rowCount, mode, preflight });
+  res.json({ queued: result.rowCount, mode, requiresApproval, preflight });
 }));
 
 app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {

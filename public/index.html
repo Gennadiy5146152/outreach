@@ -334,7 +334,7 @@
               </label>
               <label class="field"><span>Заметка</span><textarea name="description" placeholder="Для себя: гипотеза, оффер, кому пишем"></textarea></label>
               <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Open tracking</label>
-              <label class="check"><input name="manual_approval_required" type="checkbox" checked /> Ручное подтверждение пачки</label>
+              <label class="check"><input name="manual_approval_required" type="checkbox" /> Проверять каждое письмо вручную перед отправкой</label>
               <div class="form-actions">
                 <button id="campaignSubmitBtn">Создать кампанию</button>
                 <button id="campaignEditResetBtn" type="button" hidden>Отменить редактирование</button>
@@ -435,11 +435,11 @@
             <h2>Тест и запуск</h2>
             <div>
               <button id="startTestBtn">Тест на мои почты</button>
-              <button id="startManualBtn">Запуск с подтверждением</button>
-              <button id="startAutoBtn">Автозапуск</button>
+              <button id="startAutoBtn">Запустить отправку</button>
+              <button id="startManualBtn">Поставить на ручную проверку</button>
             </div>
           </div>
-            <p class="help-text">Сначала отправь тест на свои почты. Потом запускай ручной режим или автозапуск.</p>
+            <p class="help-text">Обычный запуск отправляет письма без дополнительного подтверждения. Ручная проверка нужна только если хочешь сначала посмотреть каждое письмо в очереди.</p>
           </section>
         </div>
       </section>
