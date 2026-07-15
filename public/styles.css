@@ -1175,6 +1175,116 @@ pre {
   color: #dff3ec;
 }
 
+.preflight-result {
+  display: grid;
+  gap: 12px;
+}
+
+.preflight-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.preflight-card.success {
+  border-left-color: var(--accent);
+}
+
+.preflight-card.error {
+  border-left-color: var(--danger);
+}
+
+.preflight-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.preflight-head p,
+.preflight-block p,
+.preflight-issue p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.preflight-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.preflight-stats span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef5f1;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.preflight-block {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.preflight-block h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.preflight-block ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.preflight-block li.ok {
+  color: var(--accent-dark);
+}
+
+.preflight-block li.warn {
+  color: #8a5a00;
+}
+
+.preflight-issue {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.preflight-issue p {
+  grid-column: 1 / -1;
+}
+
+.preflight-issue button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.preflight-details summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.preflight-details pre {
+  max-height: 220px;
+  margin: 8px 0 0;
+}
+
 .progress {
   display: grid;
   gap: 8px;
@@ -1286,8 +1396,14 @@ dialog::backdrop {
   .setup-list,
   .setup-step,
   .hero-help,
-  .wizard-step {
+  .wizard-step,
+  .preflight-head,
+  .preflight-issue {
     grid-template-columns: 1fr;
+  }
+
+  .preflight-stats {
+    justify-content: flex-start;
   }
 
   .check-grid {

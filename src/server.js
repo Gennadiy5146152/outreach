@@ -182,6 +182,34 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+async function checkMailboxConnection(mailbox) {
+  const [smtp, imap] = await Promise.all([
+    withTimeout(verifySmtp(mailbox), 15000, "SMTP")
+      .then((result) => ({ ...result, ok: true }))
+      .catch((error) => ({ ok: false, error: error.message, code: error.code, command: error.command })),
+    withTimeout(verifyImap(mailbox), 15000, "IMAP")
+      .then((result) => ({ ...result, ok: true }))
+      .catch((error) => ({ ok: false, error: error.message, code: error.code })),
+  ]);
+  const domain = await checkSendingDomain(mailbox)
+    .catch((error) => ({ ok: false, error: error.message }));
+
+  await query(
+    `
+      UPDATE mailboxes
+      SET smtp_verified_at = CASE WHEN $2 THEN now() ELSE NULL END,
+          imap_verified_at = CASE WHEN $3 THEN now() ELSE NULL END,
+          health_status = CASE WHEN $2 AND $3 THEN 'ok' ELSE 'error' END,
+          error_count = CASE WHEN $2 AND $3 THEN error_count ELSE error_count + 1 END,
+          updated_at = now()
+      WHERE id = $1
+    `,
+    [mailbox.id, smtp.ok, imap.ok],
+  );
+
+  return { ok: smtp.ok && imap.ok, smtp, imap, domain };
+}
+
 function optionalPositiveInteger(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -735,29 +763,7 @@ app.post("/api/mailboxes", asyncHandler(async (req, res) => {
 app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
   const mailbox = (await query("SELECT * FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
   if (!mailbox) return res.status(404).json({ error: "not_found" });
-
-  const smtp = await withTimeout(verifySmtp(mailbox), 15000, "SMTP")
-    .then((result) => ({ ...result, ok: true }))
-    .catch((error) => ({ ok: false, error: error.message, code: error.code, command: error.command }));
-  const imap = await withTimeout(verifyImap(mailbox), 15000, "IMAP")
-    .then((result) => ({ ...result, ok: true }))
-    .catch((error) => ({ ok: false, error: error.message, code: error.code }));
-  const domain = await checkSendingDomain(mailbox)
-    .catch((error) => ({ ok: false, error: error.message }));
-
-  await query(
-    `
-      UPDATE mailboxes
-      SET smtp_verified_at = CASE WHEN $2 THEN now() ELSE NULL END,
-          imap_verified_at = CASE WHEN $3 THEN now() ELSE NULL END,
-          health_status = CASE WHEN $2 AND $3 THEN 'ok' ELSE 'error' END,
-          error_count = CASE WHEN $2 AND $3 THEN error_count ELSE error_count + 1 END,
-          updated_at = now()
-      WHERE id = $1
-    `,
-    [mailbox.id, smtp.ok, imap.ok],
-  );
-  res.json({ ok: smtp.ok && imap.ok, smtp, imap, domain });
+  res.json(await checkMailboxConnection(mailbox));
 }));
 
 app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {
@@ -1041,6 +1047,56 @@ app.get("/api/campaigns/:id/available-leads", asyncHandler(async (req, res) => {
 
 app.get("/api/campaigns/:id/preflight", asyncHandler(async (req, res) => {
   res.json(await campaignPreflight(req.params.id));
+}));
+
+app.post("/api/campaigns/:id/preflight/fix", asyncHandler(async (req, res) => {
+  const campaign = (await query("SELECT * FROM campaigns WHERE id = $1", [req.params.id])).rows[0];
+  if (!campaign) return res.status(404).json({ error: "not_found" });
+
+  const runtime = await getRuntimeSettings();
+  const fixes = [];
+
+  if (campaign.tracking_enabled && !runtime.publicTrackingUrl) {
+    await query("UPDATE campaigns SET tracking_enabled = false, updated_at = now() WHERE id = $1", [campaign.id]);
+    fixes.push({
+      type: "tracking_disabled",
+      status: "fixed",
+      message: "Отключил отслеживание открытий, потому что Tracking URL не задан.",
+    });
+  }
+
+  const mailboxes = (
+    await query(
+      `
+        SELECT DISTINCT m.*
+        FROM mailboxes m
+        JOIN enrollments e ON e.mailbox_id = m.id
+        WHERE e.campaign_id = $1
+          AND e.status = 'active'
+          AND m.is_active = true
+          AND (m.smtp_verified_at IS NULL OR m.imap_verified_at IS NULL)
+        ORDER BY m.email
+      `,
+      [campaign.id],
+    )
+  ).rows;
+
+  const mailboxFixes = await Promise.all(mailboxes.map(async (mailbox) => {
+    const result = await checkMailboxConnection(mailbox);
+    return {
+      type: result.ok ? "mailbox_checked" : "mailbox_check_failed",
+      status: result.ok ? "fixed" : "needs_user",
+      mailbox: mailbox.email,
+      message: result.ok
+        ? `Проверил SMTP/IMAP для ${mailbox.email}.`
+        : `${mailbox.email}: SMTP ${result.smtp.ok ? "ok" : result.smtp.error || "ошибка"}, IMAP ${result.imap.ok ? "ok" : result.imap.error || "ошибка"}.`,
+      details: result,
+    };
+  }));
+  fixes.push(...mailboxFixes);
+
+  const preflight = await campaignPreflight(campaign.id);
+  res.json({ ok: preflight.ok, fixes, preflight });
 }));
 
 app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {

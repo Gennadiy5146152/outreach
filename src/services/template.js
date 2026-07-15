@@ -22,7 +22,7 @@ export function escapeHtml(value = "") {
 export function renderTemplate(template, lead, mailbox, settings = {}) {
   const values = {
     company: lead.company || "",
-    contact: lead.contact_name || "добрый день",
+    contact: lead.contact_name || "коллеги",
     position: lead.position || "",
     website: lead.website || "",
     domain: lead.domain || "",
@@ -40,11 +40,10 @@ export function renderTemplate(template, lead, mailbox, settings = {}) {
 export function findMissingRequiredVariables(template, lead) {
   const missing = [];
   const variables = [...String(template || "").matchAll(/\{\{(\w+)}}/g)].map((match) => match[1]);
-  const required = new Set(["company", "contact", "email"]);
+  const required = new Set(["company", "email"]);
   for (const variable of variables) {
     if (!required.has(variable)) continue;
-    const field = variable === "contact" ? "contact_name" : variable;
-    if (!lead[field]) missing.push(variable);
+    if (!lead[variable]) missing.push(variable);
   }
   return [...new Set(missing)];
 }

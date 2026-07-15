@@ -288,6 +288,119 @@ function pill(value) {
   return `<span class="pill ${cls}">${esc(statusLabel(value))}</span>`;
 }
 
+function preflightErrorHelp(error = "") {
+  if (error.includes("SMTP/IMAP")) {
+    return {
+      text: "Я уже попробовал перепроверить этот ящик автоматически. Если ошибка осталась, открой раздел “Почта” и проверь host, port, SSL/STARTTLS, логин и пароль.",
+      action: "Открыть почту",
+      view: "mailboxes",
+    };
+  }
+  if (error.includes("Tracking URL")) {
+    return {
+      text: "Если сервис не смог выключить отслеживание, открой настройки кампании и отключи отслеживание открытий либо задай публичный URL.",
+      action: "Открыть кампанию",
+      view: "campaigns",
+    };
+  }
+  if (error.includes("пустые переменные")) {
+    return {
+      text: "Заполни недостающие поля у лида или убери эту переменную из темы/текста письма.",
+      action: "Открыть базу",
+      view: "leads",
+    };
+  }
+  if (error.includes("нет проверки MX/SPF/DKIM/DMARC") || error.includes("_status")) {
+    return {
+      text: "Нужно заново проверить ящик, чтобы сервис обновил DNS-проверку домена.",
+      action: "Открыть почту",
+      view: "mailboxes",
+    };
+  }
+  if (error.includes("Нет лидов")) {
+    return {
+      text: "Добавь подходящих лидов в кампанию на шаге 3.",
+      action: "Открыть лидов кампании",
+      view: "campaigns",
+    };
+  }
+  return {
+    text: "Эту проблему нужно закрыть вручную, потому что автоматическое исправление может изменить данные кампании.",
+    action: "Открыть рассылку",
+    view: "campaigns",
+  };
+}
+
+function renderPreflightResult(result, fixResult = null) {
+  if (!result) return "";
+  const fixes = fixResult?.fixes || [];
+  const fixed = fixes.filter((item) => item.status === "fixed");
+  const needsUser = fixes.filter((item) => item.status === "needs_user");
+  const errors = result.errors || [];
+  const warnings = result.warnings || [];
+  const stats = result.stats || {};
+  return `
+    <div class="preflight-card ${result.ok ? "success" : "error"}">
+      <div class="preflight-head">
+        <div>
+          <strong>${result.ok ? "Кампания готова к запуску" : "Запуск пока заблокирован"}</strong>
+          <p>${result.ok
+            ? "Критичных ошибок нет. Можно переходить к тестовой отправке или запуску."
+            : `Осталось ошибок: ${errors.length}. Ниже видно, что сервис уже попробовал исправить сам.`}</p>
+        </div>
+        <div class="preflight-stats">
+          <span>Лидов: ${Number(stats.enrollments || 0)}</span>
+          <span>Можно отправлять: ${Number(stats.valid || 0)}</span>
+          <span>Нужна проверка: ${Number(stats.risky || 0)}</span>
+          <span>Ящиков: ${Number(stats.mailboxes || 0)}</span>
+        </div>
+      </div>
+      ${fixes.length ? `
+        <div class="preflight-block">
+          <h3>Что сделано автоматически</h3>
+          <ul>
+            ${fixes.map((item) => `
+              <li class="${item.status === "fixed" ? "ok" : "warn"}">
+                <strong>${item.status === "fixed" ? "Исправлено" : "Нужно проверить"}:</strong> ${esc(item.message)}
+              </li>
+            `).join("")}
+          </ul>
+        </div>
+      ` : `
+        <div class="preflight-block">
+          <h3>Автоисправления</h3>
+          <p>Безопасных автоматических исправлений не понадобилось.</p>
+        </div>
+      `}
+      ${errors.length ? `
+        <div class="preflight-block">
+          <h3>Что осталось закрыть</h3>
+          ${errors.map((error) => {
+            const help = preflightErrorHelp(error);
+            return `
+              <article class="preflight-issue">
+                <strong>${esc(error)}</strong>
+                <p>${esc(help.text)}</p>
+                <button data-go="${esc(help.view)}">${esc(help.action)}</button>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      ` : ""}
+      ${warnings.length ? `
+        <div class="preflight-block">
+          <h3>Предупреждения</h3>
+          <ul>${warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+      <details class="preflight-details">
+        <summary>Технические детали</summary>
+        <pre>${esc(JSON.stringify({ autofix: { fixed: fixed.length, needsUser: needsUser.length, items: fixes }, preflight: result }, null, 2))}</pre>
+      </details>
+    </div>
+  `;
+}
+
 function mailboxNextStep(mailbox) {
   if (!mailbox.smtp_verified_at || !mailbox.imap_verified_at) {
     return "Следующий шаг: нажми «Проверить SMTP/IMAP». Это проверит отправку, чтение входящих и DNS домена.";
@@ -1554,15 +1667,21 @@ $("#enrollBtn").addEventListener("click", (event) => runAction({
 
 $("#preflightBtn").addEventListener("click", (event) => runAction({
   title: "Проверка перед запуском",
+  pending: "Проверяю кампанию и пробую безопасные автоисправления...",
   button: event.currentTarget,
 }, async () => {
-  const result = await api(`/api/campaigns/${$("#activeCampaign").value}/preflight`);
-  $("#preflightResult").textContent = JSON.stringify(result, null, 2);
+  const fixResult = await api(`/api/campaigns/${$("#activeCampaign").value}/preflight/fix`, { method: "POST" });
+  const result = fixResult.preflight;
+  $("#preflightResult").innerHTML = renderPreflightResult(result, fixResult);
+  await refresh();
+  $("#preflightResult").innerHTML = renderPreflightResult(result, fixResult);
   setActionResult({
     status: result.ok ? "success" : "error",
     title: "Проверка перед запуском",
-    message: result.ok ? "Кампания готова к запуску." : `Запуск заблокирован: ${result.errors?.length || 0} ошибок.`,
-    details: result,
+    message: result.ok
+      ? "Кампания готова к запуску."
+      : `Автоматически обработано: ${fixResult.fixes?.length || 0}. Осталось ошибок: ${result.errors?.length || 0}.`,
+    details: fixResult,
   });
   if (result.ok) switchCampaignStep("launch");
 }));
@@ -1573,7 +1692,7 @@ async function startCampaign(mode) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
   });
-  $("#preflightResult").textContent = JSON.stringify(result, null, 2);
+  $("#preflightResult").innerHTML = renderPreflightResult(result.preflight);
   await refresh();
   setActionResult({
     status: "success",
