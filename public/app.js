@@ -350,7 +350,15 @@ async function loadDashboard() {
 
 async function loadLeads() {
   const search = encodeURIComponent($("#leadSearch")?.value || "");
-  state.leads = await api(`/api/leads?search=${search}`);
+  try {
+    state.leads = await api(`/api/leads?search=${search}`);
+  } catch (error) {
+    $("#leadsTable").innerHTML = `
+      <thead><tr><th>База лидов</th></tr></thead>
+      <tbody><tr><td class="muted">Не удалось загрузить лидов: ${esc(errorMessage(error))}</td></tr></tbody>
+    `;
+    throw error;
+  }
   $("#leadsTable").innerHTML = `
     <thead><tr><th>Компания</th><th>Email</th><th>Сегмент</th><th>Статус</th><th>Проверка email</th><th>Источник</th></tr></thead>
     <tbody>
@@ -375,9 +383,14 @@ async function loadLeads() {
 }
 
 async function loadSegments() {
-  state.segments = await api("/api/segments");
-  const options = state.segments.map((segment) => `<option value="${esc(segment)}"></option>`).join("");
-  $("#segmentOptions").innerHTML = options;
+  try {
+    state.segments = await api("/api/segments");
+    const options = state.segments.map((segment) => `<option value="${esc(segment)}"></option>`).join("");
+    $("#segmentOptions").innerHTML = options;
+  } catch (error) {
+    state.segments = [];
+    console.warn("Не удалось загрузить сегменты", error);
+  }
 }
 
 async function loadMailboxes() {

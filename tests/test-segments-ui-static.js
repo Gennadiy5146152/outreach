@@ -19,6 +19,7 @@ for (const expected of [
   "async function loadSegments()",
   "await api(\"/api/segments\")",
   "$(\"#segmentOptions\").innerHTML",
+  "console.warn(\"Не удалось загрузить сегменты\"",
   "loadSegments()",
 ]) {
   if (!app.includes(expected)) {
