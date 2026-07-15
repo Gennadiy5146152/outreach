@@ -322,6 +322,29 @@ h2 {
   color: var(--accent);
 }
 
+.mailbox-status,
+.mailbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mailbox-status span {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mailbox-guide {
+  margin: 12px 0;
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: #f4fbf8;
+  color: var(--ink);
+}
+
 .env-panel {
   border-color: rgba(161, 92, 7, 0.22);
 }

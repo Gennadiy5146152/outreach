@@ -72,6 +72,19 @@ function pill(value) {
   return `<span class="pill ${cls}">${value || ""}</span>`;
 }
 
+function mailboxNextStep(mailbox) {
+  if (!mailbox.smtp_verified_at || !mailbox.imap_verified_at) {
+    return "Следующий шаг: нажми «Проверить SMTP/IMAP». Это проверит отправку, чтение входящих и DNS домена.";
+  }
+  if (!mailbox.last_inbox_sync_at) {
+    return "Доступы проверены. Теперь можно нажать «Синхронизировать входящие», чтобы забрать новые письма из INBOX.";
+  }
+  if (!mailbox.warmup_enabled) {
+    return "Ящик готов. Если это один из твоих двух ящиков для теста, включи прогрев.";
+  }
+  return "Ящик готов: SMTP/IMAP проверены, входящие синхронизировались, прогрев включен.";
+}
+
 function switchView(view) {
   $$(".view").forEach((node) => node.classList.remove("active"));
   $(`#${view}View`).classList.add("active");
@@ -204,11 +217,18 @@ async function loadMailboxes() {
       <article class="card">
         <strong>${esc(mailbox.name)}</strong>
         <p>${esc(mailbox.email)} · ${esc(mailbox.provider)}</p>
-        <p>SMTP: ${mailbox.smtp_verified_at ? "ok" : "нет"} · IMAP: ${mailbox.imap_verified_at ? "ok" : "нет"}</p>
+        <div class="mailbox-status">
+          <span>${mailbox.smtp_verified_at ? "SMTP проверен" : "SMTP не проверен"}</span>
+          <span>${mailbox.imap_verified_at ? "IMAP проверен" : "IMAP не проверен"}</span>
+          <span>${mailbox.last_inbox_sync_at ? `Входящие: ${fmtDate(mailbox.last_inbox_sync_at)}` : "Входящие еще не синхронизировались"}</span>
+        </div>
         <p>MX/SPF/DKIM/DMARC: ${mailbox.mx_status || "-"} / ${mailbox.spf_status || "-"} / ${mailbox.dkim_status || "-"} / ${mailbox.dmarc_status || "-"}</p>
-        <button data-check-mailbox="${mailbox.id}">Проверить</button>
-        <button data-sync-mailbox="${mailbox.id}">Sync IMAP</button>
-        <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить прогрев" : "Включить прогрев"}</button>
+        <p class="mailbox-guide">${esc(mailboxNextStep(mailbox))}</p>
+        <div class="mailbox-actions">
+          <button data-check-mailbox="${mailbox.id}" title="Проверяет SMTP-логин для отправки, IMAP-логин для входящих и DNS домена">Проверить SMTP/IMAP</button>
+          <button data-sync-mailbox="${mailbox.id}" title="Ставит задачу worker на чтение новых писем из INBOX через IMAP">Синхронизировать входящие</button>
+          <button data-toggle-warmup="${mailbox.id}" data-enabled="${!mailbox.warmup_enabled}">${mailbox.warmup_enabled ? "Выключить прогрев" : "Включить прогрев"}</button>
+        </div>
       </article>
     `,
     )
@@ -651,7 +671,9 @@ document.body.addEventListener("click", async (event) => {
   if (mailboxId) {
     const result = await api(`/api/mailboxes/${mailboxId}/check`, { method: "POST" });
     await refresh();
-    toast(`Проверка: ${JSON.stringify(result.domain)}`);
+    toast(result.smtp?.dryRun || result.imap?.dryRun
+      ? "Проверка записана в dry-run. Для реальной проверки выключи MAIL_DRY_RUN."
+      : `SMTP/IMAP проверены. DNS: ${JSON.stringify(result.domain)}`);
   }
   if (approveId) {
     await api(`/api/sending/${approveId}/approve`, { method: "POST" });
@@ -660,7 +682,8 @@ document.body.addEventListener("click", async (event) => {
   }
   if (syncMailboxId) {
     await api(`/api/mailboxes/${syncMailboxId}/sync`, { method: "POST" });
-    toast("IMAP sync поставлен в очередь");
+    await refresh();
+    toast("Синхронизация входящих поставлена в очередь");
   }
   if (toggleWarmupId) {
     await api(`/api/mailboxes/${toggleWarmupId}`, {
