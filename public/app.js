@@ -184,6 +184,7 @@ const STATUS_LABELS = {
   retrying: "повтор",
   failed: "ошибка",
   bounced: "недоставка",
+  approval: "ждет подтверждения",
 };
 
 const VALIDATION_REASON_LABELS = {
@@ -202,6 +203,23 @@ function statusLabel(value) {
 
 function validationReasonText(value) {
   return VALIDATION_REASON_LABELS[value] || value || "";
+}
+
+function queueModeLabel(value) {
+  return {
+    test: "тест на свои почты",
+    manual: "ручной запуск",
+    auto: "автозапуск",
+  }[value] || value || "";
+}
+
+function queueStatusHint(item) {
+  if (item.requires_approval && !item.approved_at) return "Перед отправкой нужно подтвердить письмо.";
+  if (item.status === "pending") return "Ждет своего времени отправки.";
+  if (item.status === "retrying") return "Будет повторная попытка после ошибки.";
+  if (item.status === "sent") return "Письмо уже отправлено.";
+  if (item.status === "failed") return item.last_error || "Отправка завершилась ошибкой.";
+  return "";
 }
 
 function pill(value) {
@@ -727,15 +745,17 @@ async function loadQueue() {
   $("#sendProgress").innerHTML = `
     <div class="progress">
       <div class="bar"><span style="width:${progress.percent}%"></span></div>
-      <div>Прогресс: ${progress.sent}/${progress.total}. Ошибок: ${progress.failed}. ETA: ~${progress.etaMinutes} мин. ${
-        next ? `До следующего письма: ${fmtCountdown(next.scheduled_at)} (${fmtDate(next.scheduled_at)})` : ""
-      }</div>
+      <div>
+        <strong>Отправка:</strong> ${progress.sent} из ${progress.total} · ошибок: ${progress.failed} · осталось примерно ${progress.etaMinutes} мин.
+        ${next ? `<br><span class="muted">Следующее письмо: через ${fmtCountdown(next.scheduled_at)} · ${fmtDate(next.scheduled_at)}</span>` : ""}
+      </div>
     </div>
   `;
   $("#queueTable").innerHTML = `
-    <thead><tr><th>Когда</th><th>Кампания</th><th>Лид</th><th>Mailbox</th><th>Шаг</th><th>Статус</th><th>Ошибка</th><th></th></tr></thead>
+    <thead><tr><th>Когда отправлять</th><th>Кампания</th><th>Получатель</th><th>Почта отправителя</th><th>Письмо</th><th>Режим</th><th>Состояние</th><th>Что сделать</th></tr></thead>
     <tbody>
-      ${state.queue
+      ${state.queue.length
+        ? state.queue
         .map(
           (item) => `
             <tr>
@@ -744,13 +764,14 @@ async function loadQueue() {
               <td>${esc(item.company)}<br><span class="muted">${esc(item.email)}</span></td>
               <td>${esc(item.mailbox_email || "")}</td>
               <td>${esc(item.step_name || "")}</td>
-              <td>${pill(item.status)} ${item.requires_approval && !item.approved_at ? pill("approval") : ""}</td>
-              <td>${esc(item.last_error || "")}</td>
-              <td>${item.requires_approval && !item.approved_at ? `<button data-approve="${item.id}">OK</button>` : ""}</td>
+              <td>${esc(queueModeLabel(item.mode))}</td>
+              <td>${pill(item.status)} ${item.requires_approval && !item.approved_at ? pill("approval") : ""}<br><span class="muted">${esc(queueStatusHint(item))}</span></td>
+              <td>${item.requires_approval && !item.approved_at ? `<button data-approve="${item.id}">Подтвердить</button>` : `<span class="muted">Действий нет</span>`}</td>
             </tr>
           `,
         )
-        .join("")}
+        .join("")
+        : `<tr><td colspan="8" class="muted">Очередь пуста. Запусти тестовую или ручную рассылку, и здесь появятся письма с временем отправки.</td></tr>`}
     </tbody>
   `;
 }
@@ -1287,7 +1308,7 @@ async function startCampaign(mode) {
   setActionResult({
     status: "success",
     title: mode === "test" ? "Тестовый запуск кампании" : "Запуск кампании",
-    message: `Режим ${mode}: в очередь поставлено ${result.queued} писем.`,
+    message: `${queueModeLabel(mode)}: в очередь поставлено ${result.queued} писем.`,
     details: result,
   });
 }
@@ -1297,15 +1318,15 @@ $("#startAutoBtn").addEventListener("click", (event) => runAction({ title: "Ав
 $("#startTestBtn").addEventListener("click", (event) => runAction({ title: "Тестовый запуск кампании", button: event.currentTarget }, () => startCampaign("test")));
 
 $("#approveAllBtn").addEventListener("click", (event) => runAction({
-  title: "Подтверждение pending",
+  title: "Подтверждение ожидающих писем",
   button: event.currentTarget,
 }, async () => {
   const result = await api(`/api/campaigns/${$("#activeCampaign").value}/approve-pending`, { method: "POST" });
   await refresh();
   setActionResult({
     status: "success",
-    title: "Подтверждение pending",
-    message: "Pending-письма подтверждены.",
+    title: "Подтверждение ожидающих писем",
+    message: `Подтверждено писем: ${result.approved}.`,
     details: result,
   });
 }));

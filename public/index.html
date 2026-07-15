@@ -427,8 +427,11 @@
       <section class="view" id="queueView">
         <section class="panel">
           <div class="panel-head">
-            <h2>Очередь</h2>
-            <button id="approveAllBtn">Подтвердить pending</button>
+            <div>
+              <h2>Очередь отправки</h2>
+              <p class="muted">Здесь видно, какие письма ждут отправки, когда они уйдут и нужно ли ручное подтверждение.</p>
+            </div>
+            <button id="approveAllBtn">Подтвердить все ожидающие</button>
           </div>
           <div id="sendProgress"></div>
           <div class="table-wrap"><table id="queueTable"></table></div>
