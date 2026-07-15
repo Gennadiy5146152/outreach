@@ -428,6 +428,17 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
           max_delay_minutes = COALESCE($6, max_delay_minutes),
           send_window_start = COALESCE($7, send_window_start),
           send_window_end = COALESCE($8, send_window_end),
+          smtp_host = COALESCE($9, smtp_host),
+          smtp_port = COALESCE($10, smtp_port),
+          smtp_secure = COALESCE($11, smtp_secure),
+          imap_host = COALESCE($12, imap_host),
+          imap_port = COALESCE($13, imap_port),
+          imap_secure = COALESCE($14, imap_secure),
+          username = COALESCE($15, username),
+          from_name = COALESCE($16, from_name),
+          provider = COALESCE($17, provider),
+          smtp_verified_at = CASE WHEN $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL THEN NULL ELSE smtp_verified_at END,
+          imap_verified_at = CASE WHEN $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL THEN NULL ELSE imap_verified_at END,
           updated_at = now()
       WHERE id = $1
       RETURNING *
@@ -441,6 +452,15 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
       req.body.max_delay_minutes ? Number(req.body.max_delay_minutes) : null,
       req.body.send_window_start || null,
       req.body.send_window_end || null,
+      req.body.smtp_host || null,
+      req.body.smtp_port ? Number(req.body.smtp_port) : null,
+      req.body.smtp_secure === undefined ? null : toBool(req.body.smtp_secure),
+      req.body.imap_host || null,
+      req.body.imap_port ? Number(req.body.imap_port) : null,
+      req.body.imap_secure === undefined ? null : toBool(req.body.imap_secure),
+      req.body.username || null,
+      req.body.from_name || null,
+      req.body.provider || null,
     ],
   );
   res.json(result.rows[0]);

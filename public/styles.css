@@ -345,6 +345,35 @@ h2 {
   color: var(--ink);
 }
 
+.mailbox-edit {
+  margin: 10px 0;
+}
+
+.mailbox-edit summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.mailbox-edit-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mailbox-edit-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mailbox-edit-form button {
+  align-self: end;
+}
+
 #actionResult {
   margin: -8px 0 18px;
 }
@@ -873,6 +902,7 @@ dialog::backdrop {
   .campaign-active,
   .campaign-step-panel[data-campaign-panel="campaign"].active,
   .campaign-step-panel[data-campaign-panel="letter"].active,
+  .mailbox-edit-form,
   .form.inline,
   .settings-row,
   .field-grid.two,

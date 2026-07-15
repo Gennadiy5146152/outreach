@@ -331,6 +331,19 @@ async function loadMailboxes() {
         <p>MX/SPF/DKIM/DMARC: ${mailbox.mx_status || "-"} / ${mailbox.spf_status || "-"} / ${mailbox.dkim_status || "-"} / ${mailbox.dmarc_status || "-"}</p>
         <p class="mailbox-guide">${esc(mailboxNextStep(mailbox))}</p>
         <div id="mailboxActionResult-${mailbox.id}">${actionResultHtml(state.actionResults.mailboxes[mailbox.id])}</div>
+        <details class="mailbox-edit">
+          <summary>Настройки подключения</summary>
+          <form class="mailbox-edit-form" data-mailbox-edit="${mailbox.id}">
+            <label><span>SMTP</span><input name="smtp_host" value="${esc(mailbox.smtp_host)}" required /></label>
+            <label><span>SMTP порт</span><input name="smtp_port" type="number" min="1" max="65535" value="${mailbox.smtp_port}" required /></label>
+            <label><span>IMAP</span><input name="imap_host" value="${esc(mailbox.imap_host)}" required /></label>
+            <label><span>IMAP порт</span><input name="imap_port" type="number" min="1" max="65535" value="${mailbox.imap_port}" required /></label>
+            <label><span>Логин</span><input name="username" value="${esc(mailbox.username || mailbox.email)}" /></label>
+            <label><span>Имя отправителя</span><input name="from_name" value="${esc(mailbox.from_name || mailbox.name)}" /></label>
+            <label><span>Лимит прогрева</span><input name="daily_warmup_limit" type="number" min="1" value="${mailbox.daily_warmup_limit}" /></label>
+            <button>Сохранить подключение</button>
+          </form>
+        </details>
         <div class="mailbox-actions">
           <button data-check-mailbox="${mailbox.id}" title="Проверяет SMTP-логин для отправки, IMAP-логин для входящих и DNS домена">Проверить SMTP/IMAP</button>
           <button data-sync-mailbox="${mailbox.id}" title="Ставит задачу worker на чтение новых писем из INBOX через IMAP">Синхронизировать входящие</button>
@@ -794,6 +807,35 @@ $("#mailboxForm").addEventListener("submit", (event) => runAction({
     details: result,
   });
 }));
+
+document.body.addEventListener("submit", (event) => {
+  const mailboxId = event.target.dataset.mailboxEdit;
+  if (!mailboxId) return;
+  event.preventDefault();
+  runAction({
+    title: "Обновление подключения",
+    target: { type: "mailbox", id: mailboxId },
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    payload.smtp_port = Number(payload.smtp_port);
+    payload.imap_port = Number(payload.imap_port);
+    payload.daily_warmup_limit = Number(payload.daily_warmup_limit);
+    const result = await api(`/api/mailboxes/${mailboxId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await refresh();
+    setActionResult({
+      status: "success",
+      title: "Обновление подключения",
+      message: `Настройки ${result.email} сохранены. Теперь нажми «Проверить SMTP/IMAP».`,
+      details: result,
+      target: { type: "mailbox", id: mailboxId },
+    });
+  });
+});
 
 $("#campaignForm").addEventListener("submit", (event) => runAction({
   title: "Создание кампании",
