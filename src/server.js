@@ -402,8 +402,8 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
     `),
     query(`
       SELECT
-        count(*) FILTER (WHERE direction = 'outbound' AND status = 'sent')::int AS sent,
-        count(*) FILTER (WHERE status = 'bounced')::int AS bounced
+        count(*) FILTER (WHERE direction = 'outbound' AND type = 'outreach' AND status = 'sent')::int AS sent,
+        count(*) FILTER (WHERE direction = 'inbound' AND type = 'bounce')::int AS bounced
       FROM messages
     `),
     query(`
@@ -415,9 +415,11 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
     `),
     query(`
       SELECT
-        count(*)::int AS raw,
-        count(DISTINCT message_id)::int AS unique
-      FROM open_events
+        count(o.*)::int AS raw,
+        count(DISTINCT o.message_id)::int AS unique
+      FROM open_events o
+      JOIN messages msg ON msg.id = o.message_id
+      WHERE msg.type = 'outreach'
     `),
     query(`
       SELECT
@@ -425,6 +427,8 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
         count(*) FILTER (WHERE reply_classification = 'positive_reply')::int AS positive
       FROM messages
       WHERE direction = 'inbound'
+        AND type = 'reply'
+        AND campaign_id IS NOT NULL
     `),
   ]);
   const sent = messageStats.rows[0].sent || 0;

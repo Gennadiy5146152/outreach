@@ -538,10 +538,10 @@ async function loadDashboard() {
   const metrics = [
     ["Всего лидов", data.leads.total, "в базе"],
     ["Готовы к отправке", readyLeads, "valid + risky"],
-    ["Отправлено писем", data.messages.sent, "успешные отправки"],
+    ["Отправлено писем", data.messages.sent, "рассылки, без прогрева"],
     ["Уникальные открытия", data.opens.unique, `${data.rates.openRate}% от отправленных`],
-    ["Ответы", data.replies.total, `${data.rates.replyRate}% от отправленных`],
-    ["Положительные ответы", data.replies.positive, "есть интерес"],
+    ["Ответы", data.replies.total, `${data.rates.replyRate}% от отправленных, без прогрева`],
+    ["Положительные ответы", data.replies.positive, "по рассылкам, без прогрева"],
   ];
   $("#metrics").innerHTML = metrics
     .map(([label, value, hint]) => `<div class="metric"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`)
