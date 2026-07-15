@@ -15,6 +15,8 @@
       <nav>
         <button class="active" data-view="start">Что делать</button>
         <button data-view="dashboard">Обзор</button>
+        <button data-view="outreachImport">Импорт Excel</button>
+        <button data-view="outreachDrafts">Черновики</button>
         <button data-view="mailboxes">1. Почта</button>
         <button data-view="warmup">2. Прогрев</button>
         <button data-view="leads">3. База</button>
@@ -130,6 +132,68 @@
             <div id="kpi"></div>
           </section>
         </div>
+      </section>
+
+      <section class="view" id="outreachImportView">
+        <section class="panel hero-help">
+          <div>
+            <p class="eyebrow">Новый сценарий аутрича</p>
+            <h2>Загрузи Excel/CSV, где каждая строка — уже готовое персональное письмо конкретному лиду.</h2>
+            <p>Обязательные колонки: email, subject, body. Дополнительно можно передать company, contact, segment, mailbox, send_after и followup-поля.</p>
+          </div>
+          <button data-go="outreachDrafts">Открыть черновики</button>
+        </section>
+
+        <div class="grid two">
+          <section class="panel">
+            <h2>Загрузить файл</h2>
+            <p class="help-text">Поддерживаются `.xlsx` и `.csv`. Ошибочные строки не потеряются: они появятся в черновиках со статусом “нужно исправить”.</p>
+            <form id="outreachImportForm" class="form">
+              <input name="file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
+              <button>Импортировать письма</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Какие колонки нужны</h2>
+            <div class="example-box">
+              <code>email — кому отправлять</code>
+              <code>subject — тема первого письма</code>
+              <code>body — текст первого письма</code>
+              <code>mailbox — ящик отправителя, если нужно закрепить вручную</code>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>История импортов</h2>
+              <p class="muted">Здесь видно, сколько строк из каждого файла готовы к отправке, а сколько надо исправить.</p>
+            </div>
+          </div>
+          <div class="table-wrap"><table id="outreachImportsTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="outreachDraftsView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Черновики персональных писем</h2>
+              <p class="muted">Это промежуточная зона перед отправкой: проверяешь строки, исправляешь ошибки, потом запускаешь цепочку.</p>
+            </div>
+            <div class="lead-filters">
+              <select id="outreachDraftStatus">
+                <option value="">Все статусы</option>
+                <option value="ready">Готово</option>
+                <option value="blocked">Нужно исправить</option>
+              </select>
+              <button data-go="outreachImport">Загрузить еще файл</button>
+            </div>
+          </div>
+          <div id="outreachDraftsSummary" class="summary-line"></div>
+          <div class="table-wrap"><table id="outreachDraftsTable"></table></div>
+        </section>
       </section>
 
       <section class="view" id="leadsView">

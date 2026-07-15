@@ -656,6 +656,9 @@ h2 {
 }
 
 .summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   margin: 12px 0 8px;
   color: var(--muted);
   font-size: 13px;
@@ -1007,6 +1010,14 @@ fieldset.field {
 }
 
 .attachment-form input[type="file"] {
+  min-width: 0;
+  height: auto;
+  min-height: 40px;
+  padding: 7px 10px;
+  line-height: 1.4;
+}
+
+#outreachImportForm input[type="file"] {
   min-width: 0;
   height: auto;
   min-height: 40px;

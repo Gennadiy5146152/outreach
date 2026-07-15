@@ -2,6 +2,8 @@ const state = {
   campaigns: [],
   mailboxes: [],
   leads: [],
+  outreachImports: [],
+  outreachDrafts: [],
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
@@ -182,6 +184,11 @@ const STATUS_LABELS = {
   valid: "можно отправлять",
   risky: "нужна проверка",
   pending: "в очереди",
+  running: "в обработке",
+  ready: "готово",
+  blocked: "нужно исправить",
+  draft: "черновик",
+  skipped: "пропущено",
   retrying: "повтор",
   failed: "ошибка",
   cancelled: "отменено",
@@ -451,6 +458,8 @@ function switchView(view) {
   $("#title").textContent = {
     dashboard: "Обзор",
     start: "Что делать",
+    outreachImport: "Импорт Excel",
+    outreachDrafts: "Черновики",
     leads: "База",
     mailboxes: "1. Почта",
     campaigns: "4. Рассылка",
@@ -592,6 +601,58 @@ async function loadLeads() {
         )
         .join("")
         : `<tr><td colspan="6" class="muted">Лидов пока нет. Добавь одного вручную или импортируй CSV, затем нажми “Запустить проверку email”.</td></tr>`}
+    </tbody>
+  `;
+}
+
+async function loadOutreachImports() {
+  if (!$("#outreachImportsTable")) return;
+  state.outreachImports = await api("/api/outreach/imports");
+  $("#outreachImportsTable").innerHTML = `
+    <thead><tr><th>Файл</th><th>Тип</th><th>Строки</th><th>Готово</th><th>Исправить</th><th>Когда</th></tr></thead>
+    <tbody>
+      ${state.outreachImports.length
+        ? state.outreachImports.map((item) => `
+          <tr>
+            <td><strong>${esc(item.file_name)}</strong></td>
+            <td>${esc(String(item.file_type || "").toUpperCase())}</td>
+            <td>${item.rows_total}</td>
+            <td>${pill("ready")} ${item.rows_ready}</td>
+            <td>${item.rows_blocked ? `${pill("blocked")} ${item.rows_blocked}` : "0"}</td>
+            <td>${fmtDate(item.created_at)}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="6" class="muted">Импортов пока нет. Загрузи Excel/CSV с колонками email, subject и body.</td></tr>`}
+    </tbody>
+  `;
+}
+
+async function loadOutreachDrafts() {
+  if (!$("#outreachDraftsTable")) return;
+  const status = encodeURIComponent($("#outreachDraftStatus")?.value || "");
+  state.outreachDrafts = await api(`/api/outreach/drafts?status=${status}`);
+  const ready = state.outreachDrafts.filter((draft) => draft.status === "ready").length;
+  const blocked = state.outreachDrafts.filter((draft) => draft.status === "blocked").length;
+  $("#outreachDraftsSummary").innerHTML = `
+    <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
+    <span>Готовы: <strong>${ready}</strong></span>
+    <span>Нужно исправить: <strong>${blocked}</strong></span>
+  `;
+  $("#outreachDraftsTable").innerHTML = `
+    <thead><tr><th>Статус</th><th>Email</th><th>Компания</th><th>Тема</th><th>Отправитель</th><th>Ошибка</th></tr></thead>
+    <tbody>
+      ${state.outreachDrafts.length
+        ? state.outreachDrafts.map((draft) => `
+          <tr>
+            <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
+            <td>${esc(draft.to_email)}</td>
+            <td><strong>${esc(draft.company || "Без компании")}</strong><br><span class="muted">${esc(draft.contact_name || "")}</span></td>
+            <td><strong>${esc(draft.subject)}</strong><br><span class="muted">${esc((draft.body_text || "").slice(0, 140))}${draft.body_text && draft.body_text.length > 140 ? "..." : ""}</span></td>
+            <td>${esc(draft.mailbox_email || "выберется позже")}</td>
+            <td>${esc(draft.error_reason || "")}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="6" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
     </tbody>
   `;
 }
@@ -1269,6 +1330,8 @@ async function refresh() {
     loadDashboard(),
     loadSegments(),
     loadLeads(),
+    loadOutreachImports(),
+    loadOutreachDrafts(),
     loadMailboxes(),
     loadCampaigns(),
     loadQueue(),
@@ -1509,6 +1572,26 @@ $("#importForm").addEventListener("submit", (event) => runAction({
     details: result,
   });
 }));
+
+$("#outreachImportForm").addEventListener("submit", (event) => runAction({
+  title: "Импорт персональных писем",
+  button: event.submitter,
+}, async () => {
+  event.preventDefault();
+  const body = new FormData(event.target);
+  const result = await api("/api/outreach/imports", { method: "POST", body });
+  event.target.reset();
+  await Promise.all([loadLeads(), loadOutreachImports(), loadOutreachDrafts()]);
+  switchView("outreachDrafts");
+  setActionResult({
+    status: result.rows_blocked ? "warn" : "success",
+    title: "Импорт персональных писем",
+    message: `Файл обработан: готово ${result.rows_ready}, нужно исправить ${result.rows_blocked}.`,
+    details: result,
+  });
+}));
+
+$("#outreachDraftStatus").addEventListener("change", () => loadOutreachDrafts());
 
 $("#validateBtn").addEventListener("click", (event) => runAction({
   title: "Проверка email",

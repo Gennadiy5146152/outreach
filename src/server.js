@@ -3,9 +3,10 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import multer from "multer";
+import { readSheet } from "read-excel-file/node";
 import { env } from "./config/env.js";
 import { pool, query, withClient } from "./db/pool.js";
-import { parseCsv, rowsToObjects } from "./services/csv.js";
+import { parseCsv, rowsToObjects, rowsToOutreachRows } from "./services/csv.js";
 import { parseEmail } from "./services/validation.js";
 import { checkSendingDomain } from "./services/domain-check.js";
 import { verifyImap, verifySmtp } from "./services/mail.js";
@@ -232,6 +233,26 @@ async function campaignLaunchPlan(campaignId) {
     ready_enrollments: 0,
     missing_step_enrollments: 0,
   };
+}
+
+function parseOptionalDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+async function parseOutreachImportFile(file) {
+  const extension = path.extname(file.originalname || "").toLowerCase();
+  if (extension === ".csv") {
+    return { fileType: "csv", rows: rowsToOutreachRows(parseCsv(file.buffer.toString("utf8"))) };
+  }
+  if (extension === ".xlsx") {
+    const sheetRows = await readSheet(file.buffer);
+    return { fileType: "xlsx", rows: rowsToOutreachRows(sheetRows) };
+  }
+  const error = new Error("unsupported_file_type");
+  error.status = 400;
+  throw error;
 }
 
 function optionalPositiveInteger(value, fieldName) {
@@ -639,6 +660,190 @@ app.post("/api/leads/import", csvUpload.single("file"), asyncHandler(async (req,
   }
 
   res.json({ imported, skipped, duplicates });
+}));
+
+app.get("/api/outreach/imports", asyncHandler(async (_req, res) => {
+  const result = await query(`
+    SELECT *
+    FROM outreach_imports
+    ORDER BY created_at DESC
+    LIMIT 100
+  `);
+  res.json(result.rows);
+}));
+
+app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
+  const status = req.query.status || "";
+  const importId = req.query.import_id || "";
+  const result = await query(
+    `
+      SELECT d.*, i.file_name, m.email AS mailbox_email
+      FROM outreach_drafts d
+      LEFT JOIN outreach_imports i ON i.id = d.import_id
+      LEFT JOIN mailboxes m ON m.id = d.mailbox_id
+      WHERE ($1 = '' OR d.status = $1)
+        AND ($2 = '' OR d.import_id = $2::uuid)
+      ORDER BY d.created_at DESC
+      LIMIT 500
+    `,
+    [status, importId],
+  );
+  res.json(result.rows);
+}));
+
+app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "file_required" });
+  const { fileType, rows } = await parseOutreachImportFile(req.file);
+  const seenEmails = new Set();
+
+  const summary = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const importResult = await client.query(
+        `
+          INSERT INTO outreach_imports(file_name, file_type, status, rows_total)
+          VALUES ($1,$2,'running',$3)
+          RETURNING *
+        `,
+        [req.file.originalname, fileType, rows.length],
+      );
+      const importRow = importResult.rows[0];
+      const errors = [];
+      let rowsReady = 0;
+      let rowsBlocked = 0;
+
+      for (const row of rows) {
+        const parsed = parseEmail(row.email);
+        const normalizedEmail = parsed.syntaxValid ? parsed.normalized : String(row.email || "").trim().toLowerCase();
+        const rowErrors = [];
+        if (!row.email || !parsed.syntaxValid) rowErrors.push("Некорректный email");
+        if (!row.subject) rowErrors.push("Нет темы письма");
+        if (!row.body) rowErrors.push("Нет текста письма");
+        if (normalizedEmail && seenEmails.has(normalizedEmail)) rowErrors.push("Дубль email в этом файле");
+        if (normalizedEmail) seenEmails.add(normalizedEmail);
+
+        const mailbox = row.mailbox
+          ? (await client.query(
+            "SELECT id FROM mailboxes WHERE lower(email) = lower($1) OR lower(name) = lower($1) LIMIT 1",
+            [row.mailbox],
+          )).rows[0]
+          : null;
+        if (row.mailbox && !mailbox) rowErrors.push("Mailbox из файла не найден");
+
+        let leadId = null;
+        if (parsed.syntaxValid) {
+          const lead = await client.query(
+            `
+              INSERT INTO leads(company, email, contact_name, position, website, domain, segment, city, pain, source, notes)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+              ON CONFLICT (email) DO UPDATE SET
+                company = COALESCE(NULLIF(EXCLUDED.company, ''), leads.company),
+                contact_name = COALESCE(NULLIF(EXCLUDED.contact_name, ''), leads.contact_name),
+                position = COALESCE(NULLIF(EXCLUDED.position, ''), leads.position),
+                website = COALESCE(NULLIF(EXCLUDED.website, ''), leads.website),
+                segment = COALESCE(NULLIF(EXCLUDED.segment, ''), leads.segment),
+                city = COALESCE(NULLIF(EXCLUDED.city, ''), leads.city),
+                pain = COALESCE(NULLIF(EXCLUDED.pain, ''), leads.pain),
+                notes = COALESCE(NULLIF(EXCLUDED.notes, ''), leads.notes),
+                updated_at = now()
+              RETURNING id
+            `,
+            [
+              row.company || parsed.domain || parsed.normalized,
+              parsed.normalized,
+              row.contact_name,
+              row.position,
+              row.website,
+              parsed.domain,
+              cleanText(row.segment),
+              row.city,
+              row.pain,
+              row.source || req.file.originalname,
+              row.notes,
+            ],
+          );
+          leadId = lead.rows[0].id;
+          await client.query("INSERT INTO job_queue(job_type, payload) VALUES ('validate_lead', $1)", [{ leadId }]);
+        }
+
+        const conversation = parsed.syntaxValid
+          ? (await client.query(
+            `
+              INSERT INTO outreach_conversations(lead_id, email, import_id, status, last_message_at)
+              VALUES ($1,$2,$3,'active_sequence',now())
+              RETURNING id
+            `,
+            [leadId, parsed.normalized, importRow.id],
+          )).rows[0]
+          : null;
+
+        const status = rowErrors.length ? "blocked" : "ready";
+        if (status === "ready") rowsReady += 1;
+        else rowsBlocked += 1;
+        if (rowErrors.length) {
+          errors.push({ row: row.source_row_number, email: row.email, errors: rowErrors });
+        }
+
+        await client.query(
+          `
+            INSERT INTO outreach_drafts(
+              import_id, source_row_number, lead_id, conversation_id, mailbox_id, to_email,
+              company, contact_name, segment, subject, body_text, send_after, status, error_reason, raw_row
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          `,
+          [
+            importRow.id,
+            row.source_row_number,
+            leadId,
+            conversation?.id || null,
+            mailbox?.id || null,
+            normalizedEmail || row.email || "",
+            row.company,
+            row.contact_name,
+            cleanText(row.segment),
+            row.subject || "",
+            row.body || "",
+            parseOptionalDate(row.send_after),
+            status,
+            rowErrors.join("; "),
+            row,
+          ],
+        );
+      }
+
+      const updated = await client.query(
+        `
+          UPDATE outreach_imports
+          SET status = 'completed',
+              rows_ready = $2,
+              rows_blocked = $3,
+              rows_skipped = 0,
+              error_report = $4,
+              completed_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [importRow.id, rowsReady, rowsBlocked, JSON.stringify(errors)],
+      );
+      await client.query("COMMIT");
+      await logEvent("outreach_import_created", {
+        payload: {
+          importId: importRow.id,
+          fileName: req.file.originalname,
+          rows: rows.length,
+          ready: rowsReady,
+          blocked: rowsBlocked,
+        },
+      });
+      return updated.rows[0];
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  res.status(201).json(summary);
 }));
 
 app.post("/api/validation/run", asyncHandler(async (_req, res) => {
