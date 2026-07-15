@@ -8,6 +8,7 @@ const state = {
   dashboard: null,
   settings: null,
   envCheck: null,
+  health: null,
   actionResults: {
     global: null,
     mailboxes: {},
@@ -189,7 +190,14 @@ function switchView(view) {
 
 async function loadHealth() {
   const health = await api("/api/health");
+  state.health = health;
   $("#health").textContent = `OK · dry-run: ${health.dryRun ? "да" : "нет"} · tracking: ${health.publicTrackingUrl ? "on" : "off"}`;
+  const runtimeModeText = $("#runtimeModeText");
+  if (runtimeModeText) {
+    runtimeModeText.textContent = health.dryRun
+      ? "Сейчас включен безопасный режим: MAIL_DRY_RUN=true. Сервис все покажет в интерфейсе, но реальные письма наружу не отправит."
+      : "Сейчас включена реальная отправка: MAIL_DRY_RUN=false. Проверки SMTP/IMAP и отправка писем будут выполняться по-настоящему.";
+  }
 }
 
 async function loadEnvCheck() {
@@ -367,14 +375,17 @@ function renderSetupChecklist() {
   const warmupEnabled = state.mailboxes.filter((mailbox) => mailbox.warmup_enabled).length;
   const campaignsWithSteps = state.campaigns.filter((campaign) => campaign.steps.length > 0);
   const queuedOrSent = Number(dashboard.queue.pending || 0) + Number(dashboard.queue.sent || 0);
+  const runtimeDryRun = state.settings?.runtime?.dryRun;
 
   const steps = [
     {
-      done: state.settings?.runtime?.dryRun === true,
-      title: "Безопасный режим включен",
-      text: state.settings?.runtime?.dryRun
+      done: runtimeDryRun === true || runtimeDryRun === false,
+      title: runtimeDryRun === undefined ? "Проверить режим отправки" : runtimeDryRun ? "Безопасный режим включен" : "Реальная отправка включена",
+      text: runtimeDryRun === undefined
+        ? "Жду ответ backend по MAIL_DRY_RUN."
+        : runtimeDryRun
         ? "Можно спокойно нажимать кнопки: реальные письма не отправятся."
-        : "Внимание: dry-run выключен, очередь может реально отправлять письма.",
+        : "MAIL_DRY_RUN=false: SMTP/IMAP и отправка работают по-настоящему.",
       action: "Открыть настройки",
       view: "settings",
     },
