@@ -458,10 +458,6 @@ h2 {
   align-items: center;
 }
 
-.settings-summary {
-  margin-top: 14px;
-}
-
 .form-section-title {
   margin-top: 8px;
   padding-top: 10px;
@@ -488,6 +484,56 @@ fieldset.field {
 .field > span,
 .field > legend {
   color: var(--muted);
+}
+
+.settings-form {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--line);
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  background: #fbfcfb;
+}
+
+.settings-row > span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-row input,
+.settings-row select {
+  height: 36px;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #fbfcfb;
+}
+
+.settings-footer p,
+.settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings-footer button {
+  min-height: 34px;
+  padding: 6px 12px;
 }
 
 .field-grid {
@@ -714,6 +760,7 @@ dialog::backdrop {
   .metrics,
   .env-grid,
   .form.inline,
+  .settings-row,
   .field-grid.two,
   .setup-list,
   .setup-step,
@@ -727,6 +774,11 @@ dialog::backdrop {
   }
 
   .next-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-footer {
     align-items: stretch;
     flex-direction: column;
   }

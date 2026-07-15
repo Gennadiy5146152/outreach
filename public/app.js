@@ -554,30 +554,28 @@ async function loadSettings() {
   const settings = await api("/api/settings");
   state.settings = settings;
   $("#settingsPanel").innerHTML = `
-    <form id="runtimeSettingsForm" class="form settings-form">
-      <label class="field">
-        <span>Режим отправки</span>
+    <form id="runtimeSettingsForm" class="settings-form">
+      <label class="settings-row">
+        <span>Отправка</span>
         <select name="mailDryRun">
-          <option value="true" ${settings.runtime.dryRun ? "selected" : ""}>Безопасный dry-run: не отправлять реальные письма</option>
-          <option value="false" ${!settings.runtime.dryRun ? "selected" : ""}>Реальная отправка: SMTP/IMAP работают по-настоящему</option>
+          <option value="true" ${settings.runtime.dryRun ? "selected" : ""}>Dry-run: не отправлять письма</option>
+          <option value="false" ${!settings.runtime.dryRun ? "selected" : ""}>Реальная отправка</option>
         </select>
       </label>
-      <label class="field">
-        <span>PUBLIC_TRACKING_URL</span>
+      <label class="settings-row">
+        <span>Tracking URL</span>
         <input name="publicTrackingUrl" value="${esc(settings.runtime.publicTrackingUrl || "")}" placeholder="https://your-public-tunnel.example" />
       </label>
-      <label class="field">
-        <span>Максимальный размер вложения, МБ</span>
+      <label class="settings-row">
+        <span>Лимит вложений</span>
         <input name="maxAttachmentMb" type="number" min="1" max="200" step="1" value="${settings.runtime.maxAttachmentMb}" />
       </label>
-      <button>Сохранить runtime настройки</button>
+      <div class="settings-footer">
+        <p>Вложения: ${esc(settings.runtime.attachmentDir)}</p>
+        <button>Сохранить</button>
+      </div>
     </form>
-    <div class="cards settings-summary">
-      <article class="card"><strong>Текущий режим</strong><p>${settings.runtime.dryRun ? "dry-run включен" : "реальная отправка включена"}</p></article>
-      <article class="card"><strong>Tracking URL</strong><p>${esc(settings.runtime.publicTrackingUrl || "не задан")}</p></article>
-      <article class="card"><strong>Папка вложений</strong><p>${esc(settings.runtime.attachmentDir)}</p></article>
-    </div>
-    <p class="muted">После сохранения значения пишутся в .env. Для фоновой отправки и лимита вложений перезапусти web и worker.</p>
+    <p class="settings-note">Сохраняется в .env. После изменения перезапусти web и worker.</p>
   `;
   renderSetupChecklist();
 }
