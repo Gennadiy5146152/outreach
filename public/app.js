@@ -554,11 +554,30 @@ async function loadSettings() {
   const settings = await api("/api/settings");
   state.settings = settings;
   $("#settingsPanel").innerHTML = `
-    <div class="cards">
-      <article class="card"><strong>Dry-run</strong><p>${settings.runtime.dryRun ? "включен" : "выключен"}</p></article>
-      <article class="card"><strong>PUBLIC_TRACKING_URL</strong><p>${esc(settings.runtime.publicTrackingUrl || "не задан")}</p></article>
-      <article class="card"><strong>Вложения</strong><p>${esc(settings.runtime.attachmentDir)} · максимум ${settings.runtime.maxAttachmentMb} МБ</p></article>
+    <form id="runtimeSettingsForm" class="form settings-form">
+      <label class="field">
+        <span>Режим отправки</span>
+        <select name="mailDryRun">
+          <option value="true" ${settings.runtime.dryRun ? "selected" : ""}>Безопасный dry-run: не отправлять реальные письма</option>
+          <option value="false" ${!settings.runtime.dryRun ? "selected" : ""}>Реальная отправка: SMTP/IMAP работают по-настоящему</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>PUBLIC_TRACKING_URL</span>
+        <input name="publicTrackingUrl" value="${esc(settings.runtime.publicTrackingUrl || "")}" placeholder="https://your-public-tunnel.example" />
+      </label>
+      <label class="field">
+        <span>Максимальный размер вложения, МБ</span>
+        <input name="maxAttachmentMb" type="number" min="1" max="200" step="1" value="${settings.runtime.maxAttachmentMb}" />
+      </label>
+      <button>Сохранить runtime настройки</button>
+    </form>
+    <div class="cards settings-summary">
+      <article class="card"><strong>Текущий режим</strong><p>${settings.runtime.dryRun ? "dry-run включен" : "реальная отправка включена"}</p></article>
+      <article class="card"><strong>Tracking URL</strong><p>${esc(settings.runtime.publicTrackingUrl || "не задан")}</p></article>
+      <article class="card"><strong>Папка вложений</strong><p>${esc(settings.runtime.attachmentDir)}</p></article>
     </div>
+    <p class="muted">После сохранения значения пишутся в .env. Для фоновой отправки и лимита вложений перезапусти web и worker.</p>
   `;
   renderSetupChecklist();
 }
@@ -996,6 +1015,31 @@ $("#suppressionForm").addEventListener("submit", (event) => runAction({
     details: result,
   });
 }));
+
+document.body.addEventListener("submit", (event) => {
+  if (event.target.id !== "runtimeSettingsForm") return;
+  event.preventDefault();
+  runAction({
+    title: "Сохранение runtime настроек",
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    payload.mailDryRun = payload.mailDryRun === "true";
+    payload.maxAttachmentMb = Number(payload.maxAttachmentMb);
+    const result = await api("/api/runtime-settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await Promise.all([loadHealth(), loadSettings(), loadEnvCheck()]);
+    setActionResult({
+      status: "warn",
+      title: "Сохранение runtime настроек",
+      message: `${result.message} Выполни: docker compose restart web worker.`,
+      details: result,
+    });
+  });
+});
 
 $("#closeLeadDialog").addEventListener("click", () => $("#leadDialog").close());
 

@@ -91,6 +91,35 @@ app.get("/api/settings", asyncHandler(async (_req, res) => {
   });
 }));
 
+app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
+  const mailDryRun = toBool(req.body.mailDryRun);
+  const publicTrackingUrl = String(req.body.publicTrackingUrl || "").trim();
+  const maxAttachmentMb = Number(req.body.maxAttachmentMb || env.maxAttachmentMb);
+
+  if (!Number.isFinite(maxAttachmentMb) || maxAttachmentMb < 1 || maxAttachmentMb > 200) {
+    return res.status(400).json({ error: "max_attachment_mb_must_be_between_1_and_200" });
+  }
+
+  await saveSecretToDotenv("MAIL_DRY_RUN", mailDryRun ? "true" : "false");
+  await saveSecretToDotenv("PUBLIC_TRACKING_URL", publicTrackingUrl);
+  await saveSecretToDotenv("MAX_ATTACHMENT_MB", String(maxAttachmentMb));
+
+  env.mailDryRun = mailDryRun;
+  env.publicTrackingUrl = publicTrackingUrl;
+  env.maxAttachmentMb = maxAttachmentMb;
+
+  res.json({
+    runtime: {
+      dryRun: env.mailDryRun,
+      publicTrackingUrl: env.publicTrackingUrl,
+      attachmentDir: env.attachmentDir,
+      maxAttachmentMb: env.maxAttachmentMb,
+    },
+    restartRequired: ["web", "worker"],
+    message: "Настройки сохранены в .env. Текущий web-процесс обновил режим в интерфейсе; для фоновой отправки и лимита вложений перезапусти web и worker.",
+  });
+}));
+
 app.get("/api/env-check", asyncHandler(async (_req, res) => {
   const mailboxes = (await query("SELECT id, name, email, password_env_key FROM mailboxes ORDER BY created_at")).rows;
   const mailboxSecrets = mailboxes.map((mailbox) => ({

@@ -457,6 +457,11 @@ h2 {
   grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
   align-items: center;
 }
+
+.settings-summary {
+  margin-top: 14px;
+}
+
 .form-section-title {
   margin-top: 8px;
   padding-top: 10px;
