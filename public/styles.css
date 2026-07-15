@@ -795,7 +795,26 @@ fieldset.field {
   text-align: left;
 }
 
-.segment-menu button:hover {
+.segment-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segment-option input {
+  width: auto;
+  height: auto;
+}
+
+.segment-menu button:hover,
+.segment-option:hover {
   background: var(--accent-soft);
 }
 

@@ -541,11 +541,15 @@ function renderSegmentPicker(input) {
   if (!picker || !menu) return;
   const selected = new Set(selectedPickerSegments(picker).map((segment) => segment.toLowerCase()));
   const matches = segmentMatches(input.value);
-  const available = picker.dataset.segmentMulti !== undefined
-    ? matches.filter((segment) => !selected.has(segment.toLowerCase()))
-    : matches;
   menu.innerHTML = matches.length
-    ? available.map((segment) => `<button type="button" data-segment-value="${esc(segment)}">${esc(segment)}</button>`).join("") || `<span class="segment-empty">Все найденные сегменты уже выбраны.</span>`
+    ? picker.dataset.segmentMulti !== undefined
+      ? matches.map((segment) => `
+        <label class="segment-option">
+          <input type="checkbox" data-segment-value="${esc(segment)}" ${selected.has(segment.toLowerCase()) ? "checked" : ""} />
+          <span>${esc(segment)}</span>
+        </label>
+      `).join("")
+      : matches.map((segment) => `<button type="button" data-segment-value="${esc(segment)}">${esc(segment)}</button>`).join("")
     : `<span class="segment-empty">Сохраненных сегментов нет. Новый сохранится после отправки формы.</span>`;
   menu.hidden = false;
   picker.classList.add("open");
@@ -1208,7 +1212,10 @@ document.body.addEventListener("click", (event) => {
     const picker = segmentOption.closest(".segment-picker");
     const input = picker.querySelector(".segment-input");
     if (picker.dataset.segmentMulti !== undefined) {
-      setSegmentPickerValue(picker, [...selectedPickerSegments(picker), segmentOption.dataset.segmentValue]);
+      const value = segmentOption.dataset.segmentValue;
+      const current = selectedPickerSegments(picker);
+      const exists = current.some((segment) => segment.toLowerCase() === value.toLowerCase());
+      setSegmentPickerValue(picker, exists ? current.filter((segment) => segment.toLowerCase() !== value.toLowerCase()) : [...current, value]);
       renderSegmentPicker(input);
     } else {
       input.value = segmentOption.dataset.segmentValue;

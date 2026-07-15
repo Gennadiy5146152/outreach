@@ -25,6 +25,8 @@ for (const expected of [
   "data-edit-campaign",
   "method: campaignId ? \"PATCH\" : \"POST\"",
   "data-remove-segment",
+  "class=\"segment-option\"",
+  "type=\"checkbox\" data-segment-value",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`campaign edit frontend should include ${expected}`);
@@ -42,7 +44,7 @@ for (const expected of [
   }
 }
 
-for (const expected of [".segment-chips", ".segment-chip"]) {
+for (const expected of [".segment-chips", ".segment-chip", ".segment-option"]) {
   if (!css.includes(expected)) {
     throw new Error(`multi segment CSS should include ${expected}`);
   }
