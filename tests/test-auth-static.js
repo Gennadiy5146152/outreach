@@ -23,8 +23,14 @@ for (const expected of ["authUser", "authPassword", "authSessionSecret"]) {
   if (!env.includes(expected)) throw new Error(`env config missing ${expected}`);
 }
 
-if (!login.includes("/api/auth/login") || !login.includes("AUTH_USER")) {
-  throw new Error("login page should post to auth endpoint and explain env setup");
+if (!login.includes("/api/auth/login")) {
+  throw new Error("login page should post to auth endpoint");
+}
+
+for (const forbidden of ["AUTH_USER", "AUTH_PASSWORD", "AUTH_SESSION_SECRET", ".env"]) {
+  if (login.includes(forbidden)) {
+    throw new Error(`login page should not expose technical auth setup: ${forbidden}`);
+  }
 }
 
 console.log("OK: auth static test passed");

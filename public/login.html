@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">Outreach Desk</p>
           <h1>Вход в сервис</h1>
-          <p class="muted">Доступ закрыт. Логин и пароль задаются на сервере в `.env`.</p>
+          <p class="muted">Введите логин и пароль для доступа к сервису.</p>
         </div>
         <form id="loginForm" class="form">
           <label class="field">
@@ -38,7 +38,7 @@
         if (status.authenticated) window.location.href = "/";
         if (!status.configured) {
           message.hidden = false;
-          message.textContent = "Авторизация не настроена: добавьте AUTH_USER, AUTH_PASSWORD и AUTH_SESSION_SECRET в .env и перезапустите web.";
+          message.textContent = "Авторизация пока не настроена. Обратитесь к администратору сервиса.";
           form.querySelector("button").disabled = true;
         }
       }
