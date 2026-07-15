@@ -820,6 +820,138 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
+app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res) => {
+  const position = Number(req.params.position);
+  if (!isUuid(req.params.id) || !Number.isInteger(position) || position < 2 || position > 4) {
+    return res.status(400).json({ error: "invalid_step" });
+  }
+  const subject = cleanText(req.body.subject);
+  const bodyText = cleanText(req.body.body_text);
+  const delayDays = Number(req.body.delay_days || 0);
+  if (!Number.isFinite(delayDays) || delayDays < 0) return res.status(400).json({ error: "invalid_delay_days" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const draft = (await client.query("SELECT * FROM outreach_drafts WHERE id = $1", [req.params.id])).rows[0];
+      if (!draft) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const existing = (await client.query(
+        "SELECT * FROM outreach_draft_steps WHERE draft_id = $1 AND position = $2",
+        [draft.id, position],
+      )).rows[0];
+      if (existing?.status === "sent") {
+        const error = new Error("sent_step_cannot_be_edited");
+        error.status = 409;
+        throw error;
+      }
+
+      if (!bodyText) {
+        if (existing) {
+          await client.query(
+            `
+              UPDATE sending_queue
+              SET status = 'cancelled',
+                  last_error = 'Follow-up шаг очищен в черновике',
+                  updated_at = now()
+              WHERE outreach_step_id = $1
+                AND status IN ('pending','retrying')
+            `,
+            [existing.id],
+          );
+          await client.query("DELETE FROM outreach_draft_steps WHERE id = $1", [existing.id]);
+        }
+        await client.query("COMMIT");
+        return { removed: true, draftId: draft.id, position };
+      }
+
+      const step = await client.query(
+        `
+          INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
+          VALUES ($1,$2,$3,$4,$5,'draft')
+          ON CONFLICT (draft_id, position) DO UPDATE SET
+            subject = EXCLUDED.subject,
+            body_text = EXCLUDED.body_text,
+            delay_days = EXCLUDED.delay_days,
+            status = CASE
+              WHEN outreach_draft_steps.status IN ('queued','needs_approval') THEN outreach_draft_steps.status
+              ELSE 'draft'
+            END,
+            updated_at = now()
+          RETURNING *
+        `,
+        [draft.id, position, subject || draft.subject, bodyText, delayDays],
+      );
+      await client.query(
+        `
+          UPDATE sending_queue
+          SET subject_override = $2,
+              body_text_override = $3,
+              body_html_override = $4,
+              updated_at = now()
+          WHERE outreach_step_id = $1
+            AND status IN ('pending','retrying')
+        `,
+        [step.rows[0].id, subject || draft.subject, bodyText, bodyText.replace(/\n/g, "<br>")],
+      );
+      await client.query("COMMIT");
+      return step.rows[0];
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  if (!result) return res.status(404).json({ error: "not_found" });
+  res.json(result);
+}));
+
+app.post("/api/outreach/drafts/:id/cancel", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_draft" });
+  const result = await query(
+    `
+      WITH draft AS (
+        UPDATE outreach_drafts
+        SET status = 'cancelled',
+            error_reason = 'Отменено пользователем',
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+      ),
+      cancelled_queue AS (
+        UPDATE sending_queue
+        SET status = 'cancelled',
+            last_error = 'Черновик отменен пользователем',
+            updated_at = now()
+        WHERE outreach_draft_id = $1
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id
+      ),
+      cancelled_steps AS (
+        UPDATE outreach_draft_steps
+        SET status = 'cancelled',
+            updated_at = now()
+        WHERE draft_id = $1
+          AND status <> 'sent'
+        RETURNING id
+      )
+      SELECT
+        (SELECT row_to_json(draft) FROM draft) AS draft,
+        (SELECT count(*)::int FROM cancelled_queue) AS cancelled_queue,
+        (SELECT count(*)::int FROM cancelled_steps) AS cancelled_steps
+    `,
+    [req.params.id],
+  );
+  if (!result.rows[0]?.draft) return res.status(404).json({ error: "not_found" });
+  await logEvent("outreach_draft_cancelled", {
+    leadId: result.rows[0].draft.lead_id,
+    payload: { draftId: req.params.id, cancelledQueue: result.rows[0].cancelled_queue },
+  });
+  res.json(result.rows[0]);
+}));
+
 app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
   const mode = req.body.mode === "manual" ? "manual" : "auto";

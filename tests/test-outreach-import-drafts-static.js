@@ -46,6 +46,8 @@ for (const expected of [
   "app.get(\"/api/outreach/imports\"",
   "app.get(\"/api/outreach/drafts\"",
   "app.patch(\"/api/outreach/drafts/:id\"",
+  "app.put(\"/api/outreach/drafts/:id/steps/:position\"",
+  "app.post(\"/api/outreach/drafts/:id/cancel\"",
   "app.post(\"/api/outreach/drafts/start\"",
   "app.post(\"/api/outreach/imports\"",
   "INSERT INTO outreach_drafts",
@@ -53,6 +55,8 @@ for (const expected of [
   "INSERT INTO outreach_draft_steps",
   "outreachStepsFromRow",
   "outreachDraftStatus",
+  "sent_step_cannot_be_edited",
+  "outreach_draft_cancelled",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`outreach import API should include ${expected}`);
@@ -83,6 +87,7 @@ for (const expected of [
   "Импортировать письма",
   "Черновики персональных писем",
   "Запустить выбранные",
+  "В очереди",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`outreach import UI should include ${expected}`);
@@ -99,7 +104,12 @@ for (const expected of [
   "$(\"#outreachDraftStatus\").addEventListener",
   "$(\"#startSelectedDraftsBtn\").addEventListener",
   "data-outreach-draft-form",
+  "data-outreach-step-form",
   "data-start-draft",
+  "data-cancel-draft",
+  "Follow-up",
+  "Сохранение follow-up",
+  "Отмена черновика",
   "switchView(\"outreachDrafts\")",
   "нужно исправить",
 ]) {

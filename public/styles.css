@@ -765,6 +765,12 @@ h2 {
   margin-top: 8px;
 }
 
+.draft-followups {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .inline-edit {
   margin-top: 8px;
 }
@@ -776,9 +782,17 @@ h2 {
   font-weight: 700;
 }
 
-.outreach-draft-edit-form {
+.outreach-draft-edit-form,
+.outreach-step-edit-form {
   min-width: min(520px, 76vw);
   margin-top: 8px;
+}
+
+.outreach-step-edit-form {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
 }
 
 .form {

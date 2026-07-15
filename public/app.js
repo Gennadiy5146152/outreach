@@ -665,7 +665,22 @@ async function loadOutreachDrafts() {
     <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${ready && readySelected === ready ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
-        ? state.outreachDrafts.map((draft) => `
+        ? state.outreachDrafts.map((draft) => {
+          const stepByPosition = new Map((draft.steps || []).map((step) => [Number(step.position), step]));
+          const followupForms = [2, 3, 4].map((position) => {
+            const step = stepByPosition.get(position) || {};
+            return `
+              <form class="form outreach-step-edit-form" data-outreach-step-form="${draft.id}" data-position="${position}">
+                <div class="form-section-title">Follow-up ${position - 1}</div>
+                <input name="subject" value="${esc(step.subject || draft.subject || "")}" placeholder="Тема follow-up" />
+                <textarea name="body_text" placeholder="Текст follow-up. Оставь пустым, чтобы удалить шаг.">${esc(step.body_text || "")}</textarea>
+                <input name="delay_days" type="number" min="0" step="1" value="${step.delay_days ?? (position === 2 ? 3 : position === 3 ? 4 : 5)}" />
+                <button ${step.status === "sent" ? "disabled" : ""}>Сохранить follow-up</button>
+                ${step.status ? `<span class="muted">${esc(statusLabel(step.status))}</span>` : ""}
+              </form>
+            `;
+          }).join("");
+          return `
           <tr>
             <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
@@ -692,10 +707,15 @@ async function loadOutreachDrafts() {
                   <input name="send_after" type="datetime-local" value="${draft.send_after ? new Date(draft.send_after).toISOString().slice(0, 16) : ""}" />
                   <button>Сохранить</button>
                 </form>
+                <div class="draft-followups">
+                  ${followupForms}
+                </div>
               </details>
+              <button class="small-button" data-cancel-draft="${draft.id}" ${["cancelled", "completed"].includes(draft.status) ? "disabled" : ""}>Отменить</button>
             </td>
           </tr>
-        `).join("")
+        `;
+        }).join("")
         : `<tr><td colspan="7" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
     </tbody>
   `;
@@ -1810,13 +1830,58 @@ document.body.addEventListener("submit", (event) => {
   });
 });
 
+document.body.addEventListener("submit", (event) => {
+  const draftId = event.target.dataset.outreachStepForm;
+  const position = event.target.dataset.position;
+  if (!draftId || !position) return;
+  event.preventDefault();
+  runAction({
+    title: "Сохранение follow-up",
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    payload.delay_days = Number(payload.delay_days || 0);
+    const result = await api(`/api/outreach/drafts/${draftId}/steps/${position}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await Promise.all([loadOutreachDrafts(), loadQueue()]);
+    setActionResult({
+      status: "success",
+      title: "Сохранение follow-up",
+      message: result.removed ? "Follow-up удален из цепочки." : "Follow-up сохранен.",
+      details: result,
+    });
+  });
+});
+
 document.body.addEventListener("click", (event) => {
   const draftId = event.target.dataset.startDraft;
-  if (!draftId) return;
-  runAction({
-    title: "Запуск черновика",
-    button: event.target,
-  }, async () => startOutreachDrafts([draftId]));
+  const cancelDraftId = event.target.dataset.cancelDraft;
+  if (draftId) {
+    runAction({
+      title: "Запуск черновика",
+      button: event.target,
+    }, async () => startOutreachDrafts([draftId]));
+    return;
+  }
+  if (cancelDraftId) {
+    runAction({
+      title: "Отмена черновика",
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/outreach/drafts/${cancelDraftId}/cancel`, { method: "POST" });
+      state.selectedOutreachDraftIds.delete(cancelDraftId);
+      await Promise.all([loadOutreachDrafts(), loadQueue(), loadConversations()]);
+      setActionResult({
+        status: "success",
+        title: "Отмена черновика",
+        message: `Черновик отменен. Писем снято с очереди: ${result.cancelled_queue}.`,
+        details: result,
+      });
+    });
+  }
 });
 
 ["conversationStatusFilter", "conversationClassificationFilter", "conversationReviewOnly"].forEach((id) => {
