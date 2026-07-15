@@ -34,6 +34,10 @@ function authConfigured() {
   return Boolean(env.authUser && env.authPassword && env.authSessionSecret);
 }
 
+function cleanText(value) {
+  return String(value || "").trim();
+}
+
 function timingSafeEqualText(left, right) {
   const leftBuffer = Buffer.from(String(left || ""));
   const rightBuffer = Buffer.from(String(right || ""));
@@ -400,6 +404,21 @@ app.get("/api/leads", asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
+app.get("/api/segments", asyncHandler(async (_req, res) => {
+  const result = await query(`
+    SELECT segment
+    FROM (
+      SELECT btrim(segment) AS segment FROM leads WHERE segment IS NOT NULL AND btrim(segment) <> ''
+      UNION
+      SELECT btrim(segment) AS segment FROM campaigns WHERE segment IS NOT NULL AND btrim(segment) <> ''
+    ) saved_segments
+    GROUP BY segment
+    ORDER BY lower(segment)
+    LIMIT 200
+  `);
+  res.json(result.rows.map((row) => row.segment));
+}));
+
 app.get("/api/leads/:id/detail", asyncHandler(async (req, res) => {
   const lead = (await query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "not_found" });
@@ -467,7 +486,7 @@ app.post("/api/leads", asyncHandler(async (req, res) => {
       req.body.position || "",
       req.body.website || "",
       parsed.domain,
-      req.body.segment || "",
+      cleanText(req.body.segment),
       req.body.city || "",
       req.body.pain || "",
       req.body.source || "manual",
@@ -502,7 +521,7 @@ app.patch("/api/leads/:id", asyncHandler(async (req, res) => {
       req.body.contact_name,
       req.body.position,
       req.body.website,
-      req.body.segment,
+      req.body.segment === undefined ? undefined : cleanText(req.body.segment),
       req.body.city,
       req.body.pain,
       req.body.notes,
@@ -539,7 +558,7 @@ app.post("/api/leads/import", csvUpload.single("file"), asyncHandler(async (req,
         row.position,
         row.website,
         parsed.domain,
-        row.segment,
+        cleanText(row.segment),
         row.city,
         row.pain,
         row.source || req.file.originalname,
@@ -796,7 +815,7 @@ app.post("/api/campaigns", asyncHandler(async (req, res) => {
     [
       req.body.name,
       req.body.description || "",
-      req.body.segment || "",
+      cleanText(req.body.segment),
       toBool(req.body.tracking_enabled ?? true),
       toBool(req.body.manual_approval_required ?? true),
       req.body.daily_limit ? Number(req.body.daily_limit) : null,

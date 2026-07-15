@@ -2,6 +2,7 @@ const state = {
   campaigns: [],
   mailboxes: [],
   leads: [],
+  segments: [],
   queue: [],
   suppressions: [],
   warmup: null,
@@ -373,6 +374,12 @@ async function loadLeads() {
   `;
 }
 
+async function loadSegments() {
+  state.segments = await api("/api/segments");
+  const options = state.segments.map((segment) => `<option value="${esc(segment)}"></option>`).join("");
+  $("#segmentOptions").innerHTML = options;
+}
+
 async function loadMailboxes() {
   state.mailboxes = await api("/api/mailboxes");
   $("#mailboxList").innerHTML = state.mailboxes.length
@@ -737,6 +744,7 @@ async function refresh() {
     loadHealth(),
     loadEnvCheck(),
     loadDashboard(),
+    loadSegments(),
     loadLeads(),
     loadMailboxes(),
     loadCampaigns(),

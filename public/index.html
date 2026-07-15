@@ -143,7 +143,7 @@
               <input name="position" placeholder="Должность" />
               <input name="email" type="email" placeholder="Email" required />
               <input name="website" placeholder="Сайт" />
-              <input name="segment" placeholder="Сегмент" />
+              <input name="segment" list="segmentOptions" placeholder="Выбери сохраненный или введи новый" />
               <input name="city" placeholder="Город" />
               <input name="pain" placeholder="Боль/триггер" />
               <textarea name="notes" placeholder="Заметки"></textarea>
@@ -303,7 +303,7 @@
             <p class="help-text">Кампания — это одна рассылка: кому пишем, с каким письмом и через какие почты.</p>
             <form id="campaignForm" class="form">
               <label class="field"><span>Название</span><input name="name" placeholder="Например: Архитектурные бюро, июль" required /></label>
-              <label class="field"><span>Сегмент</span><input name="segment" placeholder="Например: архитекторы, Москва" /></label>
+              <label class="field"><span>Сегмент</span><input name="segment" list="segmentOptions" placeholder="Выбери сохраненный или введи новый" /></label>
               <label class="field"><span>Заметка</span><textarea name="description" placeholder="Для себя: гипотеза, оффер, кому пишем"></textarea></label>
               <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Open tracking</label>
               <label class="check"><input name="manual_approval_required" type="checkbox" checked /> Ручное подтверждение пачки</label>
@@ -478,6 +478,7 @@
     </dialog>
 
     <div id="toast"></div>
+    <datalist id="segmentOptions"></datalist>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
