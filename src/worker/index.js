@@ -645,6 +645,15 @@ async function scheduleMaintenance() {
 
   await query(
     `
+      UPDATE warmup_threads
+      SET status = 'stale', completed_at = now()
+      WHERE status = 'active'
+        AND last_message_at < now() - interval '30 minutes'
+    `,
+  );
+
+  await query(
+    `
       INSERT INTO job_queue(job_type, payload, run_at)
       SELECT 'sync_inbox', jsonb_build_object('mailboxId', id), now()
       FROM mailboxes m
@@ -698,20 +707,34 @@ async function sendWarmup() {
   const activeThread = (
     await query(
       `
-        SELECT 1
+        SELECT *
         FROM warmup_threads
         WHERE status = 'active'
           AND (
             (from_mailbox_id = $1 AND to_mailbox_id = $2)
             OR (from_mailbox_id = $2 AND to_mailbox_id = $1)
           )
-          AND last_message_at > now() - interval '2 hours'
+          AND last_message_at > now() - interval '30 minutes'
+        ORDER BY last_message_at DESC NULLS LAST, created_at DESC
         LIMIT 1
       `,
       [from.id, to.id],
     )
-  ).rowCount;
-  if (activeThread) return;
+  ).rows[0];
+  if (activeThread) {
+    const nextPosition = Number(activeThread.next_position || 1);
+    const receiverId = nextPosition % 2 === 0 ? activeThread.from_mailbox_id : activeThread.to_mailbox_id;
+    await enqueueInboxSync(receiverId, 15);
+    await logEvent("warmup_sync_queued", {
+      mailboxId: receiverId,
+      payload: {
+        reason: "active_thread_continue",
+        subject: activeThread.subject,
+        nextPosition,
+      },
+    });
+    return;
+  }
 
   const dialogues = await loadWarmupDialogues();
   const dialogue = pickRandom(dialogues);

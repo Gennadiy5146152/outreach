@@ -27,4 +27,8 @@ if (!worker.includes("loadWarmupDialogues") || !worker.includes("warmup_threads"
   throw new Error("worker should load DB warmup dialogues and track threads");
 }
 
+if (!worker.includes("status = 'stale'") || !worker.includes("active_thread_continue")) {
+  throw new Error("worker should expire stuck warmup threads and queue sync to continue active ones");
+}
+
 console.log(`OK: warmup dialogues static test passed (${messageCount} messages)`);
