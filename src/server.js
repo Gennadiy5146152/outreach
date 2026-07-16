@@ -532,7 +532,7 @@ app.put("/api/settings/:key", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/dashboard", asyncHandler(async (_req, res) => {
-  const [leadStats, messageStats, queueStats, opens, replies, outreachStats] = await Promise.all([
+  const [leadStats, messageStats, queueStats, opens, replies, outreachStats, stepPerformance] = await Promise.all([
     query(`
       SELECT
         count(*)::int AS total,
@@ -630,6 +630,100 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
             AND ods.position > 1
         ) AS sent_followups
     `),
+    query(`
+      WITH step_sends AS (
+        SELECT
+          ods.position,
+          count(*)::int AS sent,
+          count(DISTINCT msg.lead_id)::int AS contacts,
+          min(msg.sent_at) AS first_sent_at,
+          max(msg.sent_at) AS last_sent_at
+        FROM messages msg
+        JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+        WHERE msg.direction = 'outbound'
+          AND msg.type = 'outreach'
+          AND msg.status = 'sent'
+        GROUP BY ods.position
+      ),
+      step_opens AS (
+        SELECT
+          ods.position,
+          count(DISTINCT o.message_id)::int AS unique_opens
+        FROM open_events o
+        JOIN messages msg ON msg.id = o.message_id
+        JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+        WHERE msg.type = 'outreach'
+        GROUP BY ods.position
+      ),
+      step_replies AS (
+        SELECT
+          ods.position,
+          count(DISTINCT msg.lead_id) FILTER (WHERE msg.type = 'reply')::int AS replied_dialogs,
+          count(DISTINCT msg.lead_id) FILTER (WHERE msg.reply_classification = 'positive_reply')::int AS positive_replies,
+          count(DISTINCT msg.lead_id) FILTER (WHERE msg.reply_classification = 'negative_reply')::int AS negative_replies,
+          count(DISTINCT msg.lead_id) FILTER (WHERE msg.reply_classification = 'auto_reply')::int AS auto_replies,
+          count(DISTINCT msg.lead_id) FILTER (WHERE msg.reply_classification = 'unsubscribe')::int AS unsubscribes,
+          count(DISTINCT msg.lead_id) FILTER (WHERE msg.type = 'bounce' OR msg.reply_classification = 'bounce')::int AS bounces,
+          count(DISTINCT msg.lead_id) FILTER (
+            WHERE msg.type = 'bounce'
+               OR msg.reply_classification IN ('positive_reply','negative_reply','unsubscribe','not_target','bounce')
+          )::int AS stopped_after_step
+        FROM messages msg
+        JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+        WHERE msg.direction = 'inbound'
+          AND msg.type IN ('reply','bounce')
+        GROUP BY ods.position
+      ),
+      reply_times AS (
+        SELECT
+          outbound.position,
+          COALESCE(round(avg(EXTRACT(EPOCH FROM (inbound.first_reply_at - outbound.first_sent_at)) / 3600.0))::int, 0) AS avg_hours_to_reply
+        FROM (
+          SELECT msg.lead_id, msg.outreach_step_id, ods.position, min(msg.sent_at) AS first_sent_at
+          FROM messages msg
+          JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+          WHERE msg.direction = 'outbound'
+            AND msg.type = 'outreach'
+            AND msg.status = 'sent'
+          GROUP BY msg.lead_id, msg.outreach_step_id, ods.position
+        ) outbound
+        JOIN (
+          SELECT lead_id, outreach_step_id, min(received_at) AS first_reply_at
+          FROM messages
+          WHERE direction = 'inbound'
+            AND type IN ('reply','bounce')
+            AND outreach_step_id IS NOT NULL
+          GROUP BY lead_id, outreach_step_id
+        ) inbound ON inbound.lead_id = outbound.lead_id
+          AND inbound.outreach_step_id = outbound.outreach_step_id
+        WHERE inbound.first_reply_at IS NOT NULL
+          AND outbound.first_sent_at IS NOT NULL
+        GROUP BY outbound.position
+      )
+      SELECT
+        step_sends.position,
+        step_sends.sent,
+        step_sends.contacts,
+        COALESCE(step_opens.unique_opens, 0)::int AS unique_opens,
+        COALESCE(step_replies.replied_dialogs, 0)::int AS replied_dialogs,
+        COALESCE(step_replies.positive_replies, 0)::int AS positive_replies,
+        COALESCE(step_replies.negative_replies, 0)::int AS negative_replies,
+        COALESCE(step_replies.auto_replies, 0)::int AS auto_replies,
+        COALESCE(step_replies.unsubscribes, 0)::int AS unsubscribes,
+        COALESCE(step_replies.bounces, 0)::int AS bounces,
+        COALESCE(step_replies.stopped_after_step, 0)::int AS stopped_after_step,
+        COALESCE(reply_times.avg_hours_to_reply, 0)::int AS avg_hours_to_reply,
+        CASE WHEN step_sends.contacts > 0 THEN round((COALESCE(step_opens.unique_opens, 0)::numeric / step_sends.contacts) * 100)::int ELSE 0 END AS open_rate,
+        CASE WHEN step_sends.contacts > 0 THEN round((COALESCE(step_replies.replied_dialogs, 0)::numeric / step_sends.contacts) * 100)::int ELSE 0 END AS reply_rate,
+        CASE WHEN step_sends.contacts > 0 THEN round((COALESCE(step_replies.positive_replies, 0)::numeric / step_sends.contacts) * 100)::int ELSE 0 END AS positive_rate,
+        step_sends.first_sent_at,
+        step_sends.last_sent_at
+      FROM step_sends
+      LEFT JOIN step_opens ON step_opens.position = step_sends.position
+      LEFT JOIN step_replies ON step_replies.position = step_sends.position
+      LEFT JOIN reply_times ON reply_times.position = step_sends.position
+      ORDER BY step_sends.position
+    `),
   ]);
   const sent = messageStats.rows[0].sent || 0;
   const outreach = outreachStats.rows[0];
@@ -643,6 +737,7 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
     opens: opens.rows[0],
     replies: replies.rows[0],
     outreach,
+    stepPerformance: stepPerformance.rows,
     rates: {
       openRate: sent ? Math.round((opens.rows[0].unique / sent) * 100) : 0,
       replyRate: sent ? Math.round((replies.rows[0].total / sent) * 100) : 0,

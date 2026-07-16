@@ -325,6 +325,12 @@ function queueStatusHint(item) {
   return "";
 }
 
+function stepName(position) {
+  const number = Number(position || 0);
+  if (number <= 1) return "Первое письмо";
+  return `Follow-up ${number - 1}`;
+}
+
 function launchEmptyHint(result) {
   const plan = result.launchPlan || {};
   if (Number(plan.active_enrollments || 0) === 0 && Number(plan.paused_enrollments || 0) > 0) {
@@ -644,6 +650,40 @@ async function loadDashboard() {
     <p>Доля ответивших: <strong>${data.rates.outreachReplyRate}%</strong></p>
     <p>Доля позитивных ответов: <strong>${data.rates.positiveReplyRate}%</strong></p>
     <p class="muted">Метрики считаются по outreach, без прогрева и тестовых писем.</p>
+  `;
+  $("#stepPerformanceTable").innerHTML = `
+    <thead>
+      <tr>
+        <th>Шаг</th>
+        <th>Отправлено</th>
+        <th>Открытия</th>
+        <th>Ответы</th>
+        <th>Позитив</th>
+        <th>Негатив</th>
+        <th>Автоответы</th>
+        <th>Недоставки</th>
+        <th>Остановки</th>
+        <th>Время до ответа</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${data.stepPerformance?.length
+        ? data.stepPerformance.map((step) => `
+          <tr>
+            <td><strong>${esc(stepName(step.position))}</strong><br><span class="muted">шаг ${step.position}</span></td>
+            <td>${step.sent}<br><span class="muted">${step.contacts} контактов</span></td>
+            <td>${step.unique_opens}<br><span class="muted">${step.open_rate}%</span></td>
+            <td>${step.replied_dialogs}<br><span class="muted">${step.reply_rate}%</span></td>
+            <td>${step.positive_replies}<br><span class="muted">${step.positive_rate}%</span></td>
+            <td>${step.negative_replies}</td>
+            <td>${step.auto_replies}</td>
+            <td>${step.bounces}</td>
+            <td>${step.stopped_after_step}</td>
+            <td>${step.avg_hours_to_reply ? `${step.avg_hours_to_reply} ч` : "нет данных"}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="10" class="muted">Пока нет отправленных outreach-писем по шагам. После отправки первого письма или follow-up здесь появится статистика.</td></tr>`}
+    </tbody>
   `;
   renderSetupChecklist();
 }
