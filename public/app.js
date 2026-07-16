@@ -775,23 +775,23 @@ async function loadOutreachImports() {
 }
 
 const OUTREACH_MAPPING_FIELDS = [
-  ["email", "Email получателя"],
-  ["company", "Компания"],
-  ["contact_name", "Контакт"],
-  ["segment", "Сегмент"],
-  ["mailbox", "Почта отправителя"],
-  ["subject", "Тема первого письма"],
-  ["body", "Текст первого письма"],
-  ["send_after", "Отправить после"],
-  ["followup_1_subject", "Follow-up 1: тема"],
-  ["followup_1_body", "Follow-up 1: текст"],
-  ["followup_1_delay_days", "Follow-up 1: задержка дней"],
-  ["followup_2_subject", "Follow-up 2: тема"],
-  ["followup_2_body", "Follow-up 2: текст"],
-  ["followup_2_delay_days", "Follow-up 2: задержка дней"],
-  ["followup_3_subject", "Follow-up 3: тема"],
-  ["followup_3_body", "Follow-up 3: текст"],
-  ["followup_3_delay_days", "Follow-up 3: задержка дней"],
+  ["email", "Почта получателя", "Обязательно: на этот адрес уйдет письмо.", true],
+  ["subject", "Тема письма", "Обязательно: тема первого письма.", true],
+  ["body", "Текст письма", "Обязательно: готовый текст первого письма.", true],
+  ["company", "Компания", "Название компании для таблиц и анализа.", false],
+  ["contact_name", "Контакт", "Имя человека, если есть.", false],
+  ["segment", "Сегмент", "Группа лидов или ниша.", false],
+  ["mailbox", "Почта отправителя", "Какой твой ящик использовать для этой строки.", false],
+  ["send_after", "Отправить после", "Дата/время, раньше которого письмо не уйдет.", false],
+  ["followup_1_subject", "Фоллоуап 1: тема", "Тема первого follow-up.", false],
+  ["followup_1_body", "Фоллоуап 1: текст", "Текст первого follow-up.", false],
+  ["followup_1_delay_days", "Фоллоуап 1: задержка дней", "Через сколько дней отправлять.", false],
+  ["followup_2_subject", "Фоллоуап 2: тема", "Тема второго follow-up.", false],
+  ["followup_2_body", "Фоллоуап 2: текст", "Текст второго follow-up.", false],
+  ["followup_2_delay_days", "Фоллоуап 2: задержка дней", "Через сколько дней отправлять.", false],
+  ["followup_3_subject", "Фоллоуап 3: тема", "Тема третьего follow-up.", false],
+  ["followup_3_body", "Фоллоуап 3: текст", "Текст третьего follow-up.", false],
+  ["followup_3_delay_days", "Фоллоуап 3: задержка дней", "Через сколько дней отправлять.", false],
 ];
 
 function currentOutreachMapping() {
@@ -813,20 +813,36 @@ function renderOutreachImportPreview() {
     `<option value="">Не использовать</option>`,
     ...preview.columns.map((column) => `<option value="${column.index}" ${String(column.index) === String(selected) ? "selected" : ""}>${esc(column.name)}</option>`),
   ].join("");
-  $("#outreachColumnMapping").innerHTML = OUTREACH_MAPPING_FIELDS.map(([field, label]) => `
-    <label class="field">
-      <span>${esc(label)}</span>
+  const mappingField = ([field, label, hint, required]) => `
+    <label class="field mapping-field ${required ? "mapping-field-required" : ""}">
+      <span>${esc(label)}${required ? " *" : ""}</span>
       <select data-outreach-map-field="${field}">
         ${columnOptions(preview.mapping[field])}
       </select>
+      <small>${esc(hint)}</small>
     </label>
-  `).join("");
+  `;
+  $("#outreachColumnMapping").innerHTML = `
+    <section class="mapping-section">
+      <h3>Обязательные поля</h3>
+      <div class="mapping-grid">${OUTREACH_MAPPING_FIELDS.filter(([, , , required]) => required).map(mappingField).join("")}</div>
+    </section>
+    <details class="mapping-section" open>
+      <summary>Дополнительные поля</summary>
+      <div class="mapping-grid">${OUTREACH_MAPPING_FIELDS.filter(([, , , required]) => !required).map(mappingField).join("")}</div>
+    </details>
+  `;
   const blocked = preview.errors.filter((item) => item.status === "blocked").length;
+  const requiredMissing = OUTREACH_MAPPING_FIELDS
+    .filter(([, , , required]) => required)
+    .filter(([field]) => preview.mapping[field] === "" || preview.mapping[field] === undefined)
+    .map(([, label]) => label);
   $("#outreachPreviewSummary").innerHTML = `
     <span>Файл: <strong>${esc(preview.fileName)}</strong></span>
     <span>Строк: <strong>${preview.rowsTotal}</strong></span>
     <span>Первые ошибки: <strong>${blocked}</strong></span>
-    <span>Если меняешь колонки, обнови предпросмотр перед созданием черновиков.</span>
+    ${requiredMissing.length ? `<span class="warn-text">Не выбраны обязательные поля: ${esc(requiredMissing.join(", "))}</span>` : "<span>Обязательные поля распознаны.</span>"}
+    <span>Если меняешь списки, нажми “Показать предпросмотр” еще раз перед созданием черновиков.</span>
   `;
   $("#outreachPreviewTable").innerHTML = `
     <thead><tr><th>Строка</th><th>Email</th><th>Компания</th><th>Тема</th><th>Текст</th><th>Статус</th></tr></thead>

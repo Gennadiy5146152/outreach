@@ -812,6 +812,58 @@ h2 {
   gap: 10px;
 }
 
+.mapping-help {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 116, 95, 0.22);
+  border-radius: 8px;
+  background: #f4fbf8;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mapping-help strong {
+  color: var(--ink);
+}
+
+.mapping-section {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.mapping-section h3,
+.mapping-section summary {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.mapping-section summary {
+  cursor: pointer;
+}
+
+.mapping-field {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.mapping-field-required {
+  border-color: rgba(22, 116, 95, 0.32);
+  background: #f8fcfa;
+}
+
+.mapping-field small {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .inline-edit {
   margin-top: 8px;
 }
