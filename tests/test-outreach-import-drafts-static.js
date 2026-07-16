@@ -7,6 +7,7 @@ const csv = fs.readFileSync("src/services/csv.js", "utf8");
 const migration = fs.readFileSync("db/migrations/003_outreach_imports.sql", "utf8");
 const sequenceMigration = fs.readFileSync("db/migrations/004_outreach_draft_sequences.sql", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
+const stopService = fs.readFileSync("src/services/outreach-stop.js", "utf8");
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
 for (const expected of [
@@ -153,13 +154,16 @@ for (const expected of [
   "outreach_draft_id, outreach_step_id",
   "UPDATE outreach_draft_steps",
   "UPDATE outreach_drafts SET status = 'active_sequence'",
-  "requires_approval = true",
   "approve_or_pause_followup",
   "AND status <> 'blocked'",
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should support outreach draft sequences: ${expected}`);
   }
+}
+
+if (!worker.includes("holdOutreachForScope") || !stopService.includes("requires_approval = true")) {
+  throw new Error("worker should hold outreach follow-up through the shared stop-scope service");
 }
 
 console.log("OK: outreach import drafts static test passed");

@@ -13,6 +13,7 @@ import { sendMail, verifyImap, verifySmtp } from "./services/mail.js";
 import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, saveRuntimeSettings } from "./services/runtime.js";
+import { cancelOutreachForScope } from "./services/outreach-stop.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
@@ -451,6 +452,7 @@ app.get("/api/settings", asyncHandler(async (_req, res) => {
       publicTrackingUrl: runtime.publicTrackingUrl,
       attachmentDir: env.attachmentDir,
       maxAttachmentMb: runtime.maxAttachmentMb,
+      outreachStopScope: runtime.outreachStopScope,
     },
     settings: Object.fromEntries(settings.rows.map((item) => [item.key, item.value])),
   });
@@ -460,6 +462,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
   const mailDryRun = toBool(req.body.mailDryRun);
   const publicTrackingUrl = String(req.body.publicTrackingUrl || "").trim();
   const maxAttachmentMb = Number(req.body.maxAttachmentMb || env.maxAttachmentMb);
+  const outreachStopScope = cleanText(req.body.outreachStopScope);
 
   if (!Number.isFinite(maxAttachmentMb) || maxAttachmentMb < 1 || maxAttachmentMb > 200) {
     return res.status(400).json({ error: "max_attachment_mb_must_be_between_1_and_200" });
@@ -469,6 +472,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
     dryRun: mailDryRun,
     publicTrackingUrl,
     maxAttachmentMb,
+    outreachStopScope,
   });
 
   res.json({
@@ -477,6 +481,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
       publicTrackingUrl: runtime.publicTrackingUrl,
       attachmentDir: env.attachmentDir,
       maxAttachmentMb: runtime.maxAttachmentMb,
+      outreachStopScope: runtime.outreachStopScope,
     },
     restartRequired: [],
     message: "Настройки сохранены в БД и применяются без пересоздания контейнеров.",
@@ -1857,6 +1862,8 @@ app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (
     not_target: "sequence_stopped_not_target",
     bounce: "sequence_stopped_after_bounce",
   }[classification] || "approve_or_pause_followup";
+  const runtime = await getRuntimeSettings();
+  const stopScope = runtime.outreachStopScope;
 
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
@@ -1892,28 +1899,15 @@ app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (
         [conversation.lead_id, classification],
       );
       let cancelledQueue = 0;
+      let affectedLeads = 1;
       if (STOPPING_REPLY_CLASSIFICATIONS.has(classification)) {
-        const cancelled = await client.query(
-          `
-            UPDATE sending_queue
-            SET status = 'cancelled',
-                last_error = 'Отменено после ручной классификации ответа',
-                updated_at = now()
-            WHERE lead_id = $1
-              AND outreach_draft_id IS NOT NULL
-              AND status IN ('pending','retrying')
-            RETURNING outreach_step_id
-          `,
-          [conversation.lead_id],
-        );
-        cancelledQueue = cancelled.rowCount;
-        const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
-        if (stepIds.length) {
-          await client.query(
-            "UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])",
-            [stepIds],
-          );
-        }
+        const scoped = await cancelOutreachForScope(client, {
+          leadId: conversation.lead_id,
+          scope: stopScope,
+          reason: "Отменено после ручной классификации ответа",
+        });
+        cancelledQueue = scoped.cancelledQueue;
+        affectedLeads = scoped.affectedLeads;
       }
       if (classification === "unsubscribe") {
         await client.query(
@@ -1922,7 +1916,7 @@ app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (
         );
       }
       await client.query("COMMIT");
-      return { conversation: updatedConversation.rows[0], message: updatedMessage.rows[0] || null, cancelledQueue };
+      return { conversation: updatedConversation.rows[0], message: updatedMessage.rows[0] || null, cancelledQueue, affectedLeads, stopScope };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -1940,6 +1934,8 @@ app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (
       nextStatus,
       nextAction,
       cancelledQueue: result.cancelledQueue,
+      affectedLeads: result.affectedLeads,
+      stopScope,
       reason: STOPPING_REPLY_CLASSIFICATIONS.has(classification) ? classification : "manual_classification",
     },
   });

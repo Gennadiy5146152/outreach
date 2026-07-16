@@ -297,6 +297,7 @@ function nextActionLabel(value) {
     manual_reply_sent_sequence_stopped: "ручной ответ отправлен, цепочка остановлена",
     manual_reply_sent_followup_allowed: "ручной ответ отправлен, follow-up разрешен",
     followup_postponed_needs_approval: "follow-up перенесен и ждет ручного разрешения",
+    company_scope_reply_review: "ответ получен у связанного контакта, нужно решить по цепочке",
     reply_manually_or_stop: "ответить вручную или оставить цепочку остановленной",
     sequence_stopped_after_negative_reply: "цепочка остановлена после отказа",
     decide_followup_after_auto_reply: "решить, переносить или продолжать follow-up после автоответа",
@@ -366,6 +367,9 @@ function eventSummary(event) {
   if (payload.nextAction) parts.push(`дальше: ${nextActionLabel(payload.nextAction)}`);
   if (payload.cancelledQueue !== undefined) parts.push(`отменено писем: ${payload.cancelledQueue}`);
   if (payload.approvedQueue !== undefined) parts.push(`разрешено писем: ${payload.approvedQueue}`);
+  if (payload.heldQueue !== undefined) parts.push(`поставлено на ручное решение: ${payload.heldQueue}`);
+  if (payload.affectedLeads !== undefined) parts.push(`затронуто лидов: ${payload.affectedLeads}`);
+  if (payload.stopScope) parts.push(`охват: ${stopScopeLabel(payload.stopScope)}`);
   if (payload.delayedQueue !== undefined) parts.push(`перенесено писем: ${payload.delayedQueue}`);
   if (payload.delayDays !== undefined) parts.push(`на дней: ${payload.delayDays}`);
   if (payload.nextScheduledAt) parts.push(`следующая отправка: ${fmtDate(payload.nextScheduledAt)}`);
@@ -378,6 +382,14 @@ function eventSummary(event) {
   if (payload.provider) parts.push(`провайдер: ${payload.provider}`);
   if (payload.status) parts.push(`статус: ${statusLabel(payload.status)}`);
   return parts.join(" · ") || "Подробности доступны в деталях.";
+}
+
+function stopScopeLabel(value) {
+  return {
+    contact_only: "только этот email",
+    same_domain: "весь домен",
+    same_company: "вся компания",
+  }[value] || value || "";
 }
 
 function pill(value) {
@@ -1868,6 +1880,14 @@ async function loadSettings() {
       <label class="settings-row">
         <span>Лимит вложений</span>
         <input name="maxAttachmentMb" type="number" min="1" max="200" step="1" value="${settings.runtime.maxAttachmentMb}" />
+      </label>
+      <label class="settings-row">
+        <span>После ответа остановить</span>
+        <select name="outreachStopScope">
+          <option value="contact_only" ${settings.runtime.outreachStopScope === "contact_only" ? "selected" : ""}>Только этот email</option>
+          <option value="same_domain" ${settings.runtime.outreachStopScope === "same_domain" ? "selected" : ""}>Всех с тем же доменом</option>
+          <option value="same_company" ${settings.runtime.outreachStopScope === "same_company" ? "selected" : ""}>Всех из той же компании</option>
+        </select>
       </label>
       <div class="settings-footer">
         <p>Вложения: ${esc(settings.runtime.attachmentDir)}</p>
