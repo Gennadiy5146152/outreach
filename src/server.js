@@ -290,6 +290,15 @@ function parseMapping(value) {
   }
 }
 
+function csvCell(value) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
+
+function optionalDateFilter(value) {
+  const date = parseOptionalDate(value);
+  return date ? date.toISOString() : "";
+}
+
 function outreachStepsFromRow(row) {
   const items = [
     {
@@ -1414,34 +1423,72 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.get("/api/outreach/conversations/export.jsonl", asyncHandler(async (req, res) => {
+async function outreachConversationExportRows(req) {
   const status = req.query.status || "";
   const classification = req.query.classification || "";
   const onlyReview = toBool(req.query.review);
+  const onlyReplied = toBool(req.query.replied);
+  const segment = req.query.segment || "";
+  const mailboxId = isUuid(req.query.mailbox_id) ? req.query.mailbox_id : "";
+  const dateFrom = optionalDateFilter(req.query.date_from);
+  const dateTo = optionalDateFilter(req.query.date_to);
   const conversations = (await query(
     `
-      SELECT oc.*, l.company, l.contact_name, l.segment
+      SELECT oc.*,
+             l.company,
+             l.contact_name,
+             l.position,
+             l.website,
+             l.segment,
+             l.city,
+             l.notes,
+             stats.messages_total,
+             stats.outbound_total,
+             stats.inbound_total,
+             stats.first_sent_at,
+             stats.first_reply_at,
+             stats.last_message_at AS calculated_last_message_at
       FROM outreach_conversations oc
       LEFT JOIN leads l ON l.id = oc.lead_id
+      LEFT JOIN LATERAL (
+        SELECT
+          count(*)::int AS messages_total,
+          count(*) FILTER (WHERE direction = 'outbound')::int AS outbound_total,
+          count(*) FILTER (WHERE direction = 'inbound')::int AS inbound_total,
+          min(sent_at) FILTER (WHERE direction = 'outbound') AS first_sent_at,
+          min(received_at) FILTER (WHERE direction = 'inbound') AS first_reply_at,
+          max(COALESCE(received_at, sent_at, created_at)) AS last_message_at
+        FROM messages msg
+        WHERE msg.lead_id = oc.lead_id
+          AND msg.type <> 'warmup'
+          AND ($6 = '' OR msg.mailbox_id = $6::uuid)
+      ) stats ON true
       WHERE ($1 = '' OR oc.status = $1)
         AND ($2 = '' OR oc.classification = $2)
         AND ($3 = false OR oc.status IN ('waiting_reply_review','manual_reply_needed'))
+        AND ($4 = '' OR l.segment = $4)
+        AND ($5 = false OR COALESCE(stats.inbound_total, 0) > 0)
+        AND ($7 = '' OR COALESCE(stats.last_message_at, oc.last_message_at, oc.updated_at, oc.created_at) >= $7::timestamptz)
+        AND ($8 = '' OR COALESCE(stats.last_message_at, oc.last_message_at, oc.updated_at, oc.created_at) <= $8::timestamptz)
+        AND ($6 = '' OR COALESCE(stats.messages_total, 0) > 0)
       ORDER BY COALESCE(oc.last_message_at, oc.updated_at, oc.created_at) DESC
       LIMIT 1000
     `,
-    [status, classification, onlyReview],
+    [status, classification, onlyReview, segment, onlyReplied, mailboxId, dateFrom, dateTo],
   )).rows;
   const leadIds = conversations.map((item) => item.lead_id).filter(Boolean);
   const messages = leadIds.length
     ? (await query(
       `
-        SELECT *
-        FROM messages
-        WHERE lead_id = ANY($1::uuid[])
-          AND type <> 'warmup'
-        ORDER BY COALESCE(received_at, sent_at, created_at) ASC
+        SELECT msg.*, m.email AS mailbox_email
+        FROM messages msg
+        LEFT JOIN mailboxes m ON m.id = msg.mailbox_id
+        WHERE msg.lead_id = ANY($1::uuid[])
+          AND msg.type <> 'warmup'
+          AND ($2 = '' OR msg.mailbox_id = $2::uuid)
+        ORDER BY COALESCE(msg.received_at, msg.sent_at, msg.created_at) ASC
       `,
-      [leadIds],
+      [leadIds, mailboxId],
     )).rows
     : [];
   const byLead = new Map();
@@ -1450,13 +1497,96 @@ app.get("/api/outreach/conversations/export.jsonl", asyncHandler(async (req, res
     list.push(message);
     byLead.set(message.lead_id, list);
   }
-  const lines = conversations.map((conversation) => JSON.stringify({
-    conversation,
-    messages: byLead.get(conversation.lead_id) || [],
+  return conversations.map((conversation) => ({
+    lead: {
+      email: conversation.email,
+      company: conversation.company,
+      contact: conversation.contact_name,
+      position: conversation.position,
+      website: conversation.website,
+      segment: conversation.segment,
+      city: conversation.city,
+      notes: conversation.notes,
+    },
+    conversation: {
+      id: conversation.id,
+      status: conversation.status,
+      classification: conversation.classification,
+      next_action: conversation.next_action,
+      import_id: conversation.import_id,
+      campaign_id: conversation.campaign_id,
+      messages_total: conversation.messages_total || 0,
+      outbound_total: conversation.outbound_total || 0,
+      inbound_total: conversation.inbound_total || 0,
+      first_sent_at: conversation.first_sent_at,
+      first_reply_at: conversation.first_reply_at,
+      last_message_at: conversation.calculated_last_message_at || conversation.last_message_at,
+      ai_summary: conversation.ai_summary,
+    },
+    messages: (byLead.get(conversation.lead_id) || []).map((message) => ({
+      direction: message.direction,
+      type: message.type,
+      status: message.status,
+      subject: message.subject,
+      body: message.body_text,
+      mailbox: message.mailbox_email,
+      sent_at: message.sent_at,
+      received_at: message.received_at,
+      classification: message.reply_classification,
+    })),
   }));
+}
+
+app.get("/api/outreach/conversations/export.jsonl", asyncHandler(async (req, res) => {
+  const rows = await outreachConversationExportRows(req);
+  const lines = rows.map((row) => JSON.stringify(row));
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=\"outreach-conversations.jsonl\"");
-  res.send(`${lines.join("\n")}\n`);
+  res.send(`${lines.join("\n")}${lines.length ? "\n" : ""}`);
+}));
+
+app.get("/api/outreach/conversations/export.json", asyncHandler(async (req, res) => {
+  const rows = await outreachConversationExportRows(req);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=\"outreach-conversations.json\"");
+  res.send(JSON.stringify(rows, null, 2));
+}));
+
+app.get("/api/outreach/conversations/export.csv", asyncHandler(async (req, res) => {
+  const rows = await outreachConversationExportRows(req);
+  const header = [
+    "email",
+    "company",
+    "contact",
+    "segment",
+    "status",
+    "classification",
+    "messages_total",
+    "outbound_total",
+    "inbound_total",
+    "first_sent_at",
+    "first_reply_at",
+    "last_message_at",
+    "messages_json",
+  ];
+  const body = rows.map((row) => [
+    row.lead.email,
+    row.lead.company,
+    row.lead.contact,
+    row.lead.segment,
+    row.conversation.status,
+    row.conversation.classification,
+    row.conversation.messages_total,
+    row.conversation.outbound_total,
+    row.conversation.inbound_total,
+    row.conversation.first_sent_at,
+    row.conversation.first_reply_at,
+    row.conversation.last_message_at,
+    JSON.stringify(row.messages),
+  ].map(csvCell).join(","));
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=\"outreach-conversations.csv\"");
+  res.send([header.join(","), ...body].join("\n"));
 }));
 
 app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {

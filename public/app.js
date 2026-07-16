@@ -494,6 +494,7 @@ function switchView(view) {
     outreachDrafts: "Черновики",
     review: "Требуют решения",
     conversations: "Диалоги",
+    aiExport: "Экспорт для ИИ",
     leads: "База",
     mailboxes: "1. Почта",
     campaigns: "4. Рассылка",
@@ -881,6 +882,7 @@ async function loadSegments() {
     state.segments = await api("/api/segments");
     renderLeadSegmentFilter();
     renderSegmentPickers();
+    renderAiExportFilters();
   } catch (error) {
     state.segments = [];
     console.warn("Не удалось загрузить сегменты", error);
@@ -1183,6 +1185,7 @@ async function loadMailboxes() {
     .join("")
     : `<article class="card"><strong>Почтовых ящиков пока нет</strong><p>Добавь первый ящик слева. Пароль хранится только в .env, в форму вставляется имя переменной.</p></article>`;
   renderSetupChecklist();
+  renderAiExportFilters();
 }
 
 async function loadCampaigns() {
@@ -1452,6 +1455,60 @@ function reviewQuery() {
 function updateReviewExportLink() {
   const query = reviewQuery();
   $("#reviewExportLink").setAttribute("href", `/api/outreach/conversations/export.jsonl?${query}`);
+}
+
+function aiExportQuery() {
+  const params = new URLSearchParams();
+  const status = $("#aiExportStatus")?.value || "";
+  const classification = $("#aiExportClassification")?.value || "";
+  const segment = $("#aiExportSegment")?.value || "";
+  const mailboxId = $("#aiExportMailbox")?.value || "";
+  const dateFrom = $("#aiExportDateFrom")?.value || "";
+  const dateTo = $("#aiExportDateTo")?.value || "";
+  if (status) params.set("status", status);
+  if (classification) params.set("classification", classification);
+  if (segment) params.set("segment", segment);
+  if (mailboxId) params.set("mailbox_id", mailboxId);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  if ($("#aiExportReviewOnly")?.checked) params.set("review", "true");
+  if ($("#aiExportRepliedOnly")?.checked) params.set("replied", "true");
+  return params.toString();
+}
+
+function renderAiExportFilters() {
+  const segmentSelect = $("#aiExportSegment");
+  const mailboxSelect = $("#aiExportMailbox");
+  if (segmentSelect) {
+    const current = segmentSelect.value;
+    segmentSelect.innerHTML = `<option value="">Все сегменты</option>${state.segments.map((segment) => `<option value="${esc(segment)}">${esc(segment)}</option>`).join("")}`;
+    if (state.segments.includes(current)) segmentSelect.value = current;
+  }
+  if (mailboxSelect) {
+    const current = mailboxSelect.value;
+    mailboxSelect.innerHTML = `<option value="">Все ящики</option>${state.mailboxes.map((mailbox) => `<option value="${mailbox.id}">${esc(mailbox.email)}</option>`).join("")}`;
+    if (state.mailboxes.some((mailbox) => mailbox.id === current)) mailboxSelect.value = current;
+  }
+  updateAiExportLinks();
+}
+
+function updateAiExportLinks() {
+  const query = aiExportQuery();
+  const suffix = query ? `?${query}` : "";
+  $("#aiExportJsonlLink")?.setAttribute("href", `/api/outreach/conversations/export.jsonl${suffix}`);
+  $("#aiExportJsonLink")?.setAttribute("href", `/api/outreach/conversations/export.json${suffix}`);
+  $("#aiExportCsvLink")?.setAttribute("href", `/api/outreach/conversations/export.csv${suffix}`);
+  const filters = [];
+  if ($("#aiExportStatus")?.value) filters.push(`статус: ${statusLabel($("#aiExportStatus").value)}`);
+  if ($("#aiExportClassification")?.value) filters.push(`класс: ${statusLabel($("#aiExportClassification").value)}`);
+  if ($("#aiExportSegment")?.value) filters.push(`сегмент: ${$("#aiExportSegment").value}`);
+  if ($("#aiExportMailbox")?.value) filters.push(`ящик: ${$("#aiExportMailbox").selectedOptions[0]?.textContent || ""}`);
+  if ($("#aiExportDateFrom")?.value || $("#aiExportDateTo")?.value) filters.push("по датам");
+  if ($("#aiExportReviewOnly")?.checked) filters.push("только требуют решения");
+  if ($("#aiExportRepliedOnly")?.checked) filters.push("только с ответами");
+  $("#aiExportSummary").innerHTML = filters.length
+    ? `<span>Фильтры: <strong>${esc(filters.join(" · "))}</strong></span>`
+    : `<span>Фильтры не выбраны: выгрузятся все outreach-диалоги без прогрева.</span>`;
 }
 
 function classificationSelect(conversation) {
@@ -2292,6 +2349,19 @@ document.body.addEventListener("click", (event) => {
 });
 
 $("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewConversations());
+
+[
+  "aiExportStatus",
+  "aiExportClassification",
+  "aiExportSegment",
+  "aiExportMailbox",
+  "aiExportDateFrom",
+  "aiExportDateTo",
+  "aiExportReviewOnly",
+  "aiExportRepliedOnly",
+].forEach((id) => {
+  document.getElementById(id)?.addEventListener("change", updateAiExportLinks);
+});
 
 document.body.addEventListener("click", (event) => {
   const openId = event.target.dataset.openConversation;
