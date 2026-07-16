@@ -5,6 +5,7 @@ const state = {
   outreachImports: [],
   outreachDrafts: [],
   selectedOutreachDraftIds: new Set(),
+  outreachDraftLaunchReview: null,
   outreachImportPreview: null,
   outreachConversations: [],
   reviewConversations: [],
@@ -739,6 +740,52 @@ function renderOutreachImportPreview() {
   $("#createOutreachDraftsBtn").disabled = false;
 }
 
+function selectedOutreachDraftSignature(draftIds = [...state.selectedOutreachDraftIds]) {
+  return [...draftIds].sort().join("|");
+}
+
+function clearOutreachDraftLaunchReview() {
+  state.outreachDraftLaunchReview = null;
+  $("#outreachDraftLaunchReview").hidden = true;
+  $("#outreachDraftLaunchSummary").innerHTML = "";
+  $("#outreachDraftLaunchTable").innerHTML = "";
+}
+
+function renderOutreachDraftLaunchReview() {
+  const review = state.outreachDraftLaunchReview;
+  if (!review) {
+    clearOutreachDraftLaunchReview();
+    return;
+  }
+  $("#outreachDraftLaunchReview").hidden = false;
+  $("#outreachDraftLaunchSummary").innerHTML = `
+    <span>Выбрано: <strong>${review.stats.selected}</strong></span>
+    <span>Можно запускать: <strong>${review.ok ? "да" : "нет"}</strong></span>
+    <span>Ошибок: <strong>${review.errors.length}</strong></span>
+    <span>Предупреждений: <strong>${review.warnings.length}</strong></span>
+  `;
+  $("#outreachDraftLaunchTable").innerHTML = `
+    <thead><tr><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Mailbox</th><th>Когда</th><th>Что проверить</th></tr></thead>
+    <tbody>
+      ${(review.items || []).length
+        ? review.items.map((item) => `
+          <tr>
+            <td>${pill(item.status)}</td>
+            <td><strong>${esc(item.email)}</strong><br><span class="muted">${esc(item.company || "Без компании")} ${item.contact_name ? `· ${esc(item.contact_name)}` : ""}</span></td>
+            <td><strong>${esc(item.subject || "Без темы")}</strong><br><span class="muted">${esc(item.body_preview || "")}${item.body_preview && item.body_preview.length >= 180 ? "..." : ""}</span><br><span class="muted">Follow-up: ${Number(item.followup_count || 0)}</span></td>
+            <td>${esc(item.mailbox || "нет готового mailbox")}</td>
+            <td>${item.scheduled_at ? fmtDate(item.scheduled_at) : "при ближайшем запуске"}</td>
+            <td>
+              ${item.errors.length ? `<strong>${esc(item.errors.join("; "))}</strong>` : "<span>Блокирующих ошибок нет</span>"}
+              ${item.warnings.length ? `<br><span class="muted">${esc(item.warnings.join("; "))}</span>` : ""}
+            </td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="6" class="muted">Выбранные черновики не найдены.</td></tr>`}
+    </tbody>
+  `;
+}
+
 async function loadOutreachDrafts() {
   if (!$("#outreachDraftsTable")) return;
   if (!state.mailboxes.length) {
@@ -747,7 +794,11 @@ async function loadOutreachDrafts() {
   const status = encodeURIComponent($("#outreachDraftStatus")?.value || "");
   state.outreachDrafts = await api(`/api/outreach/drafts?status=${status}`);
   const visibleIds = new Set(state.outreachDrafts.map((draft) => draft.id));
+  const previousSignature = selectedOutreachDraftSignature();
   state.selectedOutreachDraftIds = new Set([...state.selectedOutreachDraftIds].filter((id) => visibleIds.has(id)));
+  if (state.outreachDraftLaunchReview && previousSignature !== selectedOutreachDraftSignature()) {
+    clearOutreachDraftLaunchReview();
+  }
   const ready = state.outreachDrafts.filter((draft) => draft.status === "ready").length;
   const blocked = state.outreachDrafts.filter((draft) => draft.status === "blocked").length;
   const readySelected = state.outreachDrafts
@@ -1986,7 +2037,10 @@ document.body.addEventListener("change", (event) => {
   }
 });
 
-$("#outreachDraftStatus").addEventListener("change", () => loadOutreachDrafts());
+$("#outreachDraftStatus").addEventListener("change", () => {
+  clearOutreachDraftLaunchReview();
+  loadOutreachDrafts();
+});
 
 async function preflightOutreachDrafts(draftIds) {
   return api("/api/outreach/drafts/preflight", {
@@ -1996,8 +2050,47 @@ async function preflightOutreachDrafts(draftIds) {
   });
 }
 
-async function startOutreachDrafts(draftIds) {
+async function reviewOutreachDrafts(draftIds) {
+  const result = await preflightOutreachDrafts(draftIds);
+  state.outreachDraftLaunchReview = {
+    ...result,
+    signature: selectedOutreachDraftSignature(draftIds),
+  };
+  renderOutreachDraftLaunchReview();
+  return result;
+}
+
+async function startOutreachDrafts(draftIds, options = {}) {
+  if (options.requireReview) {
+    const signature = selectedOutreachDraftSignature(draftIds);
+    if (!state.outreachDraftLaunchReview || state.outreachDraftLaunchReview.signature !== signature) {
+      const review = await reviewOutreachDrafts(draftIds);
+      setActionResult({
+        status: "warn",
+        title: "Проверка перед запуском",
+        message: review.ok
+          ? "Список писем подготовлен ниже. Проверь его и нажми “Запустить выбранные” еще раз."
+          : `Запуск остановлен: ошибок ${review.errors.length}, предупреждений ${review.warnings.length}. Исправь ошибки в таблице проверки.`,
+        details: review,
+      });
+      return;
+    }
+    if (!state.outreachDraftLaunchReview.ok) {
+      setActionResult({
+        status: "warn",
+        title: "Проверка перед запуском",
+        message: `Запуск остановлен: ошибок ${state.outreachDraftLaunchReview.errors.length}. Исправь их и проверь выбранные заново.`,
+        details: state.outreachDraftLaunchReview,
+      });
+      return;
+    }
+  }
   const preflight = await preflightOutreachDrafts(draftIds);
+  state.outreachDraftLaunchReview = {
+    ...preflight,
+    signature: selectedOutreachDraftSignature(draftIds),
+  };
+  renderOutreachDraftLaunchReview();
   if (!preflight.ok) {
     setActionResult({
       status: "warn",
@@ -2013,6 +2106,7 @@ async function startOutreachDrafts(draftIds) {
     body: JSON.stringify({ draft_ids: draftIds, mode: "auto" }),
   });
   state.selectedOutreachDraftIds.clear();
+  clearOutreachDraftLaunchReview();
   await Promise.all([loadOutreachDrafts(), loadQueue()]);
   switchView("queue");
   setActionResult({
@@ -2029,6 +2123,7 @@ $("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction(
 }, async () => {
   const draftIds = [...state.selectedOutreachDraftIds];
   if (!draftIds.length) {
+    clearOutreachDraftLaunchReview();
     setActionResult({
       status: "warn",
       title: "Проверка выбранных черновиков",
@@ -2036,7 +2131,7 @@ $("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction(
     });
     return;
   }
-  const result = await preflightOutreachDrafts(draftIds);
+  const result = await reviewOutreachDrafts(draftIds);
   setActionResult({
     status: result.ok ? "success" : "warn",
     title: "Проверка выбранных черновиков",
@@ -2053,6 +2148,7 @@ $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
 }, async () => {
   const draftIds = [...state.selectedOutreachDraftIds];
   if (!draftIds.length) {
+    clearOutreachDraftLaunchReview();
     setActionResult({
       status: "warn",
       title: "Запуск выбранных черновиков",
@@ -2060,7 +2156,7 @@ $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
     });
     return;
   }
-  await startOutreachDrafts(draftIds);
+  await startOutreachDrafts(draftIds, { requireReview: true });
 }));
 
 document.body.addEventListener("change", (event) => {
@@ -2068,6 +2164,7 @@ document.body.addEventListener("change", (event) => {
     state.selectedOutreachDraftIds = event.target.checked
       ? new Set(state.outreachDrafts.filter((draft) => draft.status === "ready").map((draft) => draft.id))
       : new Set();
+    clearOutreachDraftLaunchReview();
     loadOutreachDrafts();
     return;
   }
@@ -2075,6 +2172,7 @@ document.body.addEventListener("change", (event) => {
   if (!draftId) return;
   if (event.target.checked) state.selectedOutreachDraftIds.add(draftId);
   else state.selectedOutreachDraftIds.delete(draftId);
+  clearOutreachDraftLaunchReview();
   loadOutreachDrafts();
 });
 

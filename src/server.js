@@ -1054,10 +1054,13 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
   const [drafts, readyMailboxes] = await Promise.all([
     query(
       `
-        SELECT d.id, d.to_email, d.company, d.status, d.error_reason, d.mailbox_id,
+        SELECT d.id, d.to_email, d.company, d.contact_name, d.subject, d.body_text,
+               d.send_after, d.status, d.error_reason, d.mailbox_id,
                m.email AS mailbox_email, m.is_active AS mailbox_active,
                m.smtp_verified_at, m.imap_verified_at,
                first_step.id AS first_step_id,
+               first_step.subject AS first_step_subject,
+               first_step.body_text AS first_step_body_text,
                COALESCE(followups.followup_count, 0)::int AS followup_count,
                EXISTS (
                  SELECT 1
@@ -1080,18 +1083,21 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
       [draftIds],
     ),
     query(`
-      SELECT count(*)::int AS count
+      SELECT id, email
       FROM mailboxes
       WHERE is_active = true
         AND smtp_verified_at IS NOT NULL
         AND imap_verified_at IS NOT NULL
+      ORDER BY updated_at DESC, created_at ASC
     `),
   ]);
   const rows = drafts.rows;
   const foundIds = new Set(rows.map((row) => row.id));
   const errors = [];
   const warnings = [];
-  const fallbackMailboxes = Number(readyMailboxes.rows[0]?.count || 0);
+  const fallbackMailboxRows = readyMailboxes.rows;
+  const fallbackMailboxes = fallbackMailboxRows.length;
+  const itemIssues = new Map();
   const draftStatusText = {
     ready: "готово",
     blocked: "нужно исправить",
@@ -1105,19 +1111,28 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     if (!foundIds.has(draftId)) errors.push(`Черновик ${draftId} не найден.`);
   }
 
-  for (const draft of rows) {
+  for (const [index, draft] of rows.entries()) {
     const label = `${draft.company || "Без компании"} · ${draft.to_email}`;
-    if (draft.status !== "ready") errors.push(`${label}: статус “${draftStatusText[draft.status] || draft.status}”, запускать можно только готовые черновики.`);
-    if (!draft.first_step_id) errors.push(`${label}: нет первого письма.`);
-    if (draft.first_step_already_queued) errors.push(`${label}: первое письмо уже есть в очереди или уже отправлено.`);
+    const rowErrors = [];
+    const rowWarnings = [];
+    if (draft.status !== "ready") rowErrors.push(`статус “${draftStatusText[draft.status] || draft.status}”, запускать можно только готовые черновики`);
+    if (!draft.first_step_id) rowErrors.push("нет первого письма");
+    if (draft.first_step_already_queued) rowErrors.push("первое письмо уже есть в очереди или уже отправлено");
     if (draft.mailbox_id) {
-      if (!draft.mailbox_active) errors.push(`${label}: выбранный mailbox выключен.`);
-      if (!draft.smtp_verified_at) errors.push(`${label}: у выбранного mailbox не проверен SMTP.`);
-      if (!draft.imap_verified_at) errors.push(`${label}: у выбранного mailbox не проверен IMAP для ответов.`);
+      if (!draft.mailbox_active) rowErrors.push("выбранный mailbox выключен");
+      if (!draft.smtp_verified_at) rowErrors.push("у выбранного mailbox не проверен SMTP");
+      if (!draft.imap_verified_at) rowErrors.push("у выбранного mailbox не проверен IMAP для ответов");
     } else if (!fallbackMailboxes) {
-      errors.push(`${label}: mailbox не выбран, и нет активного mailbox с проверенными SMTP/IMAP.`);
+      rowErrors.push("mailbox не выбран, и нет активного mailbox с проверенными SMTP/IMAP");
     }
-    if (!draft.followup_count) warnings.push(`${label}: follow-up шаги не заполнены, будет отправлено только первое письмо.`);
+    if (!draft.followup_count) rowWarnings.push("follow-up шаги не заполнены, будет отправлено только первое письмо");
+    rowErrors.forEach((error) => errors.push(`${label}: ${error}.`));
+    rowWarnings.forEach((warning) => warnings.push(`${label}: ${warning}.`));
+    itemIssues.set(draft.id, {
+      mailbox: draft.mailbox_email || fallbackMailboxRows[index % Math.max(fallbackMailboxRows.length, 1)]?.email || "",
+      errors: rowErrors,
+      warnings: rowWarnings,
+    });
   }
 
   if (runtime.dryRun) warnings.push("Сейчас включен dry-run: письма попадут в очередь и будут показаны как отправленные без реальной отправки наружу.");
@@ -1126,6 +1141,24 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     ok: errors.length === 0,
     errors,
     warnings,
+    items: rows.map((row) => {
+      const issues = itemIssues.get(row.id) || { mailbox: row.mailbox_email || "", errors: [], warnings: [] };
+      return {
+        id: row.id,
+        email: row.to_email,
+        company: row.company,
+        contact_name: row.contact_name,
+        subject: row.first_step_subject || row.subject,
+        body_preview: String(row.first_step_body_text || row.body_text || "").slice(0, 180),
+        mailbox: issues.mailbox,
+        scheduled_at: row.send_after || null,
+        status: issues.errors.length ? "blocked" : "ready",
+        errors: issues.errors,
+        warnings: issues.warnings,
+        followup_count: row.followup_count,
+        first_step_already_queued: row.first_step_already_queued,
+      };
+    }),
     stats: {
       selected: draftIds.length,
       found: rows.length,
