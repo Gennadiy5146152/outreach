@@ -81,11 +81,26 @@ for (const expected of [
   "followup_1_subject",
   "followup_2_body",
   "фоллоуап 3 задержка",
+  "фоллоуап 1: тема",
+  "текст письма",
+  "почта получателя",
   "тема письма",
   "тело письма",
 ]) {
   if (!csv.includes(expected)) {
     throw new Error(`outreach row parser should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "Почта получателя",
+  "Почта отправителя",
+  "Тема письма",
+  "Текст письма",
+  "Фоллоуап 1: задержка дней",
+]) {
+  if (!server.includes(expected)) {
+    throw new Error(`outreach template should use Russian column title: ${expected}`);
   }
 }
 
