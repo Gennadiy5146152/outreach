@@ -5,6 +5,7 @@
   --muted: #65736c;
   --line: #dce4df;
   --accent: #16745f;
+  --accent-dark: #0f5f4d;
   --accent-soft: #e0f2ec;
   --danger: #b42318;
   --warn: #a15c07;
@@ -159,11 +160,16 @@ h2 {
   margin-bottom: 14px;
 }
 
-.header-actions,
-.panel-head > div {
+.header-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.panel-head > div:first-child:not(.lead-filters) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .view {

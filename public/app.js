@@ -386,7 +386,7 @@ function eventSummary(event) {
   if (payload.throttleMinutes !== undefined && payload.throttleMinutes > 0) parts.push(`пауза: ${payload.throttleMinutes} мин`);
   if (payload.pausedUntil) parts.push(`замедлен до: ${fmtDate(payload.pausedUntil)}`);
   if (payload.error) parts.push(`ошибка: ${payload.error}`);
-  if (payload.dryRun !== undefined) parts.push(`dry-run: ${payload.dryRun ? "да" : "нет"}`);
+  if (payload.dryRun !== undefined) parts.push(`безопасный режим: ${payload.dryRun ? "да" : "нет"}`);
   if (payload.provider) parts.push(`провайдер: ${payload.provider}`);
   if (payload.status) parts.push(`статус: ${statusLabel(payload.status)}`);
   return parts.join(" · ") || "Подробности доступны в деталях.";
@@ -583,7 +583,7 @@ function switchCampaignStep(step) {
 async function loadHealth() {
   const health = await api("/api/health");
   state.health = health;
-  $("#health").textContent = `OK · dry-run: ${health.dryRun ? "да" : "нет"} · tracking: ${health.publicTrackingUrl ? "on" : "off"}`;
+  $("#health").textContent = `OK · режим: ${health.dryRun ? "безопасный" : "реальная отправка"} · открытия: ${health.publicTrackingUrl ? "включены" : "выключены"}`;
   const runtimeModeText = $("#runtimeModeText");
   if (runtimeModeText) {
     runtimeModeText.textContent = health.dryRun
@@ -779,7 +779,7 @@ const OUTREACH_MAPPING_FIELDS = [
   ["company", "Компания"],
   ["contact_name", "Контакт"],
   ["segment", "Сегмент"],
-  ["mailbox", "Mailbox отправителя"],
+  ["mailbox", "Почта отправителя"],
   ["subject", "Тема первого письма"],
   ["body", "Текст первого письма"],
   ["send_after", "Отправить после"],
@@ -877,7 +877,7 @@ function renderOutreachDraftLaunchReview() {
     <span>Предупреждений: <strong>${review.warnings.length}</strong></span>
   `;
   $("#outreachDraftLaunchTable").innerHTML = `
-    <thead><tr><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Mailbox</th><th>Когда</th><th>Что проверить</th></tr></thead>
+    <thead><tr><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Почта отправителя</th><th>Когда</th><th>Что проверить</th></tr></thead>
     <tbody>
       ${(review.items || []).length
         ? review.items.map((item) => `
@@ -885,7 +885,7 @@ function renderOutreachDraftLaunchReview() {
             <td>${pill(item.status)}</td>
             <td><strong>${esc(item.email)}</strong><br><span class="muted">${esc(item.company || "Без компании")} ${item.contact_name ? `· ${esc(item.contact_name)}` : ""}</span></td>
             <td><strong>${esc(item.subject || "Без темы")}</strong><br><span class="muted">${esc(item.body_preview || "")}${item.body_preview && item.body_preview.length >= 180 ? "..." : ""}</span><br><span class="muted">Follow-up: ${Number(item.followup_count || 0)}</span></td>
-            <td>${esc(item.mailbox || "нет готового mailbox")}</td>
+            <td>${esc(item.mailbox || "нет готовой почты")}</td>
             <td>${item.scheduled_at ? fmtDate(item.scheduled_at) : "при ближайшем запуске"}</td>
             <td>
               ${item.errors.length ? `<strong>${esc(item.errors.join("; "))}</strong>` : "<span>Блокирующих ошибок нет</span>"}
@@ -1351,9 +1351,9 @@ async function loadCampaignLeads() {
   const activeCount = state.campaignLeads.filter((lead) => lead.enrollment_status === "active").length;
   const pausedCount = state.campaignLeads.filter((lead) => lead.enrollment_status === "paused").length;
   const mailboxCount = new Set(state.campaignLeads.map((lead) => lead.mailbox_email).filter(Boolean)).size;
-  summary.textContent = `В кампании: ${state.campaignLeads.length} · отправятся: ${activeCount} · выключены: ${pausedCount} · mailbox: ${mailboxCount}`;
+  summary.textContent = `В кампании: ${state.campaignLeads.length} · отправятся: ${activeCount} · выключены: ${pausedCount} · почт отправителя: ${mailboxCount}`;
   table.innerHTML = `
-    <thead><tr><th>Отправлять</th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th><th>Mailbox</th><th>Статус</th><th>Следующая отправка</th></tr></thead>
+    <thead><tr><th>Отправлять</th><th>Компания</th><th>Email</th><th>Сегмент</th><th>Проверка</th><th>Почта отправителя</th><th>Статус</th><th>Следующая отправка</th></tr></thead>
     <tbody>
       ${state.campaignLeads.length
         ? state.campaignLeads.map((lead) => {
@@ -1426,7 +1426,7 @@ function renderSetupChecklist() {
     {
       done: warmupEnabled >= 2,
       title: "Включить прогрев",
-      text: `Mailbox с прогревом: ${warmupEnabled}. Прогрев работает только между твоими ящиками.`,
+      text: `Почт с прогревом: ${warmupEnabled}. Прогрев работает только между твоими ящиками.`,
       action: "Включить прогрев",
       view: "warmup",
     },
@@ -2629,7 +2629,7 @@ $("#validateBtn").addEventListener("click", (event) => runAction({
 }));
 
 $("#mailboxForm").addEventListener("submit", (event) => runAction({
-  title: "Сохранение mailbox",
+  title: "Сохранение почты",
   button: event.submitter,
 }, async () => {
   event.preventDefault();
@@ -2644,8 +2644,8 @@ $("#mailboxForm").addEventListener("submit", (event) => runAction({
   await refresh();
   setActionResult({
     status: "success",
-    title: "Сохранение mailbox",
-    message: `Mailbox ${result.email} сохранен. Теперь нажми «Проверить SMTP/IMAP».`,
+    title: "Сохранение почты",
+    message: `Почта ${result.email} сохранена. Теперь нажми «Проверить SMTP/IMAP».`,
     details: result,
   });
 }));
@@ -2789,7 +2789,7 @@ $("#attachmentForm").addEventListener("submit", (event) => runAction({
   event.target.reset();
   await refresh();
   setActionResult({ status: "success", title: "Загрузка вложения", message: "Вложение добавлено к шагу.", details: result });
-  switchCampaignStep("leads");
+  switchCampaignStep("letter");
 }));
 
 $("#enrollBtn").addEventListener("click", (event) => runAction({
@@ -2809,7 +2809,7 @@ $("#enrollBtn").addEventListener("click", (event) => runAction({
   setActionResult({
     status: "success",
     title: "Добавление лидов в кампанию",
-    message: `Выбранные лиды добавлены: ${leadIds.length}. Mailbox для отправки: ${mailboxIds.length}.`,
+    message: `Выбранные лиды добавлены: ${leadIds.length}. Доступных почт для отправки: ${mailboxIds.length}.`,
     details: result,
   });
   state.selectedCampaignLeadIds = new Set();
@@ -2899,13 +2899,13 @@ document.body.addEventListener("click", async (event) => {
       const result = await api(`/api/mailboxes/${mailboxId}/check`, { method: "POST" });
       await refresh();
       const dryRun = result.smtp?.dryRun || result.imap?.dryRun;
-      const smtpText = result.smtp?.ok ? "SMTP: ok" : `SMTP: ошибка ${result.smtp?.error || "unknown"}`;
-      const imapText = result.imap?.ok ? "IMAP: ok" : `IMAP: ошибка ${result.imap?.error || "unknown"}`;
+      const smtpText = result.smtp?.ok ? "SMTP: успешно" : `SMTP: ошибка ${result.smtp?.error || "неизвестно"}`;
+      const imapText = result.imap?.ok ? "IMAP: успешно" : `IMAP: ошибка ${result.imap?.error || "неизвестно"}`;
       setActionResult({
         status: dryRun ? "warn" : result.ok ? "success" : "error",
         title: "Проверка SMTP/IMAP",
         message: dryRun
-          ? "Включен dry-run: сервис записал проверку как успешную, но к SMTP/IMAP реально не подключался."
+          ? "Включен безопасный режим: сервис записал проверку как успешную, но к SMTP/IMAP реально не подключался."
           : `${smtpText}. ${imapText}. DNS: MX ${result.domain?.mxStatus || "-"}, SPF ${result.domain?.spfStatus || "-"}, DKIM ${result.domain?.dkimStatus || "-"}, DMARC ${result.domain?.dmarcStatus || "-"}.`,
         details: result,
         target: { type: "mailbox", id: mailboxId },

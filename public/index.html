@@ -175,7 +175,7 @@
               <code>email — кому отправлять</code>
               <code>subject — тема первого письма</code>
               <code>body — текст первого письма</code>
-              <code>mailbox — ящик отправителя, если нужно закрепить вручную</code>
+              <code>mailbox — почта отправителя, если нужно закрепить вручную</code>
             </div>
           </section>
         </div>
@@ -300,7 +300,7 @@
       <section class="view" id="mailboxesView">
         <div class="grid two mailbox-page">
           <section class="panel">
-            <h2>Подключить mailbox</h2>
+            <h2>Подключить почту</h2>
             <p class="help-text">SMTP нужен для отправки, IMAP — для входящих, прогрева и проверки ящика. Пароль можно ввести прямо здесь: сервис сохранит его в локальный `.env`, а в базе оставит только имя переменной.</p>
             <form id="mailboxForm" class="form mailbox-create-form">
               <fieldset class="mailbox-form-section">
@@ -440,7 +440,7 @@
                 </span>
               </label>
               <label class="field"><span>Заметка</span><textarea name="description" placeholder="Для себя: гипотеза, оффер, кому пишем"></textarea></label>
-              <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Open tracking</label>
+              <label class="check"><input name="tracking_enabled" type="checkbox" checked /> Отслеживать открытия</label>
               <label class="check"><input name="manual_approval_required" type="checkbox" /> Проверять каждое письмо вручную перед отправкой</label>
               <div class="form-actions">
                 <button id="campaignSubmitBtn">Создать кампанию</button>
@@ -697,7 +697,7 @@
             <div id="warmupStats"></div>
           </section>
           <section class="panel">
-            <h2>Mailbox для прогрева</h2>
+            <h2>Почты для прогрева</h2>
             <div id="warmupMailboxList" class="cards"></div>
           </section>
         </div>
@@ -736,7 +736,7 @@
 
       <section class="view" id="settingsView">
         <section class="panel">
-          <h2>Runtime настройки</h2>
+          <h2>Настройки сервиса</h2>
           <div id="settingsPanel"></div>
         </section>
       </section>
