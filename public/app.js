@@ -207,6 +207,8 @@ const STATUS_LABELS = {
   not_target: "не целевой",
   approval: "ждет подтверждения",
   manual_reply: "ручной ответ",
+  new_thread: "новая ветка",
+  reply_to_previous: "ответом в ветку",
 };
 
 const VALIDATION_REASON_LABELS = {
@@ -1735,7 +1737,7 @@ async function openConversation(conversationId) {
         ? detail.messages.map((message) => `
           <article class="card">
             <strong>${message.direction === "outbound" ? "Исходящее" : "Входящее"} · ${esc(message.subject)}</strong>
-            ${pill(message.type)} ${message.reply_classification ? pill(message.reply_classification) : ""}
+            ${pill(message.type)} ${message.threading_mode ? pill(message.threading_mode) : ""} ${message.reply_classification ? pill(message.reply_classification) : ""}
             <p>${esc(message.mailbox_email || "")} · ${fmtDate(message.received_at || message.sent_at || message.created_at)}</p>
             <pre>${esc(message.body_text || "")}</pre>
           </article>

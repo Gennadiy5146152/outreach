@@ -1677,6 +1677,9 @@ async function outreachConversationExportRows(req) {
       sent_at: message.sent_at,
       received_at: message.received_at,
       classification: message.reply_classification,
+      threading_mode: message.threading_mode,
+      parent_message_id: message.parent_message_id,
+      in_reply_to: message.in_reply_to,
     })),
   }));
 }
@@ -2185,9 +2188,9 @@ app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) 
           INSERT INTO messages(
             lead_id, campaign_id, mailbox_id, outreach_draft_id, direction, type, status,
             subject, body_text, body_html, provider_message_id, message_id_header,
-            in_reply_to, references_header, sent_at
+            in_reply_to, references_header, threading_mode, parent_message_id, sent_at
           )
-          VALUES ($1,$2,$3,$4,'outbound','manual_reply','sent',$5,$6,$7,$8,$9,$10,$11,now())
+          VALUES ($1,$2,$3,$4,'outbound','manual_reply','sent',$5,$6,$7,$8,$9,$10,$11,$12,$13,now())
           RETURNING *
         `,
         [
@@ -2202,6 +2205,8 @@ app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) 
           info.messageId || "",
           previous?.message_id_header || "",
           references,
+          previous?.message_id_header ? "reply_to_previous" : "new_thread",
+          previous?.id || null,
         ],
       );
 

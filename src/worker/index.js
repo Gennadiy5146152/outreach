@@ -371,14 +371,48 @@ async function processSend(item) {
       : "";
   const html = `${renderTemplate(htmlTemplate, lead, mailbox, settings)}${pixel}`;
   const to = item.mode === "test" ? item.mailbox_email : item.lead_email;
+  let threadingMode = "new_thread";
+  let parentMessage = null;
+  let inReplyTo = "";
+  let references = "";
+
+  if (item.outreach_draft_id && Number(item.outreach_step_position || 1) > 1) {
+    parentMessage = (
+      await query(
+        `
+          SELECT msg.*
+          FROM messages msg
+          JOIN outreach_draft_steps ods ON ods.id = msg.outreach_step_id
+          WHERE msg.outreach_draft_id = $1
+            AND msg.direction = 'outbound'
+            AND msg.type = 'outreach'
+            AND msg.status = 'sent'
+            AND msg.message_id_header <> ''
+            AND ods.position < $2
+          ORDER BY ods.position DESC, msg.sent_at DESC NULLS LAST, msg.created_at DESC
+          LIMIT 1
+        `,
+        [item.outreach_draft_id, Number(item.outreach_step_position || 1)],
+      )
+    ).rows[0] || null;
+    if (parentMessage) {
+      threadingMode = "reply_to_previous";
+      inReplyTo = parentMessage.message_id_header || "";
+      references = [
+        parentMessage.references_header,
+        parentMessage.in_reply_to,
+        parentMessage.message_id_header,
+      ].filter(Boolean).join(" ");
+    }
+  }
 
   const messageInsert = await query(
     `
       INSERT INTO messages(
         lead_id, campaign_id, campaign_step_id, mailbox_id, enrollment_id, outreach_draft_id, outreach_step_id, direction, type,
-        status, subject, body_text, body_html, tracking_id
+        status, subject, body_text, body_html, tracking_id, threading_mode, parent_message_id, in_reply_to, references_header
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,'outbound',$8,'created',$9,$10,$11,$12)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'outbound',$8,'created',$9,$10,$11,$12,$13,$14,$15,$16)
       RETURNING *
     `,
     [
@@ -394,6 +428,10 @@ async function processSend(item) {
       text,
       html,
       trackingId,
+      threadingMode,
+      parentMessage?.id || null,
+      inReplyTo,
+      references,
     ],
   );
   const message = messageInsert.rows[0];
@@ -407,6 +445,8 @@ async function processSend(item) {
     text,
     html,
     headers: { "X-Outreach-Message-ID": message.id },
+    inReplyTo: inReplyTo || undefined,
+    references: references || undefined,
   }, attachments);
 
   await query(
@@ -636,10 +676,10 @@ async function syncInbox(mailbox) {
         `
           INSERT INTO messages(
             lead_id, campaign_id, mailbox_id, outreach_draft_id, outreach_step_id, direction, type, status, subject, body_text, body_html,
-            message_id_header, in_reply_to, references_header, raw_headers, received_at,
+            message_id_header, in_reply_to, references_header, threading_mode, parent_message_id, raw_headers, received_at,
             reply_classification, reply_classification_source
           )
-          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,'auto')
+          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'auto')
           RETURNING *
         `,
         [
@@ -655,6 +695,8 @@ async function syncInbox(mailbox) {
           parsed.messageId || "",
           parsed.inReplyTo || "",
           (parsed.references || []).join(" "),
+          isWarmup || !linked ? "new_thread" : "reply_to_previous",
+          isWarmup ? null : linked?.id || null,
           headers,
           parsed.date || new Date(),
           classification,
