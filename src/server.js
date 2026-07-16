@@ -959,6 +959,46 @@ app.get("/api/outreach/imports", asyncHandler(async (_req, res) => {
   res.json(result.rows);
 }));
 
+app.get("/api/outreach/imports/template.csv", asyncHandler(async (_req, res) => {
+  const header = [
+    "email",
+    "company",
+    "contact_name",
+    "segment",
+    "mailbox",
+    "subject",
+    "body",
+    "send_after",
+    "followup_1_subject",
+    "followup_1_body",
+    "followup_1_delay_days",
+    "followup_2_subject",
+    "followup_2_body",
+    "followup_2_delay_days",
+    "notes",
+  ];
+  const example = [
+    "client@example.com",
+    "Компания клиента",
+    "Иван",
+    "ИТ",
+    "team@example.com",
+    "Короткий вопрос по вашей CRM",
+    "Иван, здравствуйте. Увидел, что Компания клиента развивает продажи. Хотел коротко обсудить, можем ли быть полезны.",
+    "",
+    "Re: короткий вопрос по вашей CRM",
+    "Иван, добрый день. Подниму письмо выше: если тема актуальна, готов предложить короткий созвон.",
+    "3",
+    "Re: короткий вопрос по вашей CRM",
+    "Иван, последний раз напишу по этой теме. Если сейчас не актуально, вернусь позже.",
+    "7",
+    "Любая заметка для себя",
+  ];
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=\"outreach-template.csv\"");
+  res.send(`\uFEFF${[header, example].map((row) => row.map(csvCell).join(",")).join("\n")}\n`);
+}));
+
 app.get("/api/outreach/imports/:id/errors.csv", asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_import" });
   const item = (await query("SELECT * FROM outreach_imports WHERE id = $1", [req.params.id])).rows[0];
