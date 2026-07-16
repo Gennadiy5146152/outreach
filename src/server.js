@@ -221,7 +221,8 @@ async function checkMailboxConnection(mailbox) {
       SET smtp_verified_at = CASE WHEN $2 THEN now() ELSE NULL END,
           imap_verified_at = CASE WHEN $3 THEN now() ELSE NULL END,
           health_status = CASE WHEN $2 AND $3 THEN 'ok' ELSE 'error' END,
-          error_count = CASE WHEN $2 AND $3 THEN error_count ELSE error_count + 1 END,
+          error_count = CASE WHEN $2 AND $3 THEN 0 ELSE error_count + 1 END,
+          paused_until = CASE WHEN $2 AND $3 THEN NULL ELSE paused_until END,
           updated_at = now()
       WHERE id = $1
     `,

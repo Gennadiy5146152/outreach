@@ -24,6 +24,18 @@ function pickRandom(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+function nonMailboxError(message) {
+  const error = new Error(message);
+  error.nonMailbox = true;
+  return error;
+}
+
+function throttleDelayMinutes(errorCount) {
+  if (errorCount >= 5) return 120;
+  if (errorCount >= 3) return 30;
+  return 0;
+}
+
 function warmupDraft(from, to) {
   const today = new Date().toLocaleDateString("ru-RU");
   const drafts = [
@@ -296,7 +308,7 @@ async function lockNextSend() {
                ods.position AS outreach_step_position, ods.delay_days AS outreach_delay_days,
                m.name AS mailbox_name, m.email AS mailbox_email, m.from_name,
                m.smtp_host, m.smtp_port, m.smtp_secure, m.imap_host, m.imap_port, m.imap_secure,
-               m.username, m.password_env_key
+               m.username, m.password_env_key, m.error_count, m.paused_until
         FROM sending_queue q
         JOIN leads l ON l.id = q.lead_id
         LEFT JOIN campaigns c ON c.id = q.campaign_id
@@ -306,6 +318,9 @@ async function lockNextSend() {
         WHERE q.status IN ('pending','retrying')
           AND q.scheduled_at <= now()
           AND (q.requires_approval = false OR q.approved_at IS NOT NULL)
+          AND m.is_active = true
+          AND m.smtp_verified_at IS NOT NULL
+          AND (m.paused_until IS NULL OR m.paused_until <= now())
         ORDER BY q.scheduled_at ASC
         FOR UPDATE OF q SKIP LOCKED
         LIMIT 1
@@ -324,7 +339,7 @@ async function lockNextSend() {
 
 async function processSend(item) {
   if (item.validation_status === "invalid" || item.suppressed_at) {
-    throw new Error("Lead is invalid or suppressed");
+    throw nonMailboxError("Lead is invalid or suppressed");
   }
 
   if (!isWithinWindow(item)) {
@@ -467,7 +482,7 @@ async function processSend(item) {
     `,
     [item.id, message.id],
   );
-  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, updated_at = now() WHERE id = $1", [item.mailbox_id]);
+  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, paused_until = NULL, updated_at = now() WHERE id = $1", [item.mailbox_id]);
 
   if (item.outreach_draft_id) {
     await query(
@@ -573,23 +588,69 @@ async function processSend(item) {
 
 async function failSend(item, error) {
   const retry = item.attempts + 1 < item.max_attempts;
+  let pauseUntil = null;
+  let errorCount = Number(item.error_count || 0);
+  let throttleMinutes = 0;
+  if (!error.nonMailbox) {
+    const mailbox = await query(
+      `
+        UPDATE mailboxes
+        SET error_count = error_count + 1,
+            health_status = CASE WHEN error_count + 1 >= 3 THEN 'throttled' ELSE 'error' END,
+            paused_until = CASE
+              WHEN error_count + 1 >= 5 THEN now() + interval '120 minutes'
+              WHEN error_count + 1 >= 3 THEN now() + interval '30 minutes'
+              ELSE paused_until
+            END,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING error_count, paused_until
+      `,
+      [item.mailbox_id],
+    );
+    errorCount = Number(mailbox.rows[0]?.error_count || errorCount + 1);
+    throttleMinutes = throttleDelayMinutes(errorCount);
+    pauseUntil = mailbox.rows[0]?.paused_until || null;
+  }
   await query(
     `
       UPDATE sending_queue
       SET status = $2,
-          scheduled_at = now() + (($3 * 10) || ' minutes')::interval,
+          scheduled_at = CASE
+            WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz
+            ELSE now() + (($3 * 10) || ' minutes')::interval
+          END,
           last_error = $4,
           updated_at = now()
       WHERE id = $1
     `,
-    [item.id, retry ? "retrying" : "failed", item.attempts + 1, error.message],
+    [item.id, retry ? "retrying" : "failed", item.attempts + 1, error.message, retry ? pauseUntil : null],
   );
-  await query("UPDATE mailboxes SET error_count = error_count + 1, health_status = 'error' WHERE id = $1", [item.mailbox_id]);
+  if (retry && pauseUntil) {
+    await query(
+      `
+        UPDATE sending_queue
+        SET scheduled_at = GREATEST(scheduled_at, $2::timestamptz),
+            last_error = COALESCE(last_error, $3),
+            updated_at = now()
+        WHERE mailbox_id = $1
+          AND status IN ('pending','retrying')
+      `,
+      [item.mailbox_id, pauseUntil, `Mailbox временно замедлен после ${errorCount} ошибок отправки`],
+    );
+  }
   await logEvent("mailbox_error", {
     leadId: item.lead_id,
     campaignId: item.campaign_id,
     mailboxId: item.mailbox_id,
-    payload: { queueId: item.id, error: error.message },
+    payload: {
+      queueId: item.id,
+      error: error.message,
+      errorCount,
+      throttleMinutes,
+      pausedUntil: pauseUntil,
+      reason: throttleMinutes ? "adaptive_throttle" : "send_error",
+    },
   });
 }
 

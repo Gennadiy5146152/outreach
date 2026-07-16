@@ -185,6 +185,8 @@ const STATUS_LABELS = {
   won: "успех",
   lost: "потерян",
   suppressed: "в стоп-листе",
+  ok: "в порядке",
+  error: "ошибка",
   unknown: "еще не проверяли",
   valid: "можно отправлять",
   risky: "нужна проверка",
@@ -202,6 +204,7 @@ const STATUS_LABELS = {
   retrying: "повтор",
   failed: "ошибка",
   cancelled: "отменено",
+  throttled: "замедлен",
   bounced: "недоставка",
   unsubscribed: "отписался",
   not_target: "не целевой",
@@ -283,6 +286,8 @@ const EVENT_REASON_LABELS = {
   manual_reply_continue_sequence: "ручной ответ, follow-up разрешен",
   worker_startup: "перезапуск worker",
   stale_running: "зависшая задача в running",
+  adaptive_throttle: "автоматическое замедление из-за ошибок SMTP",
+  send_error: "ошибка отправки",
 };
 
 function statusLabel(value) {
@@ -377,6 +382,9 @@ function eventSummary(event) {
   if (payload.failedJobs !== undefined) parts.push(`job_queue ошибок: ${payload.failedJobs}`);
   if (payload.recoveredSends !== undefined) parts.push(`отправок повторно: ${payload.recoveredSends}`);
   if (payload.failedSends !== undefined) parts.push(`отправок ошибок: ${payload.failedSends}`);
+  if (payload.errorCount !== undefined) parts.push(`ошибок подряд: ${payload.errorCount}`);
+  if (payload.throttleMinutes !== undefined && payload.throttleMinutes > 0) parts.push(`пауза: ${payload.throttleMinutes} мин`);
+  if (payload.pausedUntil) parts.push(`замедлен до: ${fmtDate(payload.pausedUntil)}`);
   if (payload.error) parts.push(`ошибка: ${payload.error}`);
   if (payload.dryRun !== undefined) parts.push(`dry-run: ${payload.dryRun ? "да" : "нет"}`);
   if (payload.provider) parts.push(`провайдер: ${payload.provider}`);
@@ -393,7 +401,7 @@ function stopScopeLabel(value) {
 }
 
 function pill(value) {
-  const cls = ["failed", "invalid", "bounced"].includes(value) ? "bad" : ["pending", "risky", "retrying"].includes(value) ? "warn" : "";
+  const cls = ["failed", "invalid", "bounced", "error"].includes(value) ? "bad" : ["pending", "risky", "retrying", "throttled"].includes(value) ? "warn" : "";
   return `<span class="pill ${cls}">${esc(statusLabel(value))}</span>`;
 }
 
@@ -511,6 +519,10 @@ function renderPreflightResult(result, fixResult = null) {
 }
 
 function mailboxNextStep(mailbox) {
+  const isPaused = mailbox.paused_until && new Date(mailbox.paused_until) > new Date();
+  if (isPaused) {
+    return `Ящик временно замедлен из-за ошибок отправки. Следующая попытка после ${fmtDate(mailbox.paused_until)}.`;
+  }
   if (!mailbox.smtp_verified_at || !mailbox.imap_verified_at) {
     return "Следующий шаг: нажми «Проверить SMTP/IMAP». Это проверит отправку, чтение входящих и DNS домена.";
   }
@@ -1221,10 +1233,12 @@ async function loadMailboxes() {
         <strong>${esc(mailbox.name)}</strong>
         <p>${esc(mailbox.email)} · ${esc(mailbox.provider)}</p>
         <div class="mailbox-status">
+          ${pill(mailbox.health_status)}
           <span>${mailbox.smtp_verified_at ? "SMTP проверен" : "SMTP не проверен"}</span>
           <span>${mailbox.imap_verified_at ? "IMAP проверен" : "IMAP не проверен"}</span>
           <span>${mailbox.last_inbox_sync_at ? `Входящие: ${fmtDate(mailbox.last_inbox_sync_at)}` : "Входящие еще не синхронизировались"}</span>
         </div>
+        <p>Ошибок отправки подряд: <strong>${Number(mailbox.error_count || 0)}</strong>${mailbox.paused_until && new Date(mailbox.paused_until) > new Date() ? ` · замедлен до ${fmtDate(mailbox.paused_until)}` : ""}</p>
         <p>MX/SPF/DKIM/DMARC: ${mailbox.mx_status || "-"} / ${mailbox.spf_status || "-"} / ${mailbox.dkim_status || "-"} / ${mailbox.dmarc_status || "-"}</p>
         <p class="mailbox-guide">${esc(mailboxNextStep(mailbox))}</p>
         <div id="mailboxActionResult-${mailbox.id}">${actionResultHtml(state.actionResults.mailboxes[mailbox.id])}</div>
