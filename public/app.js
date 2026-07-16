@@ -250,6 +250,7 @@ const EVENT_LABELS = {
   not_target_received: "Получен ответ “не целевой”",
   outreach_conversation_stopped: "Цепочка остановлена",
   outreach_conversation_continued: "Follow-up продолжен",
+  outreach_followup_delayed: "Follow-up отложен",
   manual_reply_sent: "Ручной ответ отправлен",
   warmup_sent: "Прогрев: письмо отправлено",
   warmup_reply_received: "Прогрев: получен ответ",
@@ -273,6 +274,7 @@ const EVENT_REASON_LABELS = {
   bounce: "недоставка",
   manual_stop: "остановлено вручную",
   manual_continue: "продолжено вручную",
+  manual_delay: "follow-up отложен вручную",
   manual_classification: "ручная классификация",
   manual_reply_stop_sequence: "ручной ответ, цепочка остановлена",
   manual_reply_continue_sequence: "ручной ответ, follow-up разрешен",
@@ -289,6 +291,7 @@ function nextActionLabel(value) {
     followup_allowed: "follow-up разрешен",
     manual_reply_sent_sequence_stopped: "ручной ответ отправлен, цепочка остановлена",
     manual_reply_sent_followup_allowed: "ручной ответ отправлен, follow-up разрешен",
+    followup_postponed_needs_approval: "follow-up перенесен и ждет ручного разрешения",
     reply_manually_or_stop: "ответить вручную или оставить цепочку остановленной",
     sequence_stopped_after_negative_reply: "цепочка остановлена после отказа",
     decide_followup_after_auto_reply: "решить, переносить или продолжать follow-up после автоответа",
@@ -352,6 +355,9 @@ function eventSummary(event) {
   if (payload.nextAction) parts.push(`дальше: ${nextActionLabel(payload.nextAction)}`);
   if (payload.cancelledQueue !== undefined) parts.push(`отменено писем: ${payload.cancelledQueue}`);
   if (payload.approvedQueue !== undefined) parts.push(`разрешено писем: ${payload.approvedQueue}`);
+  if (payload.delayedQueue !== undefined) parts.push(`перенесено писем: ${payload.delayedQueue}`);
+  if (payload.delayDays !== undefined) parts.push(`на дней: ${payload.delayDays}`);
+  if (payload.nextScheduledAt) parts.push(`следующая отправка: ${fmtDate(payload.nextScheduledAt)}`);
   if (payload.error) parts.push(`ошибка: ${payload.error}`);
   if (payload.dryRun !== undefined) parts.push(`dry-run: ${payload.dryRun ? "да" : "нет"}`);
   if (payload.provider) parts.push(`провайдер: ${payload.provider}`);
@@ -1601,6 +1607,7 @@ function renderConversationEvents(events = []) {
     "reply_classified",
     "outreach_conversation_stopped",
     "outreach_conversation_continued",
+    "outreach_followup_delayed",
     "manual_reply_sent",
   ].includes(event.event_type));
   return decisionEvents.length
@@ -1654,6 +1661,7 @@ async function openConversation(conversationId) {
   const detail = await api(`/api/outreach/conversations/${conversationId}`);
   const lastMessage = detail.messages.at(-1);
   const lastOutbound = [...detail.messages].reverse().find((message) => message.direction === "outbound" && message.mailbox_id);
+  const pendingFollowups = detail.queue.filter((item) => Number(item.outreach_step_position || 0) > 1 && ["pending", "retrying"].includes(item.status));
   const mailboxOptions = state.mailboxes
     .filter((mailbox) => mailbox.is_active)
     .map((mailbox) => `<option value="${mailbox.id}" ${mailbox.id === lastOutbound?.mailbox_id ? "selected" : ""}>${esc(mailbox.email)}</option>`)
@@ -1699,6 +1707,16 @@ async function openConversation(conversationId) {
       <button>Отправить ответ</button>
     </form>
     <h3>Очередь по этому диалогу</h3>
+    ${pendingFollowups.length ? `
+      <form class="form compact-form" data-conversation-delay-form="${detail.conversation.id}">
+        <label>
+          <span>Отложить будущие follow-up</span>
+          <input name="delay_days" type="number" min="1" max="60" step="1" value="7" required />
+        </label>
+        <p class="muted">Будут перенесены письма в очереди: ${pendingFollowups.length}. После переноса они останутся на ручном подтверждении.</p>
+        <button>Отложить follow-up</button>
+      </form>
+    ` : `<p class="muted">Активных follow-up для переноса сейчас нет.</p>`}
     <div class="cards">
       ${detail.queue.length
         ? detail.queue.map((item) => `
@@ -2373,6 +2391,34 @@ document.body.addEventListener("submit", (event) => {
       message: result.dryRun
         ? `Dry-run: ответ сохранен, наружу не отправлен. Отменено follow-up: ${result.cancelledQueue}.`
         : `Ответ отправлен. Отменено follow-up: ${result.cancelledQueue}.`,
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("submit", (event) => {
+  const conversationId = event.target.dataset.conversationDelayForm;
+  if (!conversationId) return;
+  event.preventDefault();
+  runAction({
+    title: "Перенос follow-up",
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    payload.delay_days = Number(payload.delay_days || 0);
+    const result = await api(`/api/outreach/conversations/${conversationId}/delay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await Promise.all([loadConversations(), loadReviewConversations(), loadQueue(), loadOutreachDrafts()]);
+    await openConversation(conversationId);
+    setActionResult({
+      status: result.delayed_queue ? "success" : "warn",
+      title: "Перенос follow-up",
+      message: result.delayed_queue
+        ? `Follow-up перенесен. Писем в очереди: ${result.delayed_queue}. Следующая отправка: ${fmtDate(result.next_scheduled_at)}.`
+        : "Активных follow-up для переноса не найдено.",
       details: result,
     });
   });

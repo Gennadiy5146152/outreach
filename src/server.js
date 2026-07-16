@@ -1952,6 +1952,73 @@ app.post("/api/outreach/conversations/:id/continue", asyncHandler(async (req, re
   res.json(result.rows[0]);
 }));
 
+app.post("/api/outreach/conversations/:id/delay", asyncHandler(async (req, res) => {
+  const conversation = (await query("SELECT * FROM outreach_conversations WHERE id = $1", [req.params.id])).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const delayDays = Number(req.body.delay_days || 0);
+  if (!Number.isInteger(delayDays) || delayDays < 1 || delayDays > 60) {
+    return res.status(400).json({ error: "delay_days_invalid" });
+  }
+  const result = await query(
+    `
+      WITH delayed_queue AS (
+        UPDATE sending_queue
+        SET scheduled_at = now() + ($2::int * interval '1 day'),
+            requires_approval = true,
+            approved_at = NULL,
+            last_error = NULL,
+            updated_at = now()
+        WHERE lead_id = $1
+          AND outreach_draft_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM outreach_draft_steps ods
+            WHERE ods.id = sending_queue.outreach_step_id
+              AND ods.position > 1
+          )
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id, scheduled_at
+      ),
+      delayed_steps AS (
+        UPDATE outreach_draft_steps
+        SET status = 'queued',
+            updated_at = now()
+        WHERE id IN (SELECT outreach_step_id FROM delayed_queue WHERE outreach_step_id IS NOT NULL)
+        RETURNING id
+      ),
+      updated_conversation AS (
+        UPDATE outreach_conversations
+        SET status = 'manual_reply_needed',
+            next_action = 'followup_postponed_needs_approval',
+            updated_at = now()
+        WHERE id = $3
+          AND EXISTS (SELECT 1 FROM delayed_queue)
+        RETURNING *
+      )
+      SELECT
+        (SELECT row_to_json(updated_conversation) FROM updated_conversation) AS conversation,
+        (SELECT count(*)::int FROM delayed_queue) AS delayed_queue,
+        (SELECT count(*)::int FROM delayed_steps) AS delayed_steps,
+        (SELECT min(scheduled_at) FROM delayed_queue) AS next_scheduled_at
+    `,
+    [conversation.lead_id, delayDays, conversation.id],
+  );
+  await logEvent("outreach_followup_delayed", {
+    leadId: conversation.lead_id,
+    payload: {
+      conversationId: conversation.id,
+      reason: "manual_delay",
+      delayDays,
+      previousStatus: conversation.status,
+      nextStatus: "manual_reply_needed",
+      nextAction: "followup_postponed_needs_approval",
+      delayedQueue: result.rows[0].delayed_queue,
+      nextScheduledAt: result.rows[0].next_scheduled_at,
+    },
+  });
+  res.json(result.rows[0]);
+}));
+
 app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) => {
   const subject = cleanText(req.body.subject);
   const bodyText = cleanText(req.body.body_text);
