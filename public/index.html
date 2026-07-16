@@ -23,6 +23,7 @@
         <button data-view="campaigns">4. Рассылка</button>
         <button data-view="queue">Очередь</button>
         <button data-view="inbox">Входящие</button>
+        <button data-view="review">Требуют решения</button>
         <button data-view="conversations">Диалоги</button>
         <button data-view="suppression">Стоп-лист</button>
         <button data-view="events">События</button>
@@ -546,6 +547,33 @@
             <button id="syncInboxBtn">Синхронизировать IMAP</button>
           </div>
           <div id="inboxList" class="inbox"></div>
+        </section>
+      </section>
+
+      <section class="view" id="reviewView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Требуют решения</h2>
+              <p class="muted">Здесь только диалоги, где человек ответил или follow-up ждет твоего разрешения. Классифицируй ответ и выбери, что делать дальше.</p>
+            </div>
+            <div class="lead-filters">
+              <select id="reviewClassificationFilter">
+                <option value="">Любой ответ</option>
+                <option value="positive_reply">Позитивный</option>
+                <option value="neutral_reply">Нейтральный</option>
+                <option value="negative_reply">Негативный</option>
+                <option value="auto_reply">Автоответ</option>
+                <option value="unsubscribe">Отписка</option>
+                <option value="not_target">Не целевой</option>
+                <option value="bounce">Недоставка</option>
+                <option value="unknown">Не разобрано</option>
+              </select>
+              <a id="reviewExportLink" class="button" href="/api/outreach/conversations/export.jsonl?review=true">JSONL для ИИ</a>
+            </div>
+          </div>
+          <div id="reviewSummary" class="summary-line"></div>
+          <div id="reviewList" class="cards"></div>
         </section>
       </section>
 

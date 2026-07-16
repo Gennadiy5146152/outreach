@@ -7,6 +7,7 @@ const state = {
   selectedOutreachDraftIds: new Set(),
   outreachImportPreview: null,
   outreachConversations: [],
+  reviewConversations: [],
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
@@ -201,6 +202,8 @@ const STATUS_LABELS = {
   failed: "ошибка",
   cancelled: "отменено",
   bounced: "недоставка",
+  unsubscribed: "отписался",
+  not_target: "не целевой",
   approval: "ждет подтверждения",
   manual_reply: "ручной ответ",
 };
@@ -225,6 +228,8 @@ const REPLY_CLASS_LABELS = {
   bounce: "недоставка",
   unknown: "не разобрано",
 };
+
+const REPLY_CLASS_OPTIONS = Object.entries(REPLY_CLASS_LABELS);
 
 const EVENT_LABELS = {
   lead_created: "Лид добавлен",
@@ -266,6 +271,12 @@ function nextActionLabel(value) {
     followup_allowed: "follow-up разрешен",
     manual_reply_sent_sequence_stopped: "ручной ответ отправлен, цепочка остановлена",
     manual_reply_sent_followup_allowed: "ручной ответ отправлен, follow-up разрешен",
+    reply_manually_or_stop: "ответить вручную или оставить цепочку остановленной",
+    sequence_stopped_after_negative_reply: "цепочка остановлена после отказа",
+    decide_followup_after_auto_reply: "решить, переносить или продолжать follow-up после автоответа",
+    sequence_stopped_after_unsubscribe: "цепочка остановлена после отписки",
+    sequence_stopped_not_target: "цепочка остановлена: контакт не целевой",
+    sequence_stopped_after_bounce: "цепочка остановлена после недоставки",
   }[value] || value || "не задано";
 }
 
@@ -480,6 +491,7 @@ function switchView(view) {
     start: "Что делать",
     outreachImport: "Импорт Excel",
     outreachDrafts: "Черновики",
+    review: "Требуют решения",
     conversations: "Диалоги",
     leads: "База",
     mailboxes: "1. Почта",
@@ -1379,20 +1391,32 @@ function updateConversationExportLink() {
   $("#conversationExportLink").setAttribute("href", href);
 }
 
-async function loadConversations() {
-  if (!$("#conversationList")) return;
-  const query = conversationQuery();
-  updateConversationExportLink();
-  state.outreachConversations = await api(`/api/outreach/conversations${query ? `?${query}` : ""}`);
-  const reviewCount = state.outreachConversations.filter((item) => ["waiting_reply_review", "manual_reply_needed"].includes(item.status)).length;
-  const approvalCount = state.outreachConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
-  $("#conversationSummary").innerHTML = `
-    <span>Диалогов на экране: <strong>${state.outreachConversations.length}</strong></span>
-    <span>Требуют решения: <strong>${reviewCount}</strong></span>
-    <span>Follow-up ждут подтверждения: <strong>${approvalCount}</strong></span>
+function reviewQuery() {
+  const params = new URLSearchParams({ review: "true" });
+  const classification = $("#reviewClassificationFilter")?.value || "";
+  if (classification) params.set("classification", classification);
+  return params.toString();
+}
+
+function updateReviewExportLink() {
+  const query = reviewQuery();
+  $("#reviewExportLink").setAttribute("href", `/api/outreach/conversations/export.jsonl?${query}`);
+}
+
+function classificationSelect(conversation) {
+  return `
+    <label class="field compact-field">
+      <span>Классификация ответа</span>
+      <select data-classify-conversation="${conversation.id}">
+        ${REPLY_CLASS_OPTIONS.map(([value, label]) => `<option value="${value}" ${value === (conversation.classification || "unknown") ? "selected" : ""}>${esc(label)}</option>`).join("")}
+      </select>
+    </label>
   `;
-  $("#conversationList").innerHTML = state.outreachConversations.length
-    ? state.outreachConversations.map((item) => `
+}
+
+function renderConversationCards(items, emptyText) {
+  return items.length
+    ? items.map((item) => `
       <article class="card conversation-card">
         <div class="conversation-card-head">
           <div>
@@ -1413,6 +1437,7 @@ async function loadConversations() {
           <span>Ждут отправки: <strong>${item.pending_total}</strong></span>
           <span>Ждут подтверждения: <strong>${item.approval_total}</strong></span>
         </div>
+        ${classificationSelect(item)}
         <div class="card-actions">
           <button data-open-conversation="${item.id}">Открыть диалог</button>
           <button data-stop-conversation="${item.id}">Остановить цепочку</button>
@@ -1420,7 +1445,40 @@ async function loadConversations() {
         </div>
       </article>
     `).join("")
-    : `<p class="muted">Диалогов по текущему фильтру нет.</p>`;
+    : `<p class="muted">${esc(emptyText)}</p>`;
+}
+
+async function loadConversations() {
+  if (!$("#conversationList")) return;
+  const query = conversationQuery();
+  updateConversationExportLink();
+  state.outreachConversations = await api(`/api/outreach/conversations${query ? `?${query}` : ""}`);
+  const reviewCount = state.outreachConversations.filter((item) => ["waiting_reply_review", "manual_reply_needed"].includes(item.status)).length;
+  const approvalCount = state.outreachConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
+  $("#conversationSummary").innerHTML = `
+    <span>Диалогов на экране: <strong>${state.outreachConversations.length}</strong></span>
+    <span>Требуют решения: <strong>${reviewCount}</strong></span>
+    <span>Follow-up ждут подтверждения: <strong>${approvalCount}</strong></span>
+  `;
+  $("#conversationList").innerHTML = renderConversationCards(state.outreachConversations, "Диалогов по текущему фильтру нет.");
+}
+
+async function loadReviewConversations() {
+  if (!$("#reviewList")) return;
+  const query = reviewQuery();
+  updateReviewExportLink();
+  state.reviewConversations = await api(`/api/outreach/conversations?${query}`);
+  const approvalCount = state.reviewConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
+  const unknownCount = state.reviewConversations.filter((item) => !item.classification || item.classification === "unknown").length;
+  $("#reviewSummary").innerHTML = `
+    <span>Ждут решения: <strong>${state.reviewConversations.length}</strong></span>
+    <span>Без классификации: <strong>${unknownCount}</strong></span>
+    <span>Follow-up ждут разрешения: <strong>${approvalCount}</strong></span>
+  `;
+  $("#reviewList").innerHTML = renderConversationCards(
+    state.reviewConversations,
+    "Сейчас нет диалогов, которые требуют решения. Когда придет ответ, он появится здесь.",
+  );
 }
 
 async function openConversation(conversationId) {
@@ -1445,6 +1503,7 @@ async function openConversation(conversationId) {
       <span>Класс: <strong>${esc(statusLabel(detail.conversation.classification || "unknown"))}</strong></span>
       <span>Следующее действие: <strong>${esc(nextActionLabel(detail.conversation.next_action))}</strong></span>
     </div>
+    ${classificationSelect(detail.conversation)}
     <h3>Переписка</h3>
     <div class="cards conversation-thread">
       ${detail.messages.length
@@ -1616,6 +1675,7 @@ async function refresh() {
     loadQueue(),
     loadInbox(),
     loadConversations(),
+    loadReviewConversations(),
     loadWarmup(),
     loadSuppressions(),
     loadEvents(),
@@ -2083,7 +2143,7 @@ document.body.addEventListener("submit", (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    await Promise.all([loadConversations(), loadQueue(), loadOutreachDrafts()]);
+    await Promise.all([loadConversations(), loadReviewConversations(), loadQueue(), loadOutreachDrafts()]);
     await openConversation(conversationId);
     setActionResult({
       status: "success",
@@ -2113,7 +2173,7 @@ document.body.addEventListener("click", (event) => {
     }, async () => {
       const result = await api(`/api/outreach/drafts/${cancelDraftId}/cancel`, { method: "POST" });
       state.selectedOutreachDraftIds.delete(cancelDraftId);
-      await Promise.all([loadOutreachDrafts(), loadQueue(), loadConversations()]);
+      await Promise.all([loadOutreachDrafts(), loadQueue(), loadConversations(), loadReviewConversations()]);
       setActionResult({
         status: "success",
         title: "Отмена черновика",
@@ -2127,6 +2187,8 @@ document.body.addEventListener("click", (event) => {
 ["conversationStatusFilter", "conversationClassificationFilter", "conversationReviewOnly"].forEach((id) => {
   document.getElementById(id)?.addEventListener("change", () => loadConversations());
 });
+
+$("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewConversations());
 
 document.body.addEventListener("click", (event) => {
   const openId = event.target.dataset.openConversation;
@@ -2142,7 +2204,7 @@ document.body.addEventListener("click", (event) => {
   if (stopId) {
     runAction({ title: "Остановка цепочки", button: event.target }, async () => {
       const result = await api(`/api/outreach/conversations/${stopId}/stop`, { method: "POST" });
-      await Promise.all([loadConversations(), loadQueue(), loadOutreachDrafts()]);
+      await Promise.all([loadConversations(), loadReviewConversations(), loadQueue(), loadOutreachDrafts()]);
       setActionResult({
         status: "success",
         title: "Остановка цепочки",
@@ -2155,7 +2217,7 @@ document.body.addEventListener("click", (event) => {
   if (continueId) {
     runAction({ title: "Продолжение follow-up", button: event.target }, async () => {
       const result = await api(`/api/outreach/conversations/${continueId}/continue`, { method: "POST" });
-      await Promise.all([loadConversations(), loadQueue(), loadOutreachDrafts()]);
+      await Promise.all([loadConversations(), loadReviewConversations(), loadQueue(), loadOutreachDrafts()]);
       setActionResult({
         status: "success",
         title: "Продолжение follow-up",
@@ -2554,6 +2616,28 @@ document.body.addEventListener("change", async (event) => {
       status: "success",
       title: "Классификация ответа",
       message: `Класс ответа обновлен на ${event.target.value}.`,
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("change", async (event) => {
+  const conversationId = event.target.dataset.classifyConversation;
+  if (!conversationId) return;
+  await runAction({
+    title: "Классификация диалога",
+  }, async () => {
+    const result = await api(`/api/outreach/conversations/${conversationId}/classification`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classification: event.target.value }),
+    });
+    await Promise.all([loadConversations(), loadReviewConversations(), loadDashboard()]);
+    if ($("#conversationDialog").open) await openConversation(conversationId);
+    setActionResult({
+      status: "success",
+      title: "Классификация диалога",
+      message: `Диалог помечен как «${statusLabel(event.target.value)}». Отменено будущих follow-up: ${result.cancelledQueue || 0}.`,
       details: result,
     });
   });

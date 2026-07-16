@@ -43,6 +43,25 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
+const REPLY_CLASSIFICATIONS = new Set([
+  "positive_reply",
+  "neutral_reply",
+  "negative_reply",
+  "auto_reply",
+  "unsubscribe",
+  "not_target",
+  "bounce",
+  "unknown",
+]);
+
+const STOPPING_REPLY_CLASSIFICATIONS = new Set([
+  "positive_reply",
+  "negative_reply",
+  "unsubscribe",
+  "not_target",
+  "bounce",
+]);
+
 function timingSafeEqualText(left, right) {
   const leftBuffer = Buffer.from(String(left || ""));
   const rightBuffer = Buffer.from(String(right || ""));
@@ -1388,6 +1407,118 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
   ]);
 
   res.json({ conversation, messages: messages.rows, drafts: drafts.rows, queue: queue.rows });
+}));
+
+app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (req, res) => {
+  const classification = cleanText(req.body.classification);
+  if (!REPLY_CLASSIFICATIONS.has(classification)) {
+    return res.status(400).json({ error: "classification_invalid" });
+  }
+  const conversation = (await query(
+    `
+      SELECT oc.*, l.email AS lead_email, l.domain AS lead_domain
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      WHERE oc.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+
+  const nextStatus = {
+    positive_reply: "positive",
+    negative_reply: "negative",
+    auto_reply: "manual_reply_needed",
+    unsubscribe: "unsubscribed",
+    not_target: "not_target",
+    bounce: "bounced",
+  }[classification] || "waiting_reply_review";
+  const nextAction = {
+    positive_reply: "reply_manually_or_stop",
+    negative_reply: "sequence_stopped_after_negative_reply",
+    auto_reply: "decide_followup_after_auto_reply",
+    unsubscribe: "sequence_stopped_after_unsubscribe",
+    not_target: "sequence_stopped_not_target",
+    bounce: "sequence_stopped_after_bounce",
+  }[classification] || "approve_or_pause_followup";
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const updatedConversation = await client.query(
+        `
+          UPDATE outreach_conversations
+          SET classification = $2,
+              status = $3,
+              next_action = $4,
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [conversation.id, classification, nextStatus, nextAction],
+      );
+      const updatedMessage = await client.query(
+        `
+          UPDATE messages
+          SET reply_classification = $2,
+              reply_classification_source = 'manual'
+          WHERE id = (
+            SELECT id
+            FROM messages
+            WHERE lead_id = $1
+              AND direction = 'inbound'
+              AND type <> 'warmup'
+            ORDER BY COALESCE(received_at, created_at) DESC
+            LIMIT 1
+          )
+          RETURNING *
+        `,
+        [conversation.lead_id, classification],
+      );
+      let cancelledQueue = 0;
+      if (STOPPING_REPLY_CLASSIFICATIONS.has(classification)) {
+        const cancelled = await client.query(
+          `
+            UPDATE sending_queue
+            SET status = 'cancelled',
+                last_error = 'Отменено после ручной классификации ответа',
+                updated_at = now()
+            WHERE lead_id = $1
+              AND outreach_draft_id IS NOT NULL
+              AND status IN ('pending','retrying')
+            RETURNING outreach_step_id
+          `,
+          [conversation.lead_id],
+        );
+        cancelledQueue = cancelled.rowCount;
+        const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
+        if (stepIds.length) {
+          await client.query(
+            "UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])",
+            [stepIds],
+          );
+        }
+      }
+      if (classification === "unsubscribe") {
+        await client.query(
+          "INSERT INTO suppressions(email, domain, reason, source) VALUES ($1,$2,'unsubscribe','manual') ON CONFLICT DO NOTHING",
+          [conversation.email || conversation.lead_email, conversation.lead_domain],
+        );
+      }
+      await client.query("COMMIT");
+      return { conversation: updatedConversation.rows[0], message: updatedMessage.rows[0] || null, cancelledQueue };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("reply_classified", {
+    leadId: conversation.lead_id,
+    messageId: result.message?.id,
+    payload: { conversationId: conversation.id, classification, source: "manual" },
+  });
+  res.json(result);
 }));
 
 app.post("/api/outreach/conversations/:id/stop", asyncHandler(async (req, res) => {

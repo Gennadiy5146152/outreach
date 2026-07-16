@@ -856,6 +856,10 @@ fieldset.field {
   color: var(--muted);
 }
 
+.compact-field {
+  max-width: 360px;
+}
+
 .segment-picker {
   position: relative;
   display: grid;
