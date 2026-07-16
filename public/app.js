@@ -753,6 +753,7 @@ async function loadLeads() {
 async function loadOutreachImports() {
   if (!$("#outreachImportsTable")) return;
   state.outreachImports = await api("/api/outreach/imports");
+  renderAiExportFilters();
   $("#outreachImportsTable").innerHTML = `
     <thead><tr><th>Файл</th><th>Тип</th><th>Строки</th><th>Готово</th><th>Исправить</th><th>Когда</th><th>Отчет</th></tr></thead>
     <tbody>
@@ -1332,6 +1333,7 @@ async function loadCampaigns() {
     : `<article class="card"><strong>Рассылок пока нет</strong><p>Создай кампанию, затем добавь хотя бы один шаг письма.</p></article>`;
   renderSetupChecklist();
   renderCampaignStepList();
+  renderAiExportFilters();
   await loadCampaignLeads();
 }
 
@@ -1574,12 +1576,16 @@ function aiExportQuery() {
   const status = $("#aiExportStatus")?.value || "";
   const classification = $("#aiExportClassification")?.value || "";
   const segment = $("#aiExportSegment")?.value || "";
+  const campaignId = $("#aiExportCampaign")?.value || "";
+  const importId = $("#aiExportImport")?.value || "";
   const mailboxId = $("#aiExportMailbox")?.value || "";
   const dateFrom = $("#aiExportDateFrom")?.value || "";
   const dateTo = $("#aiExportDateTo")?.value || "";
   if (status) params.set("status", status);
   if (classification) params.set("classification", classification);
   if (segment) params.set("segment", segment);
+  if (campaignId) params.set("campaign_id", campaignId);
+  if (importId) params.set("import_id", importId);
   if (mailboxId) params.set("mailbox_id", mailboxId);
   if (dateFrom) params.set("date_from", dateFrom);
   if (dateTo) params.set("date_to", dateTo);
@@ -1590,11 +1596,23 @@ function aiExportQuery() {
 
 function renderAiExportFilters() {
   const segmentSelect = $("#aiExportSegment");
+  const campaignSelect = $("#aiExportCampaign");
+  const importSelect = $("#aiExportImport");
   const mailboxSelect = $("#aiExportMailbox");
   if (segmentSelect) {
     const current = segmentSelect.value;
     segmentSelect.innerHTML = `<option value="">Все сегменты</option>${state.segments.map((segment) => `<option value="${esc(segment)}">${esc(segment)}</option>`).join("")}`;
     if (state.segments.includes(current)) segmentSelect.value = current;
+  }
+  if (campaignSelect) {
+    const current = campaignSelect.value;
+    campaignSelect.innerHTML = `<option value="">Все рассылки</option>${state.campaigns.map((campaign) => `<option value="${campaign.id}">${esc(campaign.name)}</option>`).join("")}`;
+    if (state.campaigns.some((campaign) => campaign.id === current)) campaignSelect.value = current;
+  }
+  if (importSelect) {
+    const current = importSelect.value;
+    importSelect.innerHTML = `<option value="">Все импорты</option>${state.outreachImports.map((item) => `<option value="${item.id}">${esc(item.file_name)}${item.created_at ? ` · ${fmtDate(item.created_at)}` : ""}</option>`).join("")}`;
+    if (state.outreachImports.some((item) => item.id === current)) importSelect.value = current;
   }
   if (mailboxSelect) {
     const current = mailboxSelect.value;
@@ -1614,6 +1632,8 @@ function updateAiExportLinks() {
   if ($("#aiExportStatus")?.value) filters.push(`статус: ${statusLabel($("#aiExportStatus").value)}`);
   if ($("#aiExportClassification")?.value) filters.push(`класс: ${statusLabel($("#aiExportClassification").value)}`);
   if ($("#aiExportSegment")?.value) filters.push(`сегмент: ${$("#aiExportSegment").value}`);
+  if ($("#aiExportCampaign")?.value) filters.push(`рассылка: ${$("#aiExportCampaign").selectedOptions[0]?.textContent || ""}`);
+  if ($("#aiExportImport")?.value) filters.push(`импорт: ${$("#aiExportImport").selectedOptions[0]?.textContent || ""}`);
   if ($("#aiExportMailbox")?.value) filters.push(`ящик: ${$("#aiExportMailbox").selectedOptions[0]?.textContent || ""}`);
   if ($("#aiExportDateFrom")?.value || $("#aiExportDateTo")?.value) filters.push("по датам");
   if ($("#aiExportReviewOnly")?.checked) filters.push("только требуют решения");
@@ -1952,6 +1972,7 @@ async function refresh() {
     loadEvents(),
     loadSettings(),
   ]);
+  renderAiExportFilters();
 }
 
 $$("nav button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
@@ -2545,6 +2566,8 @@ $("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewCon
   "aiExportStatus",
   "aiExportClassification",
   "aiExportSegment",
+  "aiExportCampaign",
+  "aiExportImport",
   "aiExportMailbox",
   "aiExportDateFrom",
   "aiExportDateTo",

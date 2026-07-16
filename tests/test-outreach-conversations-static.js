@@ -16,6 +16,8 @@ for (const expected of [
   "aiExportJsonlLink",
   "aiExportJsonLink",
   "aiExportCsvLink",
+  "aiExportCampaign",
+  "aiExportImport",
   "reviewClassificationFilter",
   "reviewExportLink",
   "conversationStatusFilter",
@@ -40,6 +42,8 @@ for (const expected of [
   "function aiExportQuery()",
   "function updateAiExportLinks()",
   "function renderAiExportFilters()",
+  "campaign_id",
+  "import_id",
   "function classificationSelect",
   "async function openConversation",
   "Отменено будущих follow-up",
@@ -90,6 +94,10 @@ for (const expected of [
   "reason: \"manual_stop\"",
   "sendMail(mailbox",
   "Content-Disposition",
+  "campaign_name",
+  "import_file_name",
+  "oc.campaign_id = $9::uuid",
+  "oc.import_id = $10::uuid",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`conversations API should include ${expected}`);

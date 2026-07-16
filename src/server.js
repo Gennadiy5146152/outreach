@@ -1580,6 +1580,8 @@ async function outreachConversationExportRows(req) {
   const onlyReplied = toBool(req.query.replied);
   const segment = req.query.segment || "";
   const mailboxId = isUuid(req.query.mailbox_id) ? req.query.mailbox_id : "";
+  const campaignId = isUuid(req.query.campaign_id) ? req.query.campaign_id : "";
+  const importId = isUuid(req.query.import_id) ? req.query.import_id : "";
   const dateFrom = optionalDateFilter(req.query.date_from);
   const dateTo = optionalDateFilter(req.query.date_to);
   const conversations = (await query(
@@ -1592,6 +1594,8 @@ async function outreachConversationExportRows(req) {
              l.segment,
              l.city,
              l.notes,
+             c.name AS campaign_name,
+             oi.file_name AS import_file_name,
              stats.messages_total,
              stats.outbound_total,
              stats.inbound_total,
@@ -1600,6 +1604,8 @@ async function outreachConversationExportRows(req) {
              stats.last_message_at AS calculated_last_message_at
       FROM outreach_conversations oc
       LEFT JOIN leads l ON l.id = oc.lead_id
+      LEFT JOIN campaigns c ON c.id = oc.campaign_id
+      LEFT JOIN outreach_imports oi ON oi.id = oc.import_id
       LEFT JOIN LATERAL (
         SELECT
           count(*)::int AS messages_total,
@@ -1621,10 +1627,12 @@ async function outreachConversationExportRows(req) {
         AND ($7 = '' OR COALESCE(stats.last_message_at, oc.last_message_at, oc.updated_at, oc.created_at) >= $7::timestamptz)
         AND ($8 = '' OR COALESCE(stats.last_message_at, oc.last_message_at, oc.updated_at, oc.created_at) <= $8::timestamptz)
         AND ($6 = '' OR COALESCE(stats.messages_total, 0) > 0)
+        AND ($9 = '' OR oc.campaign_id = $9::uuid)
+        AND ($10 = '' OR oc.import_id = $10::uuid)
       ORDER BY COALESCE(oc.last_message_at, oc.updated_at, oc.created_at) DESC
       LIMIT 1000
     `,
-    [status, classification, onlyReview, segment, onlyReplied, mailboxId, dateFrom, dateTo],
+    [status, classification, onlyReview, segment, onlyReplied, mailboxId, dateFrom, dateTo, campaignId, importId],
   )).rows;
   const leadIds = conversations.map((item) => item.lead_id).filter(Boolean);
   const messages = leadIds.length
@@ -1664,7 +1672,9 @@ async function outreachConversationExportRows(req) {
       classification: conversation.classification,
       next_action: conversation.next_action,
       import_id: conversation.import_id,
+      import_file_name: conversation.import_file_name,
       campaign_id: conversation.campaign_id,
+      campaign_name: conversation.campaign_name,
       messages_total: conversation.messages_total || 0,
       outbound_total: conversation.outbound_total || 0,
       inbound_total: conversation.inbound_total || 0,
@@ -1712,6 +1722,8 @@ app.get("/api/outreach/conversations/export.csv", asyncHandler(async (req, res) 
     "company",
     "contact",
     "segment",
+    "campaign",
+    "import_file",
     "status",
     "classification",
     "messages_total",
@@ -1727,6 +1739,8 @@ app.get("/api/outreach/conversations/export.csv", asyncHandler(async (req, res) 
     row.lead.company,
     row.lead.contact,
     row.lead.segment,
+    row.conversation.campaign_name,
+    row.conversation.import_file_name,
     row.conversation.status,
     row.conversation.classification,
     row.conversation.messages_total,
