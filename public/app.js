@@ -775,23 +775,23 @@ async function loadOutreachImports() {
 }
 
 const OUTREACH_MAPPING_FIELDS = [
-  ["email", "Почта получателя", "Обязательно: на этот адрес уйдет письмо.", true],
-  ["subject", "Тема письма", "Обязательно: тема первого письма.", true],
-  ["body", "Текст письма", "Обязательно: готовый текст первого письма.", true],
-  ["company", "Компания", "Название компании для таблиц и анализа.", false],
-  ["contact_name", "Контакт", "Имя человека, если есть.", false],
-  ["segment", "Сегмент", "Группа лидов или ниша.", false],
-  ["mailbox", "Почта отправителя", "Какой твой ящик использовать для этой строки.", false],
-  ["send_after", "Отправить после", "Дата/время, раньше которого письмо не уйдет.", false],
-  ["followup_1_subject", "Фоллоуап 1: тема", "Тема первого follow-up.", false],
-  ["followup_1_body", "Фоллоуап 1: текст", "Текст первого follow-up.", false],
-  ["followup_1_delay_days", "Фоллоуап 1: задержка дней", "Через сколько дней отправлять.", false],
-  ["followup_2_subject", "Фоллоуап 2: тема", "Тема второго follow-up.", false],
-  ["followup_2_body", "Фоллоуап 2: текст", "Текст второго follow-up.", false],
-  ["followup_2_delay_days", "Фоллоуап 2: задержка дней", "Через сколько дней отправлять.", false],
-  ["followup_3_subject", "Фоллоуап 3: тема", "Тема третьего follow-up.", false],
-  ["followup_3_body", "Фоллоуап 3: текст", "Текст третьего follow-up.", false],
-  ["followup_3_delay_days", "Фоллоуап 3: задержка дней", "Через сколько дней отправлять.", false],
+  ["email", "Кому отправить", "Обязательно. Выбери столбец с email получателя.", true, "required"],
+  ["subject", "Тема первого письма", "Обязательно. Выбери столбец с темой письма.", true, "required"],
+  ["body", "Текст первого письма", "Обязательно. Выбери столбец с готовым текстом письма.", true, "required"],
+  ["company", "Компания", "Для удобства в таблицах, диалогах и AI-выгрузке.", false, "lead"],
+  ["contact_name", "Контакт", "Имя человека, если хочешь видеть его в карточках.", false, "lead"],
+  ["segment", "Сегмент", "Группа лидов: ниша, тип клиента или гипотеза.", false, "lead"],
+  ["mailbox", "Почта отправителя", "Заполняй только если конкретное письмо должно уйти с конкретного твоего ящика.", false, "lead"],
+  ["send_after", "Отправить после", "Заполняй только если письмо нельзя отправлять раньше конкретной даты.", false, "lead"],
+  ["followup_1_subject", "Тема follow-up 1", "Заполняй только если хочешь второе письмо в цепочке.", false, "followup"],
+  ["followup_1_body", "Текст follow-up 1", "Если человек ответит, этот follow-up автоматически остановится.", false, "followup"],
+  ["followup_1_delay_days", "Задержка follow-up 1", "Через сколько дней отправить follow-up 1. Например: 3.", false, "followup"],
+  ["followup_2_subject", "Тема follow-up 2", "Третье касание, если ответа не было.", false, "followup"],
+  ["followup_2_body", "Текст follow-up 2", "Можно не заполнять, тогда этого шага не будет.", false, "followup"],
+  ["followup_2_delay_days", "Задержка follow-up 2", "Через сколько дней отправить follow-up 2. Например: 7.", false, "followup"],
+  ["followup_3_subject", "Тема follow-up 3", "Финальное касание, если оно нужно.", false, "followup"],
+  ["followup_3_body", "Текст follow-up 3", "Можно не заполнять, тогда этого шага не будет.", false, "followup"],
+  ["followup_3_delay_days", "Задержка follow-up 3", "Через сколько дней отправить follow-up 3. Например: 14.", false, "followup"],
 ];
 
 function currentOutreachMapping() {
@@ -822,14 +822,26 @@ function renderOutreachImportPreview() {
       <small>${esc(hint)}</small>
     </label>
   `;
+  const fieldsByGroup = (group) => OUTREACH_MAPPING_FIELDS.filter(([, , , , fieldGroup]) => fieldGroup === group);
   $("#outreachColumnMapping").innerHTML = `
+    <div class="mapping-intro">
+      <strong>Для отправки нужны только 3 поля:</strong>
+      <span>кому отправить, тема первого письма и текст первого письма. Остальное можно не использовать.</span>
+    </div>
     <section class="mapping-section">
-      <h3>Обязательные поля</h3>
-      <div class="mapping-grid">${OUTREACH_MAPPING_FIELDS.filter(([, , , required]) => required).map(mappingField).join("")}</div>
+      <h3>1. Проверь обязательные поля</h3>
+      <p>Если справа уже выбраны правильные столбцы из файла, ничего менять не нужно.</p>
+      <div class="mapping-grid">${fieldsByGroup("required").map(mappingField).join("")}</div>
     </section>
-    <details class="mapping-section" open>
-      <summary>Дополнительные поля</summary>
-      <div class="mapping-grid">${OUTREACH_MAPPING_FIELDS.filter(([, , , required]) => !required).map(mappingField).join("")}</div>
+    <details class="mapping-section">
+      <summary>2. Данные лида для удобства</summary>
+      <p>Эти поля не влияют на саму отправку. Они нужны, чтобы потом удобнее искать диалоги, фильтровать базу и анализировать ответы.</p>
+      <div class="mapping-grid">${fieldsByGroup("lead").map(mappingField).join("")}</div>
+    </details>
+    <details class="mapping-section">
+      <summary>3. Follow-up письма, если нужна цепочка</summary>
+      <p>Заполняй только если хочешь отправлять следующие письма при отсутствии ответа. Если человек ответит, будущие follow-up остановятся.</p>
+      <div class="mapping-grid">${fieldsByGroup("followup").map(mappingField).join("")}</div>
     </details>
   `;
   const blocked = preview.errors.filter((item) => item.status === "blocked").length;

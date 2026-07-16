@@ -829,10 +829,30 @@ h2 {
   color: var(--ink);
 }
 
+.mapping-intro {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid rgba(22, 116, 95, 0.28);
+  border-radius: 8px;
+  background: #f8fcfa;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.mapping-intro strong {
+  color: var(--accent);
+}
+
 .mapping-section {
   display: grid;
   gap: 10px;
   margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
 }
 
 .mapping-section h3,
@@ -844,6 +864,12 @@ h2 {
 
 .mapping-section summary {
   cursor: pointer;
+}
+
+.mapping-section p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .mapping-field {
