@@ -1633,7 +1633,7 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
   )).rows[0];
   if (!conversation) return res.status(404).json({ error: "not_found" });
 
-  const [messages, drafts, queue] = await Promise.all([
+  const [messages, drafts, queue, events] = await Promise.all([
     query(
       `
         SELECT msg.*, m.email AS mailbox_email
@@ -1677,9 +1677,37 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
       `,
       [conversation.lead_id],
     ),
+    query(
+      `
+        SELECT *
+        FROM events
+        WHERE lead_id = $1
+          AND (
+            payload->>'conversationId' = $2
+            OR event_type IN (
+              'email_replied',
+              'positive_reply_received',
+              'neutral_reply_received',
+              'negative_reply_received',
+              'auto_reply_received',
+              'unsubscribe_received',
+              'unsubscribe_detected',
+              'not_target_received',
+              'email_bounced',
+              'reply_classified',
+              'outreach_conversation_stopped',
+              'outreach_conversation_continued',
+              'manual_reply_sent'
+            )
+          )
+        ORDER BY created_at DESC
+        LIMIT 50
+      `,
+      [conversation.lead_id, conversation.id],
+    ),
   ]);
 
-  res.json({ conversation, messages: messages.rows, drafts: drafts.rows, queue: queue.rows });
+  res.json({ conversation, messages: messages.rows, drafts: drafts.rows, queue: queue.rows, events: events.rows });
 }));
 
 app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (req, res) => {
@@ -1789,7 +1817,16 @@ app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (
   await logEvent("reply_classified", {
     leadId: conversation.lead_id,
     messageId: result.message?.id,
-    payload: { conversationId: conversation.id, classification, source: "manual" },
+    payload: {
+      conversationId: conversation.id,
+      classification,
+      source: "manual",
+      previousStatus: conversation.status,
+      nextStatus,
+      nextAction,
+      cancelledQueue: result.cancelledQueue,
+      reason: STOPPING_REPLY_CLASSIFICATIONS.has(classification) ? classification : "manual_classification",
+    },
   });
   res.json(result);
 }));
@@ -1833,7 +1870,15 @@ app.post("/api/outreach/conversations/:id/stop", asyncHandler(async (req, res) =
   );
   await logEvent("outreach_conversation_stopped", {
     leadId: conversation.lead_id,
-    payload: { conversationId: conversation.id, cancelledQueue: result.rows[0].cancelled_queue },
+    payload: {
+      conversationId: conversation.id,
+      reason: "manual_stop",
+      previousStatus: conversation.status,
+      nextStatus: "paused",
+      nextAction: "stopped_by_user",
+      cancelledQueue: result.rows[0].cancelled_queue,
+      cancelledSteps: result.rows[0].cancelled_steps,
+    },
   });
   res.json(result.rows[0]);
 }));
@@ -1877,7 +1922,15 @@ app.post("/api/outreach/conversations/:id/continue", asyncHandler(async (req, re
   );
   await logEvent("outreach_conversation_continued", {
     leadId: conversation.lead_id,
-    payload: { conversationId: conversation.id, approvedQueue: result.rows[0].approved_queue },
+    payload: {
+      conversationId: conversation.id,
+      reason: "manual_continue",
+      previousStatus: conversation.status,
+      nextStatus: "active_sequence",
+      nextAction: "followup_allowed",
+      approvedQueue: result.rows[0].approved_queue,
+      approvedSteps: result.rows[0].approved_steps,
+    },
   });
   res.json(result.rows[0]);
 }));
@@ -2026,7 +2079,16 @@ app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) 
     leadId: conversation.lead_id,
     mailboxId: mailbox.id,
     messageId: result.message.id,
-    payload: { conversationId: conversation.id, to: parsed.normalized, dryRun: runtime.dryRun, cancelledQueue: result.cancelledQueue },
+    payload: {
+      conversationId: conversation.id,
+      to: parsed.normalized,
+      dryRun: runtime.dryRun,
+      reason: stopSequence ? "manual_reply_stop_sequence" : "manual_reply_continue_sequence",
+      previousStatus: conversation.status,
+      nextStatus: result.conversation.status,
+      nextAction: result.conversation.next_action,
+      cancelledQueue: result.cancelledQueue,
+    },
   });
   res.status(201).json({ ...result, dryRun: runtime.dryRun });
 }));

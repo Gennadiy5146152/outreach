@@ -239,12 +239,17 @@ const EVENT_LABELS = {
   email_opened: "Письмо открыто",
   mailbox_error: "Ошибка почтового ящика",
   reply_classified: "Ответ классифицирован",
+  email_replied: "Получен ответ",
+  email_bounced: "Получена недоставка",
   positive_reply_received: "Получен позитивный ответ",
   neutral_reply_received: "Получен нейтральный ответ",
   negative_reply_received: "Получен негативный ответ",
   auto_reply_received: "Получен автоответ",
   unsubscribe_received: "Получена отписка",
+  unsubscribe_detected: "Получена отписка",
   not_target_received: "Получен ответ “не целевой”",
+  outreach_conversation_stopped: "Цепочка остановлена",
+  outreach_conversation_continued: "Follow-up продолжен",
   manual_reply_sent: "Ручной ответ отправлен",
   warmup_sent: "Прогрев: письмо отправлено",
   warmup_reply_received: "Прогрев: получен ответ",
@@ -259,6 +264,18 @@ const EVENT_REASON_LABELS = {
   reply_sent: "после отправки ответа",
   active_thread_continue: "продолжение активного диалога",
   not_expected_sender: "письмо пришло не от ожидаемого ящика",
+  reply_received: "получен живой ответ",
+  positive_reply: "позитивный ответ",
+  negative_reply: "отказ",
+  auto_reply: "автоответ",
+  unsubscribe: "отписка",
+  not_target: "не целевой контакт",
+  bounce: "недоставка",
+  manual_stop: "остановлено вручную",
+  manual_continue: "продолжено вручную",
+  manual_classification: "ручная классификация",
+  manual_reply_stop_sequence: "ручной ответ, цепочка остановлена",
+  manual_reply_continue_sequence: "ручной ответ, follow-up разрешен",
 };
 
 function statusLabel(value) {
@@ -330,6 +347,11 @@ function eventSummary(event) {
   if (payload.classification) parts.push(`класс: ${statusLabel(payload.classification)}`);
   if (payload.mode) parts.push(`режим: ${queueModeLabel(payload.mode)}`);
   if (payload.reason) parts.push(`причина: ${EVENT_REASON_LABELS[payload.reason] || payload.reason}`);
+  if (payload.previousStatus) parts.push(`было: ${statusLabel(payload.previousStatus)}`);
+  if (payload.nextStatus) parts.push(`стало: ${statusLabel(payload.nextStatus)}`);
+  if (payload.nextAction) parts.push(`дальше: ${nextActionLabel(payload.nextAction)}`);
+  if (payload.cancelledQueue !== undefined) parts.push(`отменено писем: ${payload.cancelledQueue}`);
+  if (payload.approvedQueue !== undefined) parts.push(`разрешено писем: ${payload.approvedQueue}`);
   if (payload.error) parts.push(`ошибка: ${payload.error}`);
   if (payload.dryRun !== undefined) parts.push(`dry-run: ${payload.dryRun ? "да" : "нет"}`);
   if (payload.provider) parts.push(`провайдер: ${payload.provider}`);
@@ -1564,6 +1586,33 @@ function renderConversationCards(items, emptyText) {
     : `<p class="muted">${esc(emptyText)}</p>`;
 }
 
+function renderConversationEvents(events = []) {
+  const decisionEvents = events.filter((event) => [
+    "email_replied",
+    "email_bounced",
+    "positive_reply_received",
+    "neutral_reply_received",
+    "negative_reply_received",
+    "auto_reply_received",
+    "unsubscribe_received",
+    "unsubscribe_detected",
+    "not_target_received",
+    "reply_classified",
+    "outreach_conversation_stopped",
+    "outreach_conversation_continued",
+    "manual_reply_sent",
+  ].includes(event.event_type));
+  return decisionEvents.length
+    ? decisionEvents.map((event) => `
+      <article class="card audit-card">
+        <strong>${esc(eventLabel(event.event_type))}</strong>
+        <p>${fmtDate(event.created_at)}</p>
+        <p>${esc(eventSummary(event))}</p>
+      </article>
+    `).join("")
+    : `<p class="muted">Решений по этому диалогу пока нет.</p>`;
+}
+
 async function loadConversations() {
   if (!$("#conversationList")) return;
   const query = conversationQuery();
@@ -1620,6 +1669,10 @@ async function openConversation(conversationId) {
       <span>Следующее действие: <strong>${esc(nextActionLabel(detail.conversation.next_action))}</strong></span>
     </div>
     ${classificationSelect(detail.conversation)}
+    <h3>История решений</h3>
+    <div class="cards conversation-audit">
+      ${renderConversationEvents(detail.events)}
+    </div>
     <h3>Переписка</h3>
     <div class="cards conversation-thread">
       ${detail.messages.length

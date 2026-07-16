@@ -386,6 +386,18 @@ h2 {
   overflow: auto;
 }
 
+.conversation-audit {
+  gap: 8px;
+}
+
+.audit-card {
+  gap: 4px;
+}
+
+.audit-card p {
+  margin: 0;
+}
+
 .manual-reply-form {
   margin: 10px 0 16px;
   padding: 12px;

@@ -769,6 +769,38 @@ async function applyInboundEffects(message, classification) {
   if (classification === "bounce") {
     await query("UPDATE leads SET status = 'invalid', validation_status = 'invalid', validation_reason = 'bounce', updated_at = now() WHERE id = $1", [message.lead_id]);
     await query("UPDATE enrollments SET status = 'bounced', stopped_at = now(), stop_reason = 'bounce' WHERE lead_id = $1 AND status = 'active'", [message.lead_id]);
+    const cancelled = await query(
+      `
+        UPDATE sending_queue
+        SET status = 'cancelled',
+            last_error = 'Отменено после недоставки',
+            updated_at = now()
+        WHERE lead_id = $1
+          AND outreach_draft_id IS NOT NULL
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id
+      `,
+      [message.lead_id],
+    );
+    const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
+    if (stepIds.length) {
+      await query("UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])", [stepIds]);
+    }
+    const updatedConversation = await query(
+      `
+        UPDATE outreach_conversations
+        SET status = 'bounced',
+            classification = 'bounce',
+            next_action = 'sequence_stopped_after_bounce',
+            last_message_at = now(),
+            updated_at = now()
+        WHERE lead_id = $1
+        RETURNING id, status, next_action
+      `,
+      [message.lead_id],
+    );
+    message.conversation_id = updatedConversation.rows[0]?.id || null;
+    message.cancelled_queue = cancelled.rowCount;
   } else if (classification === "unsubscribe") {
     const lead = (await query("SELECT email, domain FROM leads WHERE id = $1", [message.lead_id])).rows[0];
     await query(
@@ -777,6 +809,53 @@ async function applyInboundEffects(message, classification) {
     );
     await query("UPDATE leads SET status = 'suppressed', suppressed_at = now(), suppression_reason = 'unsubscribe', updated_at = now() WHERE id = $1", [message.lead_id]);
     await query("UPDATE enrollments SET status = 'unsubscribed', stopped_at = now(), stop_reason = 'unsubscribe' WHERE lead_id = $1 AND status = 'active'", [message.lead_id]);
+    const cancelled = await query(
+      `
+        UPDATE sending_queue
+        SET status = 'cancelled',
+            last_error = 'Отменено после отписки',
+            updated_at = now()
+        WHERE lead_id = $1
+          AND outreach_draft_id IS NOT NULL
+          AND status IN ('pending','retrying')
+        RETURNING outreach_step_id
+      `,
+      [message.lead_id],
+    );
+    const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
+    if (stepIds.length) {
+      await query("UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])", [stepIds]);
+    }
+    const updatedConversation = await query(
+      `
+        UPDATE outreach_conversations
+        SET status = 'unsubscribed',
+            classification = 'unsubscribe',
+            next_action = 'sequence_stopped_after_unsubscribe',
+            last_message_at = now(),
+            updated_at = now()
+        WHERE lead_id = $1
+        RETURNING id, status, next_action
+      `,
+      [message.lead_id],
+    );
+    message.conversation_id = updatedConversation.rows[0]?.id || null;
+    message.cancelled_queue = cancelled.rowCount;
+  } else if (classification === "auto_reply") {
+    const updatedConversation = await query(
+      `
+        UPDATE outreach_conversations
+        SET status = 'manual_reply_needed',
+            classification = 'auto_reply',
+            next_action = 'decide_followup_after_auto_reply',
+            last_message_at = now(),
+            updated_at = now()
+        WHERE lead_id = $1
+        RETURNING id, status, next_action
+      `,
+      [message.lead_id],
+    );
+    message.conversation_id = updatedConversation.rows[0]?.id || null;
   } else if (classification !== "auto_reply") {
     await query("UPDATE leads SET status = 'replied', updated_at = now() WHERE id = $1", [message.lead_id]);
     await query("UPDATE enrollments SET status = 'replied', stopped_at = now(), stop_reason = 'reply' WHERE lead_id = $1 AND status = 'active'", [message.lead_id]);
@@ -800,7 +879,7 @@ async function applyInboundEffects(message, classification) {
         [heldStepIds],
       );
     }
-    await query(
+    const updatedConversation = await query(
       `
         UPDATE outreach_conversations
         SET status = 'waiting_reply_review',
@@ -809,9 +888,11 @@ async function applyInboundEffects(message, classification) {
             last_message_at = now(),
             updated_at = now()
         WHERE lead_id = $1
+        RETURNING id, status, next_action
       `,
       [message.lead_id, classification],
     );
+    message.conversation_id = updatedConversation.rows[0]?.id || null;
   }
 
   await logEvent(eventType, {
@@ -819,7 +900,14 @@ async function applyInboundEffects(message, classification) {
     campaignId: message.campaign_id,
     mailboxId: message.mailbox_id,
     messageId: message.id,
-    payload: { classification },
+    payload: {
+      conversationId: message.conversation_id,
+      classification,
+      reason: classification === "auto_reply" ? "auto_reply" : classification === "bounce" ? "bounce" : classification === "unsubscribe" ? "unsubscribe" : "reply_received",
+      nextStatus: classification === "auto_reply" ? "manual_reply_needed" : classification === "bounce" ? "bounced" : classification === "unsubscribe" ? "unsubscribed" : "waiting_reply_review",
+      nextAction: classification === "auto_reply" ? "decide_followup_after_auto_reply" : classification === "bounce" ? "sequence_stopped_after_bounce" : classification === "unsubscribe" ? "sequence_stopped_after_unsubscribe" : "approve_or_pause_followup",
+      cancelledQueue: message.cancelled_queue,
+    },
   });
 }
 
