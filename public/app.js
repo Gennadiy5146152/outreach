@@ -2217,10 +2217,15 @@ document.body.addEventListener("submit", (event) => {
       body: JSON.stringify(payload),
     });
     await Promise.all([loadOutreachDrafts(), loadQueue()]);
+    const hasGuardErrors = Array.isArray(result.guard_errors) && result.guard_errors.length > 0;
     setActionResult({
-      status: "success",
+      status: hasGuardErrors ? "warn" : "success",
       title: "Сохранение follow-up",
-      message: result.removed ? "Follow-up удален из цепочки." : "Follow-up сохранен.",
+      message: result.removed
+        ? "Follow-up удален из цепочки."
+        : hasGuardErrors
+          ? "Follow-up сохранен как “нужно исправить”: убери незаполненные переменные перед запуском."
+          : "Follow-up сохранен.",
       details: result,
     });
   });

@@ -61,6 +61,9 @@ for (const expected of [
   "INSERT INTO outreach_draft_steps",
   "outreachStepsFromRow",
   "outreachDraftStatus",
+  "unresolvedPersonalizationMarkers",
+  "personalizationGuardErrors",
+  "незаполненные переменные",
   "sent_step_cannot_be_edited",
   "outreach_draft_cancelled",
 ]) {
@@ -131,6 +134,7 @@ for (const expected of [
   "data-cancel-draft",
   "Follow-up",
   "Сохранение follow-up",
+  "Follow-up сохранен как “нужно исправить”",
   "Отмена черновика",
   "switchView(\"outreachDrafts\")",
   "нужно исправить",
@@ -148,6 +152,7 @@ for (const expected of [
   "UPDATE outreach_drafts SET status = 'active_sequence'",
   "requires_approval = true",
   "approve_or_pause_followup",
+  "AND status <> 'blocked'",
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should support outreach draft sequences: ${expected}`);

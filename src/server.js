@@ -328,12 +328,42 @@ function outreachStepsFromRow(row) {
     }));
 }
 
-function outreachDraftStatus({ email, subject, body }) {
+function unresolvedPersonalizationMarkers(value) {
+  const text = String(value || "");
+  const markers = [
+    ...text.matchAll(/\{\{\s*[^{}]+\s*}}/g),
+    ...text.matchAll(/\[\[\s*[^\[\]]+\s*]]/g),
+    ...text.matchAll(/<<\s*[^<>]+\s*>>/g),
+  ].map((match) => match[0].trim());
+  const rawMarkers = markers.length
+    ? []
+    : [...text.matchAll(/\b(first_name|last_name|company_name|contact_name|client_name|имя_клиента|название_компании)\b/gi)]
+      .map((match) => match[0].trim());
+  return [...new Set([...markers, ...rawMarkers])].slice(0, 5);
+}
+
+function personalizationGuardErrors({ subject, body }, prefix = "") {
+  const errors = [];
+  const subjectMarkers = unresolvedPersonalizationMarkers(subject);
+  const bodyMarkers = unresolvedPersonalizationMarkers(body);
+  if (subjectMarkers.length) errors.push(`${prefix}в теме остались незаполненные переменные: ${subjectMarkers.join(", ")}`);
+  if (bodyMarkers.length) errors.push(`${prefix}в тексте остались незаполненные переменные: ${bodyMarkers.join(", ")}`);
+  return errors;
+}
+
+function outreachDraftStatus({ email, subject, body, steps = [] }) {
   const parsed = parseEmail(email);
   const errors = [];
   if (!email || !parsed.syntaxValid) errors.push("Некорректный email");
   if (!subject) errors.push("Нет темы письма");
   if (!body) errors.push("Нет текста письма");
+  errors.push(...personalizationGuardErrors({ subject, body }).map((error) => error[0].toUpperCase() + error.slice(1)));
+  for (const step of steps.filter((item) => Number(item.position) > 1)) {
+    errors.push(...personalizationGuardErrors(
+      { subject: step.subject, body: step.body || step.body_text },
+      `Follow-up ${Number(step.position) - 1}: `,
+    ));
+  }
   return { parsed, errors, status: errors.length ? "blocked" : "ready" };
 }
 
@@ -831,7 +861,12 @@ app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler
   const mapping = Object.keys(manualMapping).length ? manualMapping : inferOutreachMapping(rows);
   const mappedRows = rowsToOutreachRows(rows, mapping);
   const errors = mappedRows.slice(0, 50).map((row) => {
-    const check = outreachDraftStatus({ email: row.email, subject: row.subject, body: row.body });
+    const check = outreachDraftStatus({
+      email: row.email,
+      subject: row.subject,
+      body: row.body,
+      steps: outreachStepsFromRow(row),
+    });
     return {
       row: row.source_row_number,
       email: row.email,
@@ -924,6 +959,8 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
   const bodyText = cleanText(req.body.body_text);
   const delayDays = Number(req.body.delay_days || 0);
   if (!Number.isFinite(delayDays) || delayDays < 0) return res.status(400).json({ error: "invalid_delay_days" });
+  const guardErrors = personalizationGuardErrors({ subject, body: bodyText }, `Follow-up ${position - 1}: `);
+  const nextStepStatus = guardErrors.length ? "blocked" : "draft";
 
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
@@ -965,34 +1002,49 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
       const step = await client.query(
         `
           INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
-          VALUES ($1,$2,$3,$4,$5,'draft')
+          VALUES ($1,$2,$3,$4,$5,$6)
           ON CONFLICT (draft_id, position) DO UPDATE SET
             subject = EXCLUDED.subject,
             body_text = EXCLUDED.body_text,
             delay_days = EXCLUDED.delay_days,
             status = CASE
+              WHEN EXCLUDED.status = 'blocked' THEN 'blocked'
               WHEN outreach_draft_steps.status IN ('queued','needs_approval') THEN outreach_draft_steps.status
-              ELSE 'draft'
+              ELSE EXCLUDED.status
             END,
             updated_at = now()
           RETURNING *
         `,
-        [draft.id, position, subject || draft.subject, bodyText, delayDays],
+        [draft.id, position, subject || draft.subject, bodyText, delayDays, nextStepStatus],
       );
-      await client.query(
-        `
-          UPDATE sending_queue
-          SET subject_override = $2,
-              body_text_override = $3,
-              body_html_override = $4,
-              updated_at = now()
-          WHERE outreach_step_id = $1
-            AND status IN ('pending','retrying')
-        `,
-        [step.rows[0].id, subject || draft.subject, bodyText, bodyText.replace(/\n/g, "<br>")],
-      );
+      if (guardErrors.length) {
+        await client.query(
+          `
+            UPDATE sending_queue
+            SET status = 'cancelled',
+                last_error = $2,
+                updated_at = now()
+            WHERE outreach_step_id = $1
+              AND status IN ('pending','retrying')
+          `,
+          [step.rows[0].id, guardErrors.join("; ")],
+        );
+      } else {
+        await client.query(
+          `
+            UPDATE sending_queue
+            SET subject_override = $2,
+                body_text_override = $3,
+                body_html_override = $4,
+                updated_at = now()
+            WHERE outreach_step_id = $1
+              AND status IN ('pending','retrying')
+          `,
+          [step.rows[0].id, subject || draft.subject, bodyText, bodyText.replace(/\n/g, "<br>")],
+        );
+      }
       await client.query("COMMIT");
-      return step.rows[0];
+      return { ...step.rows[0], guard_errors: guardErrors };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -1051,7 +1103,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
   if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
   const runtime = await getRuntimeSettings();
-  const [drafts, readyMailboxes] = await Promise.all([
+  const [drafts, readyMailboxes, draftSteps] = await Promise.all([
     query(
       `
         SELECT d.id, d.to_email, d.company, d.contact_name, d.subject, d.body_text,
@@ -1090,8 +1142,23 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
         AND imap_verified_at IS NOT NULL
       ORDER BY updated_at DESC, created_at ASC
     `),
+    query(
+      `
+        SELECT draft_id, position, subject, body_text, status
+        FROM outreach_draft_steps
+        WHERE draft_id = ANY($1::uuid[])
+        ORDER BY draft_id, position
+      `,
+      [draftIds],
+    ),
   ]);
   const rows = drafts.rows;
+  const stepsByDraft = new Map();
+  for (const step of draftSteps.rows) {
+    const list = stepsByDraft.get(step.draft_id) || [];
+    list.push(step);
+    stepsByDraft.set(step.draft_id, list);
+  }
   const foundIds = new Set(rows.map((row) => row.id));
   const errors = [];
   const warnings = [];
@@ -1115,9 +1182,15 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     const label = `${draft.company || "Без компании"} · ${draft.to_email}`;
     const rowErrors = [];
     const rowWarnings = [];
+    const stepGuardErrors = (stepsByDraft.get(draft.id) || [])
+      .flatMap((step) => personalizationGuardErrors(
+        { subject: step.subject, body: step.body_text },
+        Number(step.position) > 1 ? `Follow-up ${Number(step.position) - 1}: ` : "",
+      ));
     if (draft.status !== "ready") rowErrors.push(`статус “${draftStatusText[draft.status] || draft.status}”, запускать можно только готовые черновики`);
     if (!draft.first_step_id) rowErrors.push("нет первого письма");
     if (draft.first_step_already_queued) rowErrors.push("первое письмо уже есть в очереди или уже отправлено");
+    rowErrors.push(...stepGuardErrors);
     if (draft.mailbox_id) {
       if (!draft.mailbox_active) rowErrors.push("выбранный mailbox выключен");
       if (!draft.smtp_verified_at) rowErrors.push("у выбранного mailbox не проверен SMTP");
@@ -1203,6 +1276,11 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
       for (const [index, draft] of drafts.entries()) {
         if (draft.status !== "ready") {
           errors.push({ id: draft.id, email: draft.to_email, error: "Черновик не готов: сначала исправь ошибки." });
+          continue;
+        }
+        const guardErrors = personalizationGuardErrors({ subject: draft.step_subject, body: draft.step_body_text });
+        if (guardErrors.length) {
+          errors.push({ id: draft.id, email: draft.to_email, error: guardErrors.join("; ") });
           continue;
         }
         const mailboxId = draft.mailbox_id || fallbackMailboxes[index % Math.max(fallbackMailboxes.length, 1)]?.id;
@@ -1816,10 +1894,14 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
       for (const row of rows) {
         const parsed = parseEmail(row.email);
         const normalizedEmail = parsed.syntaxValid ? parsed.normalized : String(row.email || "").trim().toLowerCase();
-        const rowErrors = [];
-        if (!row.email || !parsed.syntaxValid) rowErrors.push("Некорректный email");
-        if (!row.subject) rowErrors.push("Нет темы письма");
-        if (!row.body) rowErrors.push("Нет текста письма");
+        const steps = outreachStepsFromRow(row);
+        const check = outreachDraftStatus({
+          email: row.email,
+          subject: row.subject,
+          body: row.body,
+          steps,
+        });
+        const rowErrors = [...check.errors];
         if (normalizedEmail && seenEmails.has(normalizedEmail)) rowErrors.push("Дубль email в этом файле");
         if (normalizedEmail) seenEmails.add(normalizedEmail);
 
@@ -1912,7 +1994,6 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
             row,
           ],
         );
-        const steps = outreachStepsFromRow(row);
         for (const step of steps) {
           await client.query(
             `

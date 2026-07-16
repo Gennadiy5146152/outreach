@@ -442,7 +442,9 @@ async function processSend(item) {
         `
           SELECT *
           FROM outreach_draft_steps
-          WHERE draft_id = $1 AND position = $2
+          WHERE draft_id = $1
+            AND position = $2
+            AND status <> 'blocked'
         `,
         [item.outreach_draft_id, Number(item.outreach_step_position || 1) + 1],
       )
