@@ -675,7 +675,7 @@ async function loadOutreachImports() {
   if (!$("#outreachImportsTable")) return;
   state.outreachImports = await api("/api/outreach/imports");
   $("#outreachImportsTable").innerHTML = `
-    <thead><tr><th>Файл</th><th>Тип</th><th>Строки</th><th>Готово</th><th>Исправить</th><th>Когда</th></tr></thead>
+    <thead><tr><th>Файл</th><th>Тип</th><th>Строки</th><th>Готово</th><th>Исправить</th><th>Когда</th><th>Отчет</th></tr></thead>
     <tbody>
       ${state.outreachImports.length
         ? state.outreachImports.map((item) => `
@@ -686,9 +686,10 @@ async function loadOutreachImports() {
             <td>${pill("ready")} ${item.rows_ready}</td>
             <td>${item.rows_blocked ? `${pill("blocked")} ${item.rows_blocked}` : "0"}</td>
             <td>${fmtDate(item.created_at)}</td>
+            <td>${item.rows_blocked ? `<a class="button small-button" href="/api/outreach/imports/${item.id}/errors.csv">CSV ошибок</a>` : `<span class="muted">Ошибок нет</span>`}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="6" class="muted">Импортов пока нет. Загрузи Excel/CSV с колонками email, subject и body.</td></tr>`}
+        : `<tr><td colspan="7" class="muted">Импортов пока нет. Загрузи Excel/CSV с колонками email, subject и body.</td></tr>`}
     </tbody>
   `;
 }

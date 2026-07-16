@@ -858,6 +858,23 @@ app.get("/api/outreach/imports", asyncHandler(async (_req, res) => {
   res.json(result.rows);
 }));
 
+app.get("/api/outreach/imports/:id/errors.csv", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_import" });
+  const item = (await query("SELECT * FROM outreach_imports WHERE id = $1", [req.params.id])).rows[0];
+  if (!item) return res.status(404).json({ error: "not_found" });
+  const report = Array.isArray(item.error_report) ? item.error_report : [];
+  const header = ["row", "email", "errors"];
+  const body = report.map((row) => [
+    row.row,
+    row.email,
+    Array.isArray(row.errors) ? row.errors.join("; ") : row.errors,
+  ].map(csvCell).join(","));
+  const safeName = String(item.file_name || "outreach-import").replace(/[^\w.-]+/g, "_");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}-errors.csv"`);
+  res.send([header.join(","), ...body].join("\n"));
+}));
+
 app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
   const status = req.query.status || "";
   const importId = req.query.import_id || "";
