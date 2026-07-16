@@ -238,6 +238,7 @@ const EVENT_LABELS = {
   email_sent: "Письмо отправлено",
   email_opened: "Письмо открыто",
   mailbox_error: "Ошибка почтового ящика",
+  queue_recovered: "Очередь восстановлена",
   reply_classified: "Ответ классифицирован",
   email_replied: "Получен ответ",
   email_bounced: "Получена недоставка",
@@ -278,6 +279,8 @@ const EVENT_REASON_LABELS = {
   manual_classification: "ручная классификация",
   manual_reply_stop_sequence: "ручной ответ, цепочка остановлена",
   manual_reply_continue_sequence: "ручной ответ, follow-up разрешен",
+  worker_startup: "перезапуск worker",
+  stale_running: "зависшая задача в running",
 };
 
 function statusLabel(value) {
@@ -358,6 +361,10 @@ function eventSummary(event) {
   if (payload.delayedQueue !== undefined) parts.push(`перенесено писем: ${payload.delayedQueue}`);
   if (payload.delayDays !== undefined) parts.push(`на дней: ${payload.delayDays}`);
   if (payload.nextScheduledAt) parts.push(`следующая отправка: ${fmtDate(payload.nextScheduledAt)}`);
+  if (payload.recoveredJobs !== undefined) parts.push(`job_queue повторно: ${payload.recoveredJobs}`);
+  if (payload.failedJobs !== undefined) parts.push(`job_queue ошибок: ${payload.failedJobs}`);
+  if (payload.recoveredSends !== undefined) parts.push(`отправок повторно: ${payload.recoveredSends}`);
+  if (payload.failedSends !== undefined) parts.push(`отправок ошибок: ${payload.failedSends}`);
   if (payload.error) parts.push(`ошибка: ${payload.error}`);
   if (payload.dryRun !== undefined) parts.push(`dry-run: ${payload.dryRun ? "да" : "нет"}`);
   if (payload.provider) parts.push(`провайдер: ${payload.provider}`);

@@ -131,7 +131,7 @@ async function lockNextJob() {
       return null;
     }
     const job = result.rows[0];
-    await client.query("UPDATE job_queue SET status = 'running', locked_at = now(), attempts = attempts + 1 WHERE id = $1", [job.id]);
+    await client.query("UPDATE job_queue SET status = 'running', locked_at = now(), attempts = attempts + 1, updated_at = now() WHERE id = $1", [job.id]);
     await client.query("COMMIT");
     return job;
   });
@@ -552,6 +552,59 @@ async function failSend(item, error) {
   });
 }
 
+async function recoverInterruptedQueues({ staleOnly = false } = {}) {
+  const staleJobFilter = staleOnly ? "AND locked_at < now() - interval '15 minutes'" : "";
+  const staleSendFilter = staleOnly ? "AND updated_at < now() - interval '15 minutes'" : "";
+  const [jobs, sends] = await Promise.all([
+    query(
+      `
+        UPDATE job_queue
+        SET status = CASE WHEN attempts < max_attempts THEN 'retrying' ELSE 'failed' END,
+            run_at = now(),
+            last_error = CASE
+              WHEN attempts < max_attempts THEN 'Восстановлено после перезапуска worker'
+              ELSE 'Задача не завершилась до перезапуска worker и исчерпала попытки'
+            END,
+            updated_at = now()
+        WHERE status = 'running'
+          ${staleJobFilter}
+        RETURNING status
+      `,
+    ),
+    query(
+      `
+        UPDATE sending_queue
+        SET status = CASE WHEN attempts < max_attempts THEN 'retrying' ELSE 'failed' END,
+            scheduled_at = now(),
+            last_error = CASE
+              WHEN attempts < max_attempts THEN 'Восстановлено после перезапуска worker'
+              ELSE 'Отправка не завершилась до перезапуска worker и исчерпала попытки'
+            END,
+            updated_at = now()
+        WHERE status = 'running'
+          ${staleSendFilter}
+        RETURNING status
+      `,
+    ),
+  ]);
+
+  const recoveredJobs = jobs.rows.filter((row) => row.status === "retrying").length;
+  const failedJobs = jobs.rows.filter((row) => row.status === "failed").length;
+  const recoveredSends = sends.rows.filter((row) => row.status === "retrying").length;
+  const failedSends = sends.rows.filter((row) => row.status === "failed").length;
+  if (recoveredJobs || failedJobs || recoveredSends || failedSends) {
+    await logEvent("queue_recovered", {
+      payload: {
+        reason: staleOnly ? "stale_running" : "worker_startup",
+        recoveredJobs,
+        failedJobs,
+        recoveredSends,
+        failedSends,
+      },
+    });
+  }
+}
+
 async function syncInbox(mailbox) {
   const runtime = await getRuntimeSettings();
   if (runtime.dryRun) return;
@@ -912,14 +965,7 @@ async function applyInboundEffects(message, classification) {
 }
 
 async function scheduleMaintenance() {
-  await query(
-    `
-      UPDATE job_queue
-      SET status = 'retrying', run_at = now(), updated_at = now()
-      WHERE status = 'running'
-        AND locked_at < now() - interval '10 minutes'
-    `,
-  );
+  await recoverInterruptedQueues({ staleOnly: true });
 
   await query(
     `
@@ -1094,6 +1140,7 @@ process.on("SIGTERM", async () => {
 });
 
 console.log("Outreach worker started");
+await recoverInterruptedQueues();
 while (!stopping) {
   await tick();
   await sleep(env.workerPollMs);
