@@ -583,6 +583,8 @@ async function loadDashboard() {
     ["Нужно исправить", data.outreach.drafts_blocked, "ошибки email, темы или текста"],
     ["Первые письма", data.outreach.sent_first, "отправлено без прогрева и тестов"],
     ["Follow-up", data.outreach.sent_followups, "отправленные следующие касания"],
+    ["Ответили", data.outreach.replied_dialogs, `уникальные диалоги · ${data.rates.outreachReplyRate}%`],
+    ["Позитивные", data.outreach.positive_replies, `доля позитивных · ${data.rates.positiveReplyRate}%`],
     ["Требуют решения", data.outreach.review_needed, "после входящего ответа"],
   ];
   $("#metrics").innerHTML = metrics
@@ -599,7 +601,13 @@ async function loadDashboard() {
     <p>Уникальные открытия: <strong>${data.opens.unique}</strong></p>
     <p>Диалогов с ответом: <strong>${data.outreach.replied_dialogs}</strong></p>
     <p>Позитивные ответы: <strong>${data.outreach.positive_replies}</strong></p>
-    <p>Недоставки: <strong>${data.messages.bounced}</strong></p>
+    <p>Негативные ответы: <strong>${data.outreach.negative_replies}</strong></p>
+    <p>Автоответы: <strong>${data.outreach.auto_replies}</strong></p>
+    <p>Отписки: <strong>${data.outreach.unsubscribes}</strong></p>
+    <p>Недоставки: <strong>${data.outreach.bounces}</strong></p>
+    <p>Среднее время до ответа: <strong>${data.outreach.avg_hours_to_reply} ч</strong></p>
+    <p>Доля ответивших: <strong>${data.rates.outreachReplyRate}%</strong></p>
+    <p>Доля позитивных ответов: <strong>${data.rates.positiveReplyRate}%</strong></p>
     <p class="muted">Метрики считаются по outreach, без прогрева и тестовых писем.</p>
   `;
   renderSetupChecklist();

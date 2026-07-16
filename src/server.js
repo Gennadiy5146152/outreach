@@ -582,6 +582,34 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
         (SELECT count(*)::int FROM outreach_drafts WHERE status = 'blocked') AS drafts_blocked,
         (SELECT count(*)::int FROM outreach_drafts WHERE status IN ('queued','active_sequence')) AS drafts_active,
         (SELECT count(*)::int FROM outreach_conversations WHERE status IN ('waiting_reply_review','manual_reply_needed')) AS review_needed,
+        (SELECT count(*)::int FROM outreach_conversations WHERE status IN ('active_sequence','waiting_reply_review','manual_reply_needed','paused','completed','positive','negative','not_target','unsubscribed','bounced')) AS dialogs_total,
+        (
+          SELECT count(DISTINCT oc.id)::int
+          FROM outreach_conversations oc
+          JOIN messages msg ON msg.lead_id = oc.lead_id
+          WHERE msg.direction = 'inbound'
+            AND msg.type IN ('reply','bounce')
+            AND msg.outreach_draft_id IS NOT NULL
+        ) AS replied_dialogs,
+        (SELECT count(*)::int FROM outreach_conversations WHERE classification = 'positive_reply') AS positive_replies,
+        (SELECT count(*)::int FROM outreach_conversations WHERE classification = 'negative_reply') AS negative_replies,
+        (SELECT count(*)::int FROM outreach_conversations WHERE classification = 'auto_reply') AS auto_replies,
+        (SELECT count(*)::int FROM outreach_conversations WHERE classification = 'bounce' OR status = 'bounced') AS bounces,
+        (SELECT count(*)::int FROM outreach_conversations WHERE classification = 'unsubscribe' OR status = 'unsubscribed') AS unsubscribes,
+        (
+          SELECT COALESCE(round(avg(EXTRACT(EPOCH FROM (first_reply_at - first_sent_at)) / 3600.0))::int, 0)
+          FROM (
+            SELECT
+              min(sent_at) FILTER (WHERE direction = 'outbound') AS first_sent_at,
+              min(received_at) FILTER (WHERE direction = 'inbound') AS first_reply_at
+            FROM messages
+            WHERE type <> 'warmup'
+              AND outreach_draft_id IS NOT NULL
+            GROUP BY lead_id
+          ) reply_times
+          WHERE first_sent_at IS NOT NULL
+            AND first_reply_at IS NOT NULL
+        ) AS avg_hours_to_reply,
         (SELECT count(*)::int FROM messages WHERE direction = 'outbound' AND type = 'outreach' AND outreach_step_id IS NOT NULL AND status = 'sent') AS sent_total,
         (
           SELECT count(*)::int
@@ -600,22 +628,26 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
             AND msg.type = 'outreach'
             AND msg.status = 'sent'
             AND ods.position > 1
-        ) AS sent_followups,
-        (SELECT count(DISTINCT lead_id)::int FROM messages WHERE direction = 'inbound' AND type = 'reply' AND outreach_draft_id IS NOT NULL) AS replied_dialogs,
-        (SELECT count(*)::int FROM messages WHERE direction = 'inbound' AND type = 'reply' AND outreach_draft_id IS NOT NULL AND reply_classification = 'positive_reply') AS positive_replies
+        ) AS sent_followups
     `),
   ]);
   const sent = messageStats.rows[0].sent || 0;
+  const outreach = outreachStats.rows[0];
+  const sentFirst = Number(outreach.sent_first || 0);
+  const repliedDialogs = Number(outreach.replied_dialogs || 0);
+  const positiveReplies = Number(outreach.positive_replies || 0);
   res.json({
     leads: leadStats.rows[0],
     messages: messageStats.rows[0],
     queue: queueStats.rows[0],
     opens: opens.rows[0],
     replies: replies.rows[0],
-    outreach: outreachStats.rows[0],
+    outreach,
     rates: {
       openRate: sent ? Math.round((opens.rows[0].unique / sent) * 100) : 0,
       replyRate: sent ? Math.round((replies.rows[0].total / sent) * 100) : 0,
+      outreachReplyRate: sentFirst ? Math.round((repliedDialogs / sentFirst) * 100) : 0,
+      positiveReplyRate: sentFirst ? Math.round((positiveReplies / sentFirst) * 100) : 0,
     },
   });
 }));
