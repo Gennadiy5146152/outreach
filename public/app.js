@@ -5,6 +5,7 @@ const state = {
   outreachImports: [],
   outreachDrafts: [],
   selectedOutreachDraftIds: new Set(),
+  outreachImportPreview: null,
   outreachConversations: [],
   campaignLeads: [],
   campaignAvailableLeads: [],
@@ -646,6 +647,84 @@ async function loadOutreachImports() {
         : `<tr><td colspan="6" class="muted">Импортов пока нет. Загрузи Excel/CSV с колонками email, subject и body.</td></tr>`}
     </tbody>
   `;
+}
+
+const OUTREACH_MAPPING_FIELDS = [
+  ["email", "Email получателя"],
+  ["company", "Компания"],
+  ["contact_name", "Контакт"],
+  ["segment", "Сегмент"],
+  ["mailbox", "Mailbox отправителя"],
+  ["subject", "Тема первого письма"],
+  ["body", "Текст первого письма"],
+  ["send_after", "Отправить после"],
+  ["followup_1_subject", "Follow-up 1: тема"],
+  ["followup_1_body", "Follow-up 1: текст"],
+  ["followup_1_delay_days", "Follow-up 1: задержка дней"],
+  ["followup_2_subject", "Follow-up 2: тема"],
+  ["followup_2_body", "Follow-up 2: текст"],
+  ["followup_2_delay_days", "Follow-up 2: задержка дней"],
+  ["followup_3_subject", "Follow-up 3: тема"],
+  ["followup_3_body", "Follow-up 3: текст"],
+  ["followup_3_delay_days", "Follow-up 3: задержка дней"],
+];
+
+function currentOutreachMapping() {
+  return Object.fromEntries($$("[data-outreach-map-field]").map((select) => [select.dataset.outreachMapField, select.value]));
+}
+
+function updateOutreachMappingInput() {
+  const mapping = currentOutreachMapping();
+  $("#outreachImportForm").elements.mapping.value = JSON.stringify(mapping);
+  if (!state.outreachImportPreview) return;
+  state.outreachImportPreview.mapping = mapping;
+}
+
+function renderOutreachImportPreview() {
+  const preview = state.outreachImportPreview;
+  if (!preview) return;
+  $("#outreachImportPreview").hidden = false;
+  const columnOptions = (selected) => [
+    `<option value="">Не использовать</option>`,
+    ...preview.columns.map((column) => `<option value="${column.index}" ${String(column.index) === String(selected) ? "selected" : ""}>${esc(column.name)}</option>`),
+  ].join("");
+  $("#outreachColumnMapping").innerHTML = OUTREACH_MAPPING_FIELDS.map(([field, label]) => `
+    <label class="field">
+      <span>${esc(label)}</span>
+      <select data-outreach-map-field="${field}">
+        ${columnOptions(preview.mapping[field])}
+      </select>
+    </label>
+  `).join("");
+  const blocked = preview.errors.filter((item) => item.status === "blocked").length;
+  $("#outreachPreviewSummary").innerHTML = `
+    <span>Файл: <strong>${esc(preview.fileName)}</strong></span>
+    <span>Строк: <strong>${preview.rowsTotal}</strong></span>
+    <span>Первые ошибки: <strong>${blocked}</strong></span>
+    <span>Если меняешь колонки, обнови предпросмотр перед созданием черновиков.</span>
+  `;
+  $("#outreachPreviewTable").innerHTML = `
+    <thead><tr><th>Строка</th><th>Email</th><th>Компания</th><th>Тема</th><th>Текст</th><th>Статус</th></tr></thead>
+    <tbody>
+      ${preview.preview.length
+        ? preview.preview.map((row) => {
+          const issue = preview.errors.find((item) => item.row === row.source_row_number);
+          return `
+            <tr>
+              <td>${row.source_row_number}</td>
+              <td>${esc(row.email)}</td>
+              <td>${esc(row.company)}</td>
+              <td>${esc(row.subject)}</td>
+              <td>${esc((row.body || "").slice(0, 160))}${row.body && row.body.length > 160 ? "..." : ""}</td>
+              <td>${pill(issue?.status || "ready")}<br><span class="muted">${esc((issue?.errors || []).join("; "))}</span></td>
+            </tr>
+          `;
+        }).join("")
+        : `<tr><td colspan="6" class="muted">В файле не найдено строк для импорта.</td></tr>`}
+    </tbody>
+  `;
+  updateOutreachMappingInput();
+  $("#createOutreachDraftsBtn").disabled = false;
 }
 
 async function loadOutreachDrafts() {
@@ -1779,9 +1858,21 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
   button: event.submitter,
 }, async () => {
   event.preventDefault();
+  if (!state.outreachImportPreview) {
+    setActionResult({
+      status: "warn",
+      title: "Импорт персональных писем",
+      message: "Сначала нажми “Показать предпросмотр” и проверь сопоставление колонок.",
+    });
+    return;
+  }
+  updateOutreachMappingInput();
   const body = new FormData(event.target);
   const result = await api("/api/outreach/imports", { method: "POST", body });
   event.target.reset();
+  state.outreachImportPreview = null;
+  $("#outreachImportPreview").hidden = true;
+  $("#createOutreachDraftsBtn").disabled = true;
   await Promise.all([loadLeads(), loadOutreachImports(), loadOutreachDrafts()]);
   switchView("outreachDrafts");
   setActionResult({
@@ -1791,6 +1882,49 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
     details: result,
   });
 }));
+
+async function previewOutreachImport() {
+  const form = $("#outreachImportForm");
+  const body = new FormData(form);
+  if (!body.get("file")?.name) {
+    setActionResult({
+      status: "warn",
+      title: "Предпросмотр импорта",
+      message: "Сначала выбери Excel или CSV файл.",
+    });
+    return;
+  }
+  state.outreachImportPreview = await api("/api/outreach/imports/preview", { method: "POST", body });
+  renderOutreachImportPreview();
+  setActionResult({
+    status: "success",
+    title: "Предпросмотр импорта",
+    message: `Файл прочитан: строк ${state.outreachImportPreview.rowsTotal}. Проверь сопоставление колонок ниже.`,
+    details: state.outreachImportPreview.errors,
+  });
+}
+
+$("#previewOutreachImportBtn").addEventListener("click", (event) => runAction({
+  title: "Предпросмотр импорта",
+  button: event.currentTarget,
+}, previewOutreachImport));
+
+$("#outreachImportForm input[name='file']").addEventListener("change", () => {
+  state.outreachImportPreview = null;
+  $("#outreachImportPreview").hidden = true;
+  $("#createOutreachDraftsBtn").disabled = true;
+  $("#outreachImportForm").elements.mapping.value = "";
+});
+
+document.body.addEventListener("change", (event) => {
+  if (!event.target.dataset.outreachMapField) return;
+  updateOutreachMappingInput();
+  $("#createOutreachDraftsBtn").disabled = true;
+  const summary = $("#outreachPreviewSummary");
+  if (!summary.querySelector("[data-preview-stale]")) {
+    summary.insertAdjacentHTML("beforeend", `<span class="warn-text" data-preview-stale>Колонки изменены. Нажми “Показать предпросмотр”, чтобы проверить файл по новой схеме.</span>`);
+  }
+});
 
 $("#outreachDraftStatus").addEventListener("change", () => loadOutreachDrafts());
 

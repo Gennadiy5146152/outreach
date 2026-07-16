@@ -6,7 +6,7 @@ import multer from "multer";
 import { readSheet } from "read-excel-file/node";
 import { env } from "./config/env.js";
 import { pool, query, withClient } from "./db/pool.js";
-import { parseCsv, rowsToObjects, rowsToOutreachRows } from "./services/csv.js";
+import { inferOutreachMapping, parseCsv, rowsToObjects, rowsToOutreachRows } from "./services/csv.js";
 import { parseEmail } from "./services/validation.js";
 import { checkSendingDomain } from "./services/domain-check.js";
 import { sendMail, verifyImap, verifySmtp } from "./services/mail.js";
@@ -241,18 +241,34 @@ function parseOptionalDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-async function parseOutreachImportFile(file) {
+async function parseOutreachRawFile(file) {
   const extension = path.extname(file.originalname || "").toLowerCase();
   if (extension === ".csv") {
-    return { fileType: "csv", rows: rowsToOutreachRows(parseCsv(file.buffer.toString("utf8"))) };
+    return { fileType: "csv", rows: parseCsv(file.buffer.toString("utf8")) };
   }
   if (extension === ".xlsx") {
-    const sheetRows = await readSheet(file.buffer);
-    return { fileType: "xlsx", rows: rowsToOutreachRows(sheetRows) };
+    return { fileType: "xlsx", rows: await readSheet(file.buffer) };
   }
   const error = new Error("unsupported_file_type");
   error.status = 400;
   throw error;
+}
+
+async function parseOutreachImportFile(file, mapping = {}) {
+  const parsed = await parseOutreachRawFile(file);
+  return { fileType: parsed.fileType, rows: rowsToOutreachRows(parsed.rows, mapping) };
+}
+
+function parseMapping(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    const error = new Error("invalid_mapping_json");
+    error.status = 400;
+    throw error;
+  }
 }
 
 function outreachStepsFromRow(row) {
@@ -786,6 +802,33 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
     [status, importId],
   );
   res.json(result.rows);
+}));
+
+app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "file_required" });
+  const { fileType, rows } = await parseOutreachRawFile(req.file);
+  const [header = [], ...data] = rows;
+  const manualMapping = parseMapping(req.body.mapping);
+  const mapping = Object.keys(manualMapping).length ? manualMapping : inferOutreachMapping(rows);
+  const mappedRows = rowsToOutreachRows(rows, mapping);
+  const errors = mappedRows.slice(0, 50).map((row) => {
+    const check = outreachDraftStatus({ email: row.email, subject: row.subject, body: row.body });
+    return {
+      row: row.source_row_number,
+      email: row.email,
+      status: check.status,
+      errors: check.errors,
+    };
+  });
+  res.json({
+    fileName: req.file.originalname,
+    fileType,
+    columns: header.map((item, index) => ({ index, name: String(item || "").trim() || `Колонка ${index + 1}` })),
+    mapping,
+    rowsTotal: data.filter((row) => row.some((value) => String(value || "").trim())).length,
+    preview: mappedRows.slice(0, 10),
+    errors,
+  });
 }));
 
 app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
@@ -1586,7 +1629,8 @@ app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) 
 
 app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file_required" });
-  const { fileType, rows } = await parseOutreachImportFile(req.file);
+  const mapping = parseMapping(req.body.mapping);
+  const { fileType, rows } = await parseOutreachImportFile(req.file, mapping);
   const seenEmails = new Set();
 
   const summary = await withClient(async (client) => {

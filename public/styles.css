@@ -102,6 +102,11 @@ button:hover,
   font-size: 13px;
 }
 
+.warn-text {
+  color: var(--warn);
+  font-weight: 700;
+}
+
 nav {
   display: grid;
   gap: 8px;
@@ -781,6 +786,12 @@ h2 {
   display: grid;
   gap: 10px;
   margin-top: 10px;
+}
+
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
 }
 
 .inline-edit {
@@ -1503,7 +1514,8 @@ dialog::backdrop {
   .hero-help,
   .wizard-step,
   .preflight-head,
-  .preflight-issue {
+  .preflight-issue,
+  .mapping-grid {
     grid-template-columns: 1fr;
   }
 
