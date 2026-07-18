@@ -2837,8 +2837,14 @@ app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {
+  const mailbox = (await query("SELECT id, email FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
+  if (!mailbox) return res.status(404).json({ error: "not_found" });
   await query("INSERT INTO job_queue(job_type, payload) VALUES ('sync_inbox', $1)", [{ mailboxId: req.params.id, forceRecent: true }]);
-  res.json({ queued: true });
+  await logEvent("inbox_sync_queued", {
+    mailboxId: req.params.id,
+    payload: { mailbox: mailbox.email, forceRecent: true, source: "manual_mailbox" },
+  });
+  res.json({ queued: true, mailbox: mailbox.email });
 }));
 
 app.get("/api/suppressions", asyncHandler(async (_req, res) => {
@@ -3415,8 +3421,11 @@ app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {
     SELECT 'sync_inbox', jsonb_build_object('mailboxId', id, 'forceRecent', true)
     FROM mailboxes
     WHERE is_active = true
-    RETURNING id
+    RETURNING (payload->>'mailboxId')::uuid AS mailbox_id
   `);
+  await logEvent("inbox_sync_queued", {
+    payload: { queued: result.rowCount, forceRecent: true, source: "manual_all" },
+  });
   res.json({ queued: result.rowCount });
 }));
 

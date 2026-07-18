@@ -424,7 +424,10 @@ const EVENT_LABELS = {
   email_opened: "Письмо открыто",
   mailbox_error: "Ошибка почтового ящика",
   queue_recovered: "Очередь восстановлена",
+  inbox_sync_queued: "Входящие поставлены на проверку",
   inbox_sync_completed: "Входящие проверены",
+  inbox_sync_skipped: "Проверка входящих пропущена",
+  inbox_sync_failed: "Ошибка проверки входящих",
   inbound_repair_completed: "Входящие перепривязаны к цепочкам",
   inbound_relinked: "Входящее письмо привязано к цепочке",
   inbound_unlinked: "Входящее письмо не привязано",
@@ -472,6 +475,7 @@ const EVENT_REASON_LABELS = {
   stale_running: "зависшая задача в running",
   adaptive_throttle: "автоматическое замедление из-за ошибок SMTP",
   send_error: "ошибка отправки",
+  dry_run: "включен безопасный режим",
 };
 
 function statusLabel(value) {
@@ -841,6 +845,8 @@ function eventSummary(event) {
   if (payload.failedJobs !== undefined) parts.push(`job_queue ошибок: ${payload.failedJobs}`);
   if (payload.recoveredSends !== undefined) parts.push(`отправок повторно: ${payload.recoveredSends}`);
   if (payload.failedSends !== undefined) parts.push(`отправок ошибок: ${payload.failedSends}`);
+  if (payload.queued !== undefined) parts.push(`поставлено задач: ${payload.queued}`);
+  if (payload.attempts !== undefined) parts.push(`попытка: ${payload.attempts}`);
   if (payload.checked !== undefined) parts.push(`проверено непривязанных входящих: ${payload.checked}`);
   if (payload.scanned !== undefined) parts.push(`проверено писем: ${payload.scanned}`);
   if (payload.inserted !== undefined) parts.push(`новых входящих: ${payload.inserted}`);

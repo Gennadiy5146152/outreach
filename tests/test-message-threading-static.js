@@ -39,6 +39,8 @@ for (const expected of [
   "client.fetch({ uid: `${fromUid}:*` }",
   "x-outreach-parsed-from",
   "inbound_repair_completed",
+  "inbox_sync_skipped",
+  "inbox_sync_failed",
   "normalizeReplySubject(message.subject) === subject",
   "inbound_unlinked",
   "inbound_relinked",

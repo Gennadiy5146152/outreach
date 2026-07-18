@@ -289,6 +289,17 @@ async function failJob(job, error) {
     `,
     [job.id, retry ? "retrying" : "failed", job.attempts + 1, error.message],
   );
+  if (job.job_type === "sync_inbox") {
+    await logEvent("inbox_sync_failed", {
+      mailboxId: job.payload?.mailboxId || null,
+      payload: {
+        jobId: job.id,
+        retry,
+        attempts: job.attempts + 1,
+        error: error.message || String(error),
+      },
+    });
+  }
 }
 
 async function enqueueInboxSync(mailboxId, delaySeconds = 30) {
@@ -853,7 +864,13 @@ async function recoverInterruptedQueues({ staleOnly = false } = {}) {
 
 async function syncInbox(mailbox, { forceRecent = false } = {}) {
   const runtime = await getRuntimeSettings();
-  if (runtime.dryRun) return;
+  if (runtime.dryRun) {
+    await logEvent("inbox_sync_skipped", {
+      mailboxId: mailbox.id,
+      payload: { mailbox: mailbox.email, reason: "dry_run" },
+    });
+    return;
+  }
 
   const client = await createImapClient(mailbox);
   try {
