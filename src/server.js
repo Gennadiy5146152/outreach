@@ -301,6 +301,13 @@ function optionalDateFilter(value) {
   return date ? date.toISOString() : "";
 }
 
+function outreachDelayDays(value, fallback) {
+  const text = String(value ?? "").trim();
+  if (text === "") return fallback;
+  const number = Number(text.replace(",", "."));
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
 function outreachStepsFromRow(row) {
   const items = [
     {
@@ -313,19 +320,19 @@ function outreachStepsFromRow(row) {
       position: 2,
       subject: row.followup_1_subject || row.subject || "",
       body: row.followup_1_body || "",
-      delayDays: Number(row.followup_1_delay_days || 3),
+      delayDays: outreachDelayDays(row.followup_1_delay_days, 3),
     },
     {
       position: 3,
       subject: row.followup_2_subject || row.subject || "",
       body: row.followup_2_body || "",
-      delayDays: Number(row.followup_2_delay_days || 4),
+      delayDays: outreachDelayDays(row.followup_2_delay_days, 4),
     },
     {
       position: 4,
       subject: row.followup_3_subject || row.subject || "",
       body: row.followup_3_body || "",
-      delayDays: Number(row.followup_3_delay_days || 5),
+      delayDays: outreachDelayDays(row.followup_3_delay_days, 5),
     },
   ];
 

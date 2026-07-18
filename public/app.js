@@ -1025,7 +1025,7 @@ async function loadOutreachDrafts() {
             <td>
               <strong>${esc(draft.subject)}</strong><br>
               <span class="muted">${esc((draft.body_text || "").slice(0, 140))}${draft.body_text && draft.body_text.length > 140 ? "..." : ""}</span>
-              <div class="draft-steps">${(draft.steps || []).map((step) => `<span>${pill(step.status)} шаг ${step.position}${step.delay_days ? ` · +${step.delay_days} дн.` : ""}</span>`).join("")}</div>
+              <div class="draft-steps">${(draft.steps || []).map((step) => `<span>${pill(step.status)} шаг ${step.position}${step.position > 1 ? ` · +${Number(step.delay_days || 0)} дн.` : ""}</span>`).join("")}</div>
             </td>
             <td>${esc(draft.mailbox_email || "выберется позже")}</td>
             <td>

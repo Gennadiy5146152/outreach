@@ -69,6 +69,10 @@ for (const expected of [
   "INSERT INTO outreach_conversations",
   "INSERT INTO outreach_draft_steps",
   "outreachStepsFromRow",
+  "outreachDelayDays",
+  "outreachDelayDays(row.followup_1_delay_days, 3)",
+  "outreachDelayDays(row.followup_2_delay_days, 4)",
+  "outreachDelayDays(row.followup_3_delay_days, 5)",
   "outreachDraftStatus",
   "unresolvedPersonalizationMarkers",
   "personalizationGuardErrors",
@@ -209,6 +213,9 @@ for (const forbidden of [
   "Показать предпросмотр",
   "<details class=\"inline-edit\">",
   "<summary>Редактировать</summary>",
+  "row.followup_1_delay_days || 3",
+  "row.followup_2_delay_days || 4",
+  "row.followup_3_delay_days || 5",
 ]) {
   if (index.includes(forbidden) || app.includes(forbidden)) {
     throw new Error(`outreach import UI should not expose manual mapping: ${forbidden}`);
