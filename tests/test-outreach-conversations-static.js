@@ -26,6 +26,11 @@ for (const expected of [
   "conversationExportLink",
   "conversationDialog",
   "JSONL для ИИ",
+  "Рабочая лента переписок",
+  "data-conversation-preset=\"all\"",
+  "data-conversation-preset=\"review\"",
+  "data-conversation-preset=\"active\"",
+  "data-conversation-preset=\"paused\"",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`conversations UI should include ${expected}`);
@@ -45,11 +50,17 @@ for (const expected of [
   "campaign_id",
   "import_id",
   "function classificationSelect",
+  "function conversationStatusExplanation",
+  "function conversationLastDirection",
+  "function conversationPreviewText",
+  "function conversationActionButtons",
+  "function applyConversationPreset",
   "async function openConversation",
   "Отменено будущих follow-up",
   "data-open-conversation",
   "data-stop-conversation",
   "data-continue-conversation",
+  "data-conversation-preset",
   "data-conversation-delay-form",
   "data-classify-conversation",
   "data-conversation-reply-form",
@@ -58,6 +69,9 @@ for (const expected of [
   "Перенос follow-up",
   "renderConversationEvents",
   "conversation-audit",
+  "conversation-overview",
+  "conversation-facts",
+  "С входящими ответами",
   "Отправка ручного ответа",
   "После ручного ответа остановить будущие follow-up",
   "$(\"#closeConversationDialog\").addEventListener",
@@ -116,7 +130,7 @@ if (!worker.includes("status = 'waiting_reply_review'")) {
   throw new Error("worker should move replied conversations into review queue");
 }
 
-for (const expected of [".conversation-card", ".conversation-card-head", ".conversation-thread", ".manual-reply-form"]) {
+for (const expected of [".conversation-card", ".conversation-card-head", ".conversation-thread", ".manual-reply-form", ".conversation-overview", ".conversation-facts", ".conversation-next"]) {
   if (!css.includes(expected)) {
     throw new Error(`conversations CSS should include ${expected}`);
   }

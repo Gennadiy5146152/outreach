@@ -418,13 +418,133 @@ h2 {
 }
 
 .conversation-card {
-  gap: 10px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
 }
 
 .conversation-card-head {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+}
+
+.conversation-person {
+  min-width: 0;
+}
+
+.conversation-person strong {
+  display: block;
+  font-size: 16px;
+}
+
+.conversation-person p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.conversation-badges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 42%;
+}
+
+.conversation-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.conversation-latest {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conversation-latest span,
+.conversation-next span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.conversation-latest strong,
+.conversation-next strong {
+  color: var(--text);
+}
+
+.conversation-latest p,
+.conversation-next {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.conversation-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  align-content: start;
+}
+
+.conversation-facts span {
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.conversation-facts strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.conversation-next {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: #f4fbf8;
+}
+
+.conversation-card-footer {
+  max-width: 320px;
+}
+
+.conversation-card .card-actions {
+  gap: 6px;
+}
+
+.conversation-card .small-button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
+.conversation-toolbar {
+  width: min(920px, 100%);
+}
+
+.danger-light {
+  border-color: #f4b9b2;
+  color: var(--danger);
+}
+
+.danger-light:hover {
+  border-color: var(--danger);
+  background: #fee4e2;
 }
 
 .conversation-thread pre,
@@ -1868,6 +1988,7 @@ dialog::backdrop {
   .settings-row,
   .field-grid.two,
   .lead-filters,
+  .conversation-overview,
   .setup-list,
   .setup-step,
   .hero-help,
@@ -1893,6 +2014,15 @@ dialog::backdrop {
   .next-action {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .conversation-card-head {
+    flex-direction: column;
+  }
+
+  .conversation-badges {
+    justify-content: flex-start;
+    max-width: 100%;
   }
 
   .settings-footer {

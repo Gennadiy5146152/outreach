@@ -625,10 +625,10 @@
         <section class="panel">
           <div class="panel-head">
             <div>
-              <h2>Диалоги и решения</h2>
-              <p class="muted">Здесь собраны цепочки по лидам. Если человек ответил, follow-up останавливается до твоего решения.</p>
+              <h2>Диалоги</h2>
+              <p class="muted">Рабочая лента переписок: кто ответил, что происходит с цепочкой и какое действие нужно сейчас.</p>
             </div>
-            <div class="lead-filters">
+            <div class="lead-filters conversation-toolbar">
               <select id="conversationStatusFilter">
                 <option value="">Все статусы</option>
                 <option value="waiting_reply_review">Требуют решения</option>
@@ -648,6 +648,12 @@
               <label class="check"><input id="conversationReviewOnly" type="checkbox" /> Только решения</label>
               <a id="conversationExportLink" class="button" href="/api/outreach/conversations/export.jsonl">JSONL для ИИ</a>
             </div>
+          </div>
+          <div class="quick-filters conversation-presets" aria-label="Быстрые фильтры диалогов">
+            <button class="small-button active" data-conversation-preset="all">Все диалоги</button>
+            <button class="small-button" data-conversation-preset="review">Требуют решения</button>
+            <button class="small-button" data-conversation-preset="active">Цепочка идет</button>
+            <button class="small-button" data-conversation-preset="paused">Остановлены</button>
           </div>
           <div id="conversationSummary" class="summary-line"></div>
           <div id="conversationList" class="cards"></div>

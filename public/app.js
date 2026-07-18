@@ -10,6 +10,7 @@ const state = {
   outreachImportPreview: null,
   outreachConversations: [],
   reviewConversations: [],
+  conversationPreset: "all",
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
@@ -1832,6 +1833,20 @@ function reviewQuery() {
   return params.toString();
 }
 
+function applyConversationPreset(preset) {
+  state.conversationPreset = preset;
+  const status = $("#conversationStatusFilter");
+  const classification = $("#conversationClassificationFilter");
+  const reviewOnly = $("#conversationReviewOnly");
+  if (!status || !classification || !reviewOnly) return;
+  classification.value = "";
+  reviewOnly.checked = false;
+  status.value = "";
+  if (preset === "review") reviewOnly.checked = true;
+  if (preset === "active") status.value = "active_sequence";
+  if (preset === "paused") status.value = "paused";
+}
+
 function updateReviewExportLink() {
   const query = reviewQuery();
   $("#reviewExportLink").setAttribute("href", `/api/outreach/conversations/export.jsonl?${query}`);
@@ -1920,34 +1935,87 @@ function classificationSelect(conversation) {
   `;
 }
 
+function conversationStatusExplanation(item) {
+  if (["waiting_reply_review", "manual_reply_needed"].includes(item.status)) {
+    return "Есть входящий ответ: цепочка остановлена, нужно решить что делать дальше.";
+  }
+  if (item.status === "active_sequence" && Number(item.pending_total || 0) > 0) {
+    return "Цепочка идет: follow-up уже стоит в очереди.";
+  }
+  if (item.status === "active_sequence") return "Цепочка идет: сервис ждет следующего шага или ответа.";
+  if (item.status === "paused") return "Цепочка остановлена вручную.";
+  if (item.status === "completed") return "Цепочка завершена.";
+  if (item.status === "positive") return "Позитивный ответ: можно обрабатывать как теплый контакт.";
+  if (item.status === "negative") return "Отказ: будущие письма лучше не отправлять.";
+  if (item.status === "not_target") return "Контакт не целевой.";
+  if (item.status === "unsubscribed") return "Контакт попросил больше не писать.";
+  if (item.status === "bounced") return "Была недоставка письма.";
+  return nextActionLabel(item.next_action);
+}
+
+function conversationLastDirection(item) {
+  if (item.latest_direction === "inbound") return "входящее";
+  if (item.latest_direction === "outbound") return "исходящее";
+  return "пока нет писем";
+}
+
+function conversationLastDate(item) {
+  return item.latest_received_at || item.latest_sent_at || item.last_message_at || item.updated_at || item.created_at;
+}
+
+function conversationPreviewText(item) {
+  const text = (item.latest_body_text || "").replace(/\s+/g, " ").trim();
+  if (!text) return "Текста последнего письма пока нет.";
+  return text.length > 260 ? `${text.slice(0, 260)}...` : text;
+}
+
+function conversationActionButtons(item) {
+  const needsDecision = ["waiting_reply_review", "manual_reply_needed"].includes(item.status);
+  const canStop = needsDecision || item.status === "active_sequence";
+  const canContinue = Number(item.approval_total || 0) > 0;
+  return `
+    <button class="small-button" data-open-conversation="${item.id}">Открыть</button>
+    ${canContinue ? `<button class="small-button" data-continue-conversation="${item.id}">Продолжить follow-up</button>` : ""}
+    ${canStop ? `<button class="small-button danger-light" data-stop-conversation="${item.id}">Остановить цепочку</button>` : ""}
+  `;
+}
+
 function renderConversationCards(items, emptyText) {
   return items.length
     ? items.map((item) => `
       <article class="card conversation-card">
         <div class="conversation-card-head">
-          <div>
+          <div class="conversation-person">
             <strong>${esc(item.company || item.email)}</strong>
             <p>${esc(item.contact_name || "")} · ${esc(item.email)} · ${esc(item.segment || "")}</p>
           </div>
-          <div class="mailbox-status">
+          <div class="conversation-badges">
             ${pill(item.status)}
             ${item.classification ? pill(item.classification) : ""}
           </div>
         </div>
-        <p><strong>Последнее письмо:</strong> ${esc(item.latest_subject || "пока нет писем")} · ${fmtDate(item.latest_received_at || item.latest_sent_at || item.last_message_at)}</p>
-        <pre class="inbox-message">${esc((item.latest_body_text || "").slice(0, 900))}</pre>
-        <div class="summary-line">
-          <span>Всего писем: <strong>${item.messages_total}</strong></span>
-          <span>Исходящих: <strong>${item.outbound_total}</strong></span>
-          <span>Входящих: <strong>${item.inbound_total}</strong></span>
-          <span>Ждут отправки: <strong>${item.pending_total}</strong></span>
-          <span>Ждут подтверждения: <strong>${item.approval_total}</strong></span>
+        <div class="conversation-overview">
+          <div class="conversation-latest">
+            <span>${esc(conversationLastDirection(item))} · ${fmtDate(conversationLastDate(item))}</span>
+            <strong>${esc(item.latest_subject || "Писем пока нет")}</strong>
+            <p>${esc(conversationPreviewText(item))}</p>
+          </div>
+          <div class="conversation-facts">
+            <span>Всего <strong>${item.messages_total}</strong></span>
+            <span>Исходящих <strong>${item.outbound_total}</strong></span>
+            <span>Входящих <strong>${item.inbound_total}</strong></span>
+            <span>Ждут отправки <strong>${item.pending_total}</strong></span>
+          </div>
         </div>
-        ${classificationSelect(item)}
+        <div class="conversation-next">
+          <strong>${esc(conversationStatusExplanation(item))}</strong>
+          ${Number(item.approval_total || 0) ? `<span>Follow-up ждут подтверждения: ${Number(item.approval_total || 0)}</span>` : ""}
+        </div>
+        <div class="conversation-card-footer">
+          ${classificationSelect(item)}
+        </div>
         <div class="card-actions">
-          <button data-open-conversation="${item.id}">Открыть диалог</button>
-          <button data-stop-conversation="${item.id}">Остановить цепочку</button>
-          <button data-continue-conversation="${item.id}" ${Number(item.approval_total || 0) ? "" : "disabled"}>Продолжить follow-up</button>
+          ${conversationActionButtons(item)}
         </div>
       </article>
     `).join("")
@@ -1989,12 +2057,17 @@ async function loadConversations() {
   state.outreachConversations = await api(`/api/outreach/conversations${query ? `?${query}` : ""}`);
   const reviewCount = state.outreachConversations.filter((item) => ["waiting_reply_review", "manual_reply_needed"].includes(item.status)).length;
   const approvalCount = state.outreachConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
+  const repliedCount = state.outreachConversations.filter((item) => Number(item.inbound_total || 0) > 0).length;
   $("#conversationSummary").innerHTML = `
     <span>Диалогов на экране: <strong>${state.outreachConversations.length}</strong></span>
     <span>Требуют решения: <strong>${reviewCount}</strong></span>
+    <span>С входящими ответами: <strong>${repliedCount}</strong></span>
     <span>Follow-up ждут подтверждения: <strong>${approvalCount}</strong></span>
   `;
   $("#conversationList").innerHTML = renderConversationCards(state.outreachConversations, "Диалогов по текущему фильтру нет.");
+  $$("[data-conversation-preset]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.conversationPreset === state.conversationPreset);
+  });
 }
 
 async function loadReviewConversations() {
@@ -2887,8 +2960,16 @@ document.body.addEventListener("click", (event) => {
 });
 
 ["conversationStatusFilter", "conversationClassificationFilter", "conversationReviewOnly"].forEach((id) => {
-  document.getElementById(id)?.addEventListener("change", () => loadConversations());
+  document.getElementById(id)?.addEventListener("change", () => {
+    state.conversationPreset = "custom";
+    loadConversations();
+  });
 });
+
+$$("[data-conversation-preset]").forEach((button) => button.addEventListener("click", () => {
+  applyConversationPreset(button.dataset.conversationPreset || "all");
+  loadConversations();
+}));
 
 $("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewConversations());
 
