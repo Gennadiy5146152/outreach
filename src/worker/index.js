@@ -885,6 +885,8 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       const subject = parsed.subject || "";
       const bodyText = parsed.text || "";
       const headers = Object.fromEntries([...parsed.headers.entries()].map(([key, value]) => [key, String(value)]));
+      headers["x-outreach-parsed-from"] = fromEmail;
+      headers["x-outreach-imap-uid"] = String(msg.uid);
       const warmupPeer = await findWarmupPeer(fromEmail);
       const isWarmup = Boolean(warmupPeer) && (headers["x-outreach-warmup"] === "true" || /рабочая заметка|warmup|проверка связи|проверка маршрута|тест входящей/i.test(subject));
       const classification = classifyInbound({ subject, body: bodyText, headers });
@@ -1145,6 +1147,8 @@ async function findExistingInbound(mailboxId, messageId) {
 }
 
 async function relinkInboundMessage(message, linked, classification, parsed) {
+  const inReplyTo = headerValues(parsed?.inReplyTo ?? parsed?.in_reply_to ?? message.in_reply_to).join(" ");
+  const references = headerValues(parsed?.references ?? parsed?.references_header ?? message.references_header).join(" ");
   const updated = await query(
     `
       UPDATE messages
@@ -1168,8 +1172,8 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
       linked.outreach_draft_id,
       linked.outreach_step_id,
       linked.id,
-      headerValues(parsed.inReplyTo).join(" "),
-      headerValues(parsed.references).join(" "),
+      inReplyTo,
+      references,
       classification,
     ],
   );
@@ -1189,7 +1193,7 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
 }
 
 async function findLinkedOutbound(parsed, fromEmail) {
-  const ids = messageIdCandidates(parsed.inReplyTo, parsed.references);
+  const ids = messageIdCandidates(parsed.inReplyTo ?? parsed.in_reply_to, parsed.references ?? parsed.references_header);
   if (ids.variants.length) {
     const byHeader = await query(
       `
@@ -1228,6 +1232,95 @@ async function findLinkedOutbound(parsed, fromEmail) {
     if (candidates.rowCount) return candidates.rows[0];
   }
   return null;
+}
+
+function rawHeaderValue(rawHeaders, key) {
+  const raw = rawHeaders || {};
+  const direct = raw[key] ?? raw[key.toLowerCase()] ?? raw[key.toUpperCase()];
+  if (direct !== undefined && direct !== null) return String(direct);
+  const found = Object.entries(raw).find(([rawKey]) => rawKey.toLowerCase() === key.toLowerCase());
+  return found ? String(found[1]) : "";
+}
+
+function emailFromHeader(value) {
+  const match = String(value || "").match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  return match ? match[0].toLowerCase() : "";
+}
+
+function senderEmailFromMessage(message) {
+  const parsedFrom = rawHeaderValue(message.raw_headers, "x-outreach-parsed-from");
+  if (parsedFrom && parsedFrom !== "[object Object]") return emailFromHeader(parsedFrom) || parsedFrom.toLowerCase();
+  const fromHeader = rawHeaderValue(message.raw_headers, "from");
+  return emailFromHeader(fromHeader);
+}
+
+async function findLinkedOutboundForInboundMessage(message) {
+  return findLinkedOutbound(
+    {
+      in_reply_to: message.in_reply_to,
+      references_header: message.references_header,
+      subject: message.subject,
+    },
+    senderEmailFromMessage(message),
+  );
+}
+
+async function repairUnlinkedInboundMessages() {
+  const messages = (
+    await query(
+      `
+        SELECT *
+        FROM messages
+        WHERE direction = 'inbound'
+          AND type <> 'warmup'
+          AND lead_id IS NULL
+          AND created_at > now() - interval '30 days'
+        ORDER BY COALESCE(received_at, created_at) DESC
+        LIMIT 100
+      `,
+    )
+  ).rows;
+  if (!messages.length) return;
+
+  let relinked = 0;
+  let unlinked = 0;
+  for (const message of messages) {
+    const linked = await findLinkedOutboundForInboundMessage(message);
+    if (!linked) {
+      unlinked += 1;
+      continue;
+    }
+    const classification = message.reply_classification || classifyInbound({
+      subject: message.subject,
+      body: message.body_text,
+      headers: message.raw_headers || {},
+    });
+    const updated = await relinkInboundMessage(message, linked, classification, message);
+    await applyInboundEffects(updated, classification);
+    relinked += 1;
+  }
+
+  const shouldLog = relinked > 0 || !(
+    await query(
+      `
+        SELECT 1
+        FROM events
+        WHERE event_type = 'inbound_repair_completed'
+          AND created_at > now() - interval '5 minutes'
+        LIMIT 1
+      `,
+    )
+  ).rowCount;
+
+  if (shouldLog) {
+    await logEvent("inbound_repair_completed", {
+      payload: {
+        checked: messages.length,
+        relinked,
+        unlinked,
+      },
+    });
+  }
 }
 
 async function applyInboundEffects(message, classification) {
@@ -1358,6 +1451,7 @@ async function applyInboundEffects(message, classification) {
 
 async function scheduleMaintenance() {
   await recoverInterruptedQueues({ staleOnly: true });
+  await repairUnlinkedInboundMessages();
   const runtime = await getRuntimeSettings();
   const inboxSyncIntervalSeconds = Math.max(1, Number(runtime.inboxSyncIntervalSeconds || env.inboxSyncIntervalMinutes * 60 || 60));
 
