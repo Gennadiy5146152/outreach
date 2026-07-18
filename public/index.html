@@ -216,14 +216,12 @@
               <p class="muted">Это промежуточная зона перед отправкой: проверяешь строки, исправляешь ошибки, потом запускаешь цепочку.</p>
             </div>
             <div class="lead-filters draft-toolbar">
-              <select id="outreachDraftStatus">
-                <option value="">Все статусы</option>
-                <option value="ready">Готово</option>
-                <option value="blocked">Нужно исправить</option>
-                <option value="queued">В очереди</option>
-                <option value="active_sequence">Цепочка идет</option>
-                <option value="completed">Завершено</option>
-              </select>
+              <div class="quick-filters draft-quick-filters">
+                <button data-outreach-draft-filter="ready" class="active">Готовы к старту</button>
+                <button data-outreach-draft-filter="active">В процессе</button>
+                <button data-outreach-draft-filter="blocked">Нужно исправить</button>
+                <button data-outreach-draft-filter="all">Все</button>
+              </div>
               <button id="preflightSelectedDraftsBtn" title="Проверить выбранные">Проверить</button>
               <button id="startSelectedDraftsBtn" title="Запустить выбранные">Запустить</button>
               <button id="deleteSelectedDraftsBtn" class="danger-button" title="Удалить выбранные">Удалить</button>

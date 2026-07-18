@@ -1079,15 +1079,17 @@ h2 {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  width: min(620px, 100%);
+  width: min(760px, 100%);
 }
 
-.draft-toolbar select {
-  flex: 0 0 150px;
-  height: 32px;
-  min-height: 32px;
-  padding: 0 8px;
-  font-size: 13px;
+.draft-quick-filters {
+  flex: 1 1 360px;
+  gap: 4px;
+  margin: 0;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
 }
 
 .draft-toolbar button {
@@ -1096,6 +1098,15 @@ h2 {
   padding: 5px 9px;
   font-size: 13px;
   line-height: 1.2;
+}
+
+.draft-quick-filters button {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .lead-bulkbar {

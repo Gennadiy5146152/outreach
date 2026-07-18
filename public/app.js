@@ -4,6 +4,8 @@ const state = {
   leads: [],
   outreachImports: [],
   outreachDrafts: [],
+  allOutreachDrafts: [],
+  outreachDraftFilter: "ready",
   selectedOutreachDraftIds: new Set(),
   outreachDraftLaunchReview: null,
   openOutreachDraftId: null,
@@ -1121,6 +1123,22 @@ function selectedOutreachDraftSignature(draftIds = [...state.selectedOutreachDra
   return [...draftIds].sort().join("|");
 }
 
+function outreachDraftFilterLabel(value = state.outreachDraftFilter) {
+  return {
+    ready: "готовы к старту",
+    active: "в процессе",
+    blocked: "нужно исправить",
+    all: "все",
+  }[value] || "все";
+}
+
+function visibleOutreachDrafts(drafts = state.allOutreachDrafts) {
+  if (state.outreachDraftFilter === "ready") return drafts.filter((draft) => draft.status === "ready");
+  if (state.outreachDraftFilter === "active") return drafts.filter((draft) => ["queued", "active_sequence"].includes(draft.status));
+  if (state.outreachDraftFilter === "blocked") return drafts.filter((draft) => draft.status === "blocked");
+  return drafts;
+}
+
 function canDeleteOutreachDraft(draft) {
   return ["draft", "ready", "blocked", "cancelled"].includes(draft.status);
 }
@@ -1360,26 +1378,32 @@ async function loadOutreachDrafts() {
   if (!state.mailboxes.length) {
     state.mailboxes = await api("/api/mailboxes");
   }
-  const status = encodeURIComponent($("#outreachDraftStatus")?.value || "");
-  state.outreachDrafts = await api(`/api/outreach/drafts?status=${status}`);
+  state.allOutreachDrafts = await api("/api/outreach/drafts");
+  state.outreachDrafts = visibleOutreachDrafts();
   const visibleIds = new Set(state.outreachDrafts.map((draft) => draft.id));
   const previousSignature = selectedOutreachDraftSignature();
   state.selectedOutreachDraftIds = new Set([...state.selectedOutreachDraftIds].filter((id) => visibleIds.has(id)));
   if (state.outreachDraftLaunchReview && previousSignature !== selectedOutreachDraftSignature()) {
     clearOutreachDraftLaunchReview();
   }
-  const ready = state.outreachDrafts.filter((draft) => draft.status === "ready").length;
-  const blocked = state.outreachDrafts.filter((draft) => draft.status === "blocked").length;
+  const ready = state.allOutreachDrafts.filter((draft) => draft.status === "ready").length;
+  const active = state.allOutreachDrafts.filter((draft) => ["queued", "active_sequence"].includes(draft.status)).length;
+  const blocked = state.allOutreachDrafts.filter((draft) => draft.status === "blocked").length;
   const deletable = state.outreachDrafts.filter(canDeleteOutreachDraft).length;
   const deletableSelected = state.outreachDrafts
     .filter((draft) => canDeleteOutreachDraft(draft) && state.selectedOutreachDraftIds.has(draft.id))
     .length;
   $("#outreachDraftsSummary").innerHTML = `
     <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
+    <span>Показано: <strong>${esc(outreachDraftFilterLabel())}</strong></span>
     <span>Готовы: <strong>${ready}</strong></span>
+    <span>В процессе: <strong>${active}</strong></span>
     <span>Нужно исправить: <strong>${blocked}</strong></span>
     <span>Выбрано: <strong>${state.selectedOutreachDraftIds.size}</strong></span>
   `;
+  $$("[data-outreach-draft-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.outreachDraftFilter === state.outreachDraftFilter);
+  });
   $("#outreachDraftsTable").innerHTML = `
     <colgroup>
       <col class="draft-col-check" />
@@ -2931,11 +2955,6 @@ $("#outreachImportForm input[name='file']").addEventListener("change", () => {
   }, previewOutreachImport);
 });
 
-$("#outreachDraftStatus").addEventListener("change", () => {
-  clearOutreachDraftLaunchReview();
-  loadOutreachDrafts();
-});
-
 async function preflightOutreachDrafts(draftIds) {
   return api("/api/outreach/drafts/preflight", {
     method: "POST",
@@ -3200,6 +3219,15 @@ document.body.addEventListener("submit", (event) => {
 });
 
 document.body.addEventListener("click", (event) => {
+  const draftFilter = event.target.closest("[data-outreach-draft-filter]");
+  if (draftFilter) {
+    state.outreachDraftFilter = draftFilter.dataset.outreachDraftFilter || "ready";
+    state.selectedOutreachDraftIds = new Set();
+    clearOutreachDraftLaunchReview();
+    loadOutreachDrafts();
+    return;
+  }
+
   const draftId = event.target.dataset.startDraft;
   const cancelDraftId = event.target.dataset.cancelDraft;
   const editDraftId = event.target.dataset.editOutreachDraft;
