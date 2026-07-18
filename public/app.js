@@ -866,17 +866,17 @@ function outreachDraftMailboxOptions(selectedId) {
   ].join("");
 }
 
-function outreachDraftStepForm(draft, position) {
+function outreachDraftStepForm(draft, position, { isNew = false } = {}) {
   const stepByPosition = new Map((draft.steps || []).map((step) => [Number(step.position), step]));
   const step = stepByPosition.get(position) || {};
   const defaultDelay = position === 2 ? 3 : position === 3 ? 4 : 5;
   return `
     <form class="form outreach-step-edit-form" data-outreach-step-form="${draft.id}" data-position="${position}">
-      <div class="form-section-title">Follow-up ${position - 1}</div>
+      <div class="form-section-title">${isNew ? "Новый " : ""}Follow-up ${position - 1}</div>
       <label class="field">
         <span>Тема follow-up</span>
-        <input name="subject" value="${esc(step.subject || draft.subject || "")}" placeholder="Например: Re: короткий вопрос по вашей задаче" />
-        <small class="field-help">Можно оставить тему первого письма или написать отдельную тему для этого шага.</small>
+        <input name="subject" value="${esc(step.subject || "")}" placeholder="Если оставить пустым, будет тема первого письма" />
+        <small class="field-help">Заполняй только если у этого шага должна быть отдельная тема.</small>
       </label>
       <label class="field">
         <span>Текст follow-up</span>
@@ -893,6 +893,30 @@ function outreachDraftStepForm(draft, position) {
         ${step.status ? `<span class="muted">${esc(statusLabel(step.status))}</span>` : ""}
       </div>
     </form>
+  `;
+}
+
+function renderOutreachDraftFollowups(draft) {
+  const positions = new Set((draft.steps || [])
+    .map((step) => Number(step.position))
+    .filter((position) => position > 1));
+  const existingForms = [...positions]
+    .sort((left, right) => left - right)
+    .map((position) => outreachDraftStepForm(draft, position))
+    .join("");
+  const nextPosition = [2, 3, 4].find((position) => !positions.has(position));
+  const addForm = nextPosition
+    ? `
+      <details class="add-followup-card">
+        <summary>Добавить follow-up ${nextPosition - 1}</summary>
+        ${outreachDraftStepForm(draft, nextPosition, { isNew: true })}
+      </details>
+    `
+    : `<p class="muted">Все 3 follow-up уже добавлены.</p>`;
+
+  return `
+    ${existingForms || `<p class="muted">В этом черновике follow-up еще не добавлены.</p>`}
+    ${addForm}
   `;
 }
 
@@ -950,9 +974,9 @@ function renderOutreachDraftDrawer(draft) {
     </section>
     <section class="drawer-section">
       <h3>Цепочка follow-up</h3>
-      <p class="muted">Каждый follow-up отправляется только если получатель не ответил. Пустой текст удаляет шаг из цепочки.</p>
+      <p class="muted">Здесь показаны только follow-up, которые реально есть в черновике. Новый шаг добавляется отдельной кнопкой.</p>
       <div class="draft-followups">
-        ${[2, 3, 4].map((position) => outreachDraftStepForm(draft, position)).join("")}
+        ${renderOutreachDraftFollowups(draft)}
       </div>
     </section>
   `;

@@ -170,6 +170,9 @@ for (const expected of [
   "data-delete-draft",
   "openOutreachDraftDrawer",
   "refreshOpenOutreachDraftDrawer",
+  "renderOutreachDraftFollowups",
+  "Добавить follow-up",
+  "Здесь показаны только follow-up, которые реально есть в черновике",
   "Email получателя",
   "Почта отправителя",
   "Отправить не раньше",
@@ -196,6 +199,7 @@ for (const expected of [
   ".field-help",
   ".row-actions",
   ".danger-button",
+  ".add-followup-card",
 ]) {
   if (!styles.includes(expected)) {
     throw new Error(`outreach drafts drawer styles should include ${expected}`);
@@ -216,6 +220,8 @@ for (const forbidden of [
   "row.followup_1_delay_days || 3",
   "row.followup_2_delay_days || 4",
   "row.followup_3_delay_days || 5",
+  "[2, 3, 4].map((position) => outreachDraftStepForm(draft, position))",
+  "value=\"${esc(step.subject || draft.subject || \"\")}\"",
 ]) {
   if (index.includes(forbidden) || app.includes(forbidden)) {
     throw new Error(`outreach import UI should not expose manual mapping: ${forbidden}`);

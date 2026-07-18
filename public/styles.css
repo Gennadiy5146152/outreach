@@ -822,6 +822,24 @@ h2 {
   margin-top: 10px;
 }
 
+.add-followup-card {
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.add-followup-card summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.add-followup-card .outreach-step-edit-form {
+  margin-top: 10px;
+}
+
 .outreach-step-edit-form {
   padding: 10px;
   border: 1px solid var(--line);
