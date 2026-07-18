@@ -29,6 +29,7 @@ const state = {
   envCheck: null,
   health: null,
   inbox: [],
+  inboxSyncStatus: null,
   inboxFilter: "all",
   leadQuickFilter: "all",
   editorTarget: null,
@@ -243,6 +244,45 @@ function actionSyncStatus(syncStatus) {
           `).join("")}
         </ul>
       ` : `<p>Активных IMAP-задач не найдено.</p>`}
+    </div>
+  `;
+}
+
+function syncStatusSummaryText(syncStatus) {
+  const summary = Array.isArray(syncStatus?.summary) ? syncStatus.summary : [];
+  return summary.length
+    ? summary.map((item) => `${statusLabel(item.status)}: ${item.count}`).join(" · ")
+    : "за последние сутки IMAP-задач нет";
+}
+
+function renderInboxSyncStatus() {
+  const node = $("#inboxSyncStatus");
+  if (!node) return;
+  const syncStatus = state.inboxSyncStatus;
+  if (!syncStatus) {
+    node.innerHTML = `<div class="inbox-sync-status muted">Статус IMAP еще не загружен.</div>`;
+    return;
+  }
+  const jobs = Array.isArray(syncStatus.jobs) ? syncStatus.jobs.slice(0, 6) : [];
+  node.innerHTML = `
+    <div class="inbox-sync-status">
+      <div class="inbox-sync-status-head">
+        <strong>Очередь IMAP</strong>
+        <span>${esc(syncStatusSummaryText(syncStatus))}</span>
+      </div>
+      ${jobs.length ? `
+        <div class="inbox-sync-jobs">
+          ${jobs.map((job) => `
+            <div class="inbox-sync-job ${job.looks_stuck ? "warn" : ""}">
+              <strong>${esc(job.mailbox_email || "ящик не найден")}</strong>
+              <span>${esc(statusLabel(job.status))}${job.looks_stuck ? " · похоже, зависла" : ""}</span>
+              <span>возраст: ${esc(fmtSeconds(job.age_seconds))}</span>
+              <span>попытка: ${esc(job.attempts)}/${esc(job.max_attempts)}</span>
+              ${job.last_error ? `<p>Ошибка: ${esc(job.last_error)}</p>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      ` : `<p class="muted">Последних IMAP-задач нет. Нажми “Синхронизировать IMAP”, чтобы создать проверку входящих.</p>`}
     </div>
   `;
 }
@@ -2233,6 +2273,11 @@ function inboxVisibleItems() {
   return state.inbox;
 }
 
+async function loadInboxSyncStatus() {
+  state.inboxSyncStatus = await api("/api/inbox/sync-status");
+  renderInboxSyncStatus();
+}
+
 async function loadQueue() {
   const [queue, progress] = await Promise.all([api("/api/sending"), api("/api/sending/progress")]);
   state.queue = [...queue].sort((a, b) => {
@@ -2386,6 +2431,7 @@ async function loadInbox() {
   $$("[data-inbox-filter]").forEach((button) => {
     button.classList.toggle("active", button.dataset.inboxFilter === state.inboxFilter);
   });
+  renderInboxSyncStatus();
 }
 
 function conversationQuery() {
@@ -2904,10 +2950,9 @@ function updateSyncStatusInActionResult(syncStatus) {
 }
 
 function refreshInboxSyncRelated() {
-  Promise.all([loadEvents(), loadInbox(), loadConversations(), loadReviewConversations(), loadDashboard()])
-    .then(async () => {
-      const syncStatus = await api("/api/inbox/sync-status");
-      updateSyncStatusInActionResult(syncStatus);
+  Promise.all([loadEvents(), loadInbox(), loadConversations(), loadReviewConversations(), loadDashboard(), loadInboxSyncStatus()])
+    .then(() => {
+      updateSyncStatusInActionResult(state.inboxSyncStatus);
     })
     .catch(() => {});
 }
@@ -2931,6 +2976,7 @@ async function refresh() {
     loadCampaigns(),
     loadQueue(),
     loadInbox(),
+    loadInboxSyncStatus(),
     loadConversations(),
     loadReviewConversations(),
     loadWarmup(),

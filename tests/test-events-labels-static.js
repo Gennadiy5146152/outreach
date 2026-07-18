@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
+const styles = fs.readFileSync("public/styles.css", "utf8");
 
 for (const expected of [
   "Журнал событий",
@@ -44,6 +45,34 @@ for (const expected of [
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`events UI should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "id=\"inboxSyncStatus\"",
+]) {
+  if (!index.includes(expected)) {
+    throw new Error(`inbox page should persist IMAP status after reload: ${expected}`);
+  }
+}
+
+for (const expected of [
+  "inboxSyncStatus: null",
+  "function renderInboxSyncStatus()",
+  "async function loadInboxSyncStatus()",
+  "loadInboxSyncStatus()",
+]) {
+  if (!app.includes(expected)) {
+    throw new Error(`inbox page should load persistent IMAP status: ${expected}`);
+  }
+}
+
+for (const expected of [
+  ".inbox-sync-status",
+  ".inbox-sync-job",
+]) {
+  if (!styles.includes(expected)) {
+    throw new Error(`inbox IMAP status should have stable layout: ${expected}`);
   }
 }
 

@@ -1990,6 +1990,66 @@ th {
   padding: 12px;
 }
 
+.inbox-sync-status {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfdfc;
+  min-width: 0;
+}
+
+.inbox-sync-status-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.inbox-sync-status-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.inbox-sync-jobs {
+  display: grid;
+  gap: 8px;
+}
+
+.inbox-sync-job {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.inbox-sync-job.warn {
+  border-color: #f4c56b;
+  background: #fff9e8;
+}
+
+.inbox-sync-job strong {
+  color: var(--text);
+}
+
+.inbox-sync-job p {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
 .inbox-card-head {
   display: flex;
   align-items: flex-start;
