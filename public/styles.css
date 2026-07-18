@@ -101,10 +101,13 @@ button:disabled,
 .sidebar {
   position: sticky;
   top: 0;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   padding: 22px;
   border-right: 1px solid var(--line);
   background: #fbfcfb;
+  overflow-y: auto;
 }
 
 .brand strong,
@@ -126,12 +129,34 @@ button:disabled,
 
 nav {
   display: grid;
-  gap: 8px;
-  margin: 28px 0;
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-group > span {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.nav-group-secondary {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 nav button {
+  min-height: 34px;
+  padding: 6px 10px;
   text-align: left;
+  font-size: 14px;
 }
 
 nav button.active {

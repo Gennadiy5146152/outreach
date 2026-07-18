@@ -4,6 +4,8 @@ const publicFiles = [
   fs.readFileSync("public/index.html", "utf8"),
   fs.readFileSync("public/app.js", "utf8"),
 ].join("\n");
+const index = fs.readFileSync("public/index.html", "utf8");
+const styles = fs.readFileSync("public/styles.css", "utf8");
 
 for (const forbidden of [
   "dry-run:",
@@ -21,6 +23,30 @@ for (const forbidden of [
 ]) {
   if (publicFiles.includes(forbidden)) {
     throw new Error(`public UI should not expose technical English label: ${forbidden}`);
+  }
+}
+
+for (const expected of [
+  "class=\"nav-group\"",
+  "class=\"nav-group nav-group-secondary\"",
+  "<span>Аутрич</span>",
+  "<span>Ответы</span>",
+  "<span>Данные</span>",
+  "<span>Почта</span>",
+  "Почтовые ящики",
+]) {
+  if (!index.includes(expected)) {
+    throw new Error(`left navigation should include grouped Russian item: ${expected}`);
+  }
+}
+
+for (const expected of [
+  ".nav-group",
+  ".nav-group-secondary",
+  "overflow-y: auto",
+]) {
+  if (!styles.includes(expected)) {
+    throw new Error(`left navigation styles should include ${expected}`);
   }
 }
 

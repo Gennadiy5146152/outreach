@@ -13,22 +13,40 @@
         <span>Локальный B2B-аутрич</span>
       </div>
       <nav>
-        <button class="active" data-view="start">Что делать</button>
-        <button data-view="dashboard">Обзор</button>
-        <button data-view="outreachImport">Импорт Excel</button>
-        <button data-view="outreachDrafts">Черновики</button>
-        <button data-view="mailboxes">1. Почта</button>
-        <button data-view="warmup">2. Прогрев</button>
-        <button data-view="leads">3. База</button>
-        <button data-view="campaigns">4. Рассылка</button>
-        <button data-view="queue">Очередь</button>
-        <button data-view="inbox">Входящие</button>
-        <button data-view="review">Требуют решения</button>
-        <button data-view="conversations">Диалоги</button>
-        <button data-view="aiExport">Экспорт для ИИ</button>
-        <button data-view="suppression">Стоп-лист</button>
-        <button data-view="events">События</button>
-        <button data-view="settings">Настройки</button>
+        <div class="nav-group">
+          <span>Старт</span>
+          <button class="active" data-view="start">Что делать</button>
+          <button data-view="dashboard">Обзор</button>
+        </div>
+        <div class="nav-group">
+          <span>Аутрич</span>
+          <button data-view="outreachImport">Импорт Excel</button>
+          <button data-view="outreachDrafts">Черновики</button>
+          <button data-view="queue">Очередь</button>
+        </div>
+        <div class="nav-group">
+          <span>Ответы</span>
+          <button data-view="review">Требуют решения</button>
+          <button data-view="conversations">Диалоги</button>
+          <button data-view="inbox">Входящие</button>
+        </div>
+        <div class="nav-group">
+          <span>Данные</span>
+          <button data-view="leads">База</button>
+          <button data-view="aiExport">Экспорт для ИИ</button>
+          <button data-view="suppression">Стоп-лист</button>
+        </div>
+        <div class="nav-group">
+          <span>Почта</span>
+          <button data-view="mailboxes">Почтовые ящики</button>
+          <button data-view="warmup">Прогрев</button>
+        </div>
+        <div class="nav-group nav-group-secondary">
+          <span>Сервис</span>
+          <button data-view="settings">Настройки</button>
+          <button data-view="events">События</button>
+          <button data-view="campaigns">Рассылка</button>
+        </div>
       </nav>
       <div class="health" id="health">Проверка...</div>
     </aside>
