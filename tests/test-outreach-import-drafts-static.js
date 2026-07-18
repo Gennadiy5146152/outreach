@@ -198,6 +198,7 @@ for (const expected of [
   "function actionItemsList",
   "Что исправить",
   "Письма",
+  "async function startOutreachDrafts(draftIds)",
   "selectedOutreachDraftSignature",
   "canDeleteOutreachDraft",
   "syncSelectedOutreachDraftIdsFromDom",
@@ -283,6 +284,15 @@ for (const expected of [
 
 if (app.includes("const body = typeof details === \"string\" ? details : JSON.stringify(details, null, 2);")) {
   throw new Error("action result details should be human-readable instead of raw JSON by default");
+}
+
+for (const forbidden of [
+  "requireReview",
+  "Нажми “Запустить выбранные” еще раз",
+]) {
+  if (app.includes(forbidden)) {
+    throw new Error(`start should preflight and launch in one action, remove: ${forbidden}`);
+  }
 }
 
 for (const forbidden of [

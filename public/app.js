@@ -2892,31 +2892,7 @@ async function reviewOutreachDrafts(draftIds) {
   return result;
 }
 
-async function startOutreachDrafts(draftIds, options = {}) {
-  if (options.requireReview) {
-    const signature = selectedOutreachDraftSignature(draftIds);
-    if (!state.outreachDraftLaunchReview || state.outreachDraftLaunchReview.signature !== signature) {
-      const review = await reviewOutreachDrafts(draftIds);
-      setActionResult({
-        status: review.ok ? "success" : "warn",
-        title: "Проверка перед запуском",
-        message: review.ok
-          ? `Список писем подготовлен ниже. Можно запускать: ${review.stats.ready}. Нажми “Запустить выбранные” еще раз. ${review.imapUncheckedMailboxes?.length ? `IMAP-проверка запущена автоматически для ящиков: ${review.imapUncheckedMailboxes.join(", ")}.` : ""}`
-          : `Запуск остановлен: ошибок ${review.errors.length}, предупреждений ${review.warnings.length}. Исправь ошибки в таблице проверки.`,
-        details: review.ok ? undefined : review,
-      });
-      return;
-    }
-    if (!state.outreachDraftLaunchReview.ok) {
-      setActionResult({
-        status: "warn",
-        title: "Проверка перед запуском",
-        message: `Запуск остановлен: ошибок ${state.outreachDraftLaunchReview.errors.length}. Исправь их и проверь выбранные заново.`,
-        details: state.outreachDraftLaunchReview,
-      });
-      return;
-    }
-  }
+async function startOutreachDrafts(draftIds) {
   const preflight = await preflightOutreachDrafts(draftIds);
   state.outreachDraftLaunchReview = {
     ...preflight,
@@ -2927,7 +2903,7 @@ async function startOutreachDrafts(draftIds, options = {}) {
     setActionResult({
       status: "warn",
       title: "Проверка выбранных черновиков",
-      message: `Запуск остановлен: ошибок ${preflight.errors.length}, предупреждений ${preflight.warnings.length}.`,
+      message: `Запуск остановлен: ошибок ${preflight.errors.length}. Исправь их в таблице проверки и запусти снова.`,
       details: preflight,
     });
     return;
@@ -2988,7 +2964,7 @@ $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
     });
     return;
   }
-  await startOutreachDrafts(draftIds, { requireReview: true });
+  await startOutreachDrafts(draftIds);
 }));
 
 $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
