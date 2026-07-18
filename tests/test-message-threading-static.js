@@ -15,6 +15,15 @@ for (const expected of [
   }
 }
 
+for (const forbidden of [
+  "(parsed.references || []).join",
+  "(parsed.inReplyTo || []).join",
+]) {
+  if (worker.includes(forbidden)) {
+    throw new Error(`worker should normalize mailparser headers via headerValues, not raw join: ${forbidden}`);
+  }
+}
+
 for (const expected of [
   "let threadingMode = \"new_thread\"",
   "parentMessage",

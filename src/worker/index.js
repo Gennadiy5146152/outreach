@@ -273,7 +273,7 @@ async function lockNextJob() {
 }
 
 async function finishJob(jobId) {
-  await query("UPDATE job_queue SET status = 'done', updated_at = now() WHERE id = $1", [jobId]);
+  await query("UPDATE job_queue SET status = 'done', last_error = NULL, updated_at = now() WHERE id = $1", [jobId]);
 }
 
 async function failJob(job, error) {

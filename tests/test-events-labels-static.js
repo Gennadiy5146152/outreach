@@ -60,6 +60,8 @@ for (const expected of [
   "inboxSyncStatus: null",
   "function renderInboxSyncStatus()",
   "async function loadInboxSyncStatus()",
+  "activeSummary",
+  "ошибок за сутки",
   "error.status !== 404",
   "Backend еще не отдает статус IMAP",
   "loadInboxSyncStatus()",

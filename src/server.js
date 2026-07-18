@@ -2837,13 +2837,23 @@ app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
 }));
 
 async function inboxSyncQueueStatus(limit = 20) {
-  const [summary, jobs] = await Promise.all([
+  const [summary, activeSummary, jobs] = await Promise.all([
     query(
       `
         SELECT status, count(*)::int AS count
         FROM job_queue
         WHERE job_type = 'sync_inbox'
           AND created_at > now() - interval '1 day'
+        GROUP BY status
+        ORDER BY status
+      `,
+    ),
+    query(
+      `
+        SELECT status, count(*)::int AS count
+        FROM job_queue
+        WHERE job_type = 'sync_inbox'
+          AND status IN ('pending','running','retrying')
         GROUP BY status
         ORDER BY status
       `,
@@ -2857,7 +2867,7 @@ async function inboxSyncQueueStatus(limit = 20) {
           j.attempts,
           j.max_attempts,
           j.locked_at,
-          j.last_error,
+          CASE WHEN j.status = 'done' THEN NULL ELSE j.last_error END AS last_error,
           j.created_at,
           j.updated_at,
           round(extract(epoch from (now() - COALESCE(j.locked_at, j.run_at, j.created_at))))::int AS age_seconds,
@@ -2876,7 +2886,7 @@ async function inboxSyncQueueStatus(limit = 20) {
       [limit],
     ),
   ]);
-  return { summary: summary.rows, jobs: jobs.rows };
+  return { summary: summary.rows, activeSummary: activeSummary.rows, jobs: jobs.rows };
 }
 
 app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {

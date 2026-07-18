@@ -250,9 +250,16 @@ function actionSyncStatus(syncStatus) {
 
 function syncStatusSummaryText(syncStatus) {
   const summary = Array.isArray(syncStatus?.summary) ? syncStatus.summary : [];
-  return summary.length
-    ? summary.map((item) => `${statusLabel(item.status)}: ${item.count}`).join(" · ")
-    : "за последние сутки IMAP-задач нет";
+  const active = Array.isArray(syncStatus?.activeSummary) ? syncStatus.activeSummary : [];
+  const activeText = active.length
+    ? active.map((item) => `${statusLabel(item.status)}: ${item.count}`).join(", ")
+    : "активных задач нет";
+  const doneCount = Number(summary.find((item) => item.status === "done")?.count || 0);
+  const failedCount = Number(summary.find((item) => item.status === "failed")?.count || 0);
+  const history = [];
+  if (doneCount) history.push(`выполнено: ${doneCount}`);
+  if (failedCount) history.push(`ошибок за сутки: ${failedCount}`);
+  return history.length ? `Сейчас: ${activeText}. История: ${history.join(", ")}` : `Сейчас: ${activeText}`;
 }
 
 function renderInboxSyncStatus() {
@@ -290,7 +297,7 @@ function renderInboxSyncStatus() {
               <span>${esc(statusLabel(job.status))}${job.looks_stuck ? " · похоже, зависла" : ""}</span>
               <span>возраст: ${esc(fmtSeconds(job.age_seconds))}</span>
               <span>попытка: ${esc(job.attempts)}/${esc(job.max_attempts)}</span>
-              ${job.last_error ? `<p>Ошибка: ${esc(job.last_error)}</p>` : ""}
+              ${job.status !== "done" && job.last_error ? `<p>Ошибка: ${esc(job.last_error)}</p>` : ""}
             </div>
           `).join("")}
         </div>
