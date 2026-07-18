@@ -16,6 +16,7 @@ for (const expected of [
 for (const expected of [
   "function queueModeLabel",
   "function queueStatusHint",
+  "function queueScheduleLabel",
   "Когда отправлять",
   "Почта отправителя",
   "Что сделать",
@@ -25,6 +26,10 @@ for (const expected of [
   "ручная проверка перед отправкой",
   "обычная отправка",
   "ждет подтверждения",
+  "сразу",
+  "сейчас",
+  "через ${fmtCountdown(value)}",
+  "Вне окна отправки",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`queue UI should include ${expected}`);

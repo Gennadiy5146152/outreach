@@ -63,6 +63,7 @@ for (const expected of [
   "Черновик уже был запущен или имеет историю",
   "app.post(\"/api/outreach/drafts/preflight\"",
   "app.post(\"/api/outreach/drafts/start\"",
+  "draft.send_after ? new Date(draft.send_after) : new Date()",
   "first_step_body_text",
   "items: rows.map",
   "app.post(\"/api/outreach/imports\"",
@@ -292,6 +293,9 @@ for (const expected of [
   "UPDATE outreach_drafts SET status = 'active_sequence'",
   "approve_or_pause_followup",
   "AND status <> 'blocked'",
+  "nextSendWindowAt",
+  "sendWindowBlockReason",
+  "Вне окна отправки",
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should support outreach draft sequences: ${expected}`);

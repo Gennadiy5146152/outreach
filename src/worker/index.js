@@ -114,16 +114,56 @@ function findWarmupDialogue(dialogues, key) {
   return dialogues.find((dialogue) => dialogue.key === key) || dialogues[0] || fallbackWarmupDialogues()[0];
 }
 
-function isWithinWindow(row) {
-  const now = new Date();
-  const day = now.getDay() || 7;
-  const days = row.send_days || [1, 2, 3, 4, 5];
-  if (!days.includes(day)) return false;
+function sendWindowDays(row) {
+  const days = Array.isArray(row.send_days) ? row.send_days.map(Number).filter(Boolean) : [];
+  return days.length ? days : [1, 2, 3, 4, 5];
+}
 
-  const current = now.toTimeString().slice(0, 5);
+function timeToMinutes(value, fallback) {
+  const [hours, minutes] = String(value || fallback).slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return timeToMinutes(fallback, "09:00");
+  return hours * 60 + minutes;
+}
+
+function setLocalMinutes(date, totalMinutes) {
+  const next = new Date(date);
+  next.setHours(Math.floor(totalMinutes / 60), totalMinutes % 60, 0, 0);
+  return next;
+}
+
+function nextSendWindowAt(row, now = new Date()) {
+  const days = sendWindowDays(row);
+  const startMinutes = timeToMinutes(row.send_window_start, "09:00");
+  const endMinutes = timeToMinutes(row.send_window_end, "18:00");
+  const currentDay = now.getDay() || 7;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  if (days.includes(currentDay) && currentMinutes < startMinutes) {
+    return setLocalMinutes(now, startMinutes);
+  }
+
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const candidate = new Date(now);
+    candidate.setDate(now.getDate() + offset);
+    const day = candidate.getDay() || 7;
+    if (!days.includes(day)) continue;
+    if (offset === 0 && currentMinutes <= endMinutes) return now;
+    return setLocalMinutes(candidate, startMinutes);
+  }
+
+  return new Date(now.getTime() + 30 * 60 * 1000);
+}
+
+function sendWindowBlockReason(row, nextAt) {
   const start = String(row.send_window_start || "09:00").slice(0, 5);
   const end = String(row.send_window_end || "18:00").slice(0, 5);
-  return current >= start && current <= end;
+  const days = sendWindowDays(row).join(", ");
+  return `Вне окна отправки: разрешено в дни ${days}, ${start}-${end}. Ближайшая попытка: ${nextAt.toLocaleString("ru-RU")}`;
+}
+
+function isWithinWindow(row) {
+  const now = new Date();
+  return nextSendWindowAt(row, now).getTime() <= now.getTime();
 }
 
 async function lockNextJob() {
@@ -343,9 +383,10 @@ async function processSend(item) {
   }
 
   if (!isWithinWindow(item)) {
+    const nextAt = nextSendWindowAt(item);
     await query(
-      "UPDATE sending_queue SET status = 'pending', scheduled_at = now() + interval '30 minutes', updated_at = now() WHERE id = $1",
-      [item.id],
+      "UPDATE sending_queue SET status = 'pending', scheduled_at = $2, last_error = $3, updated_at = now() WHERE id = $1",
+      [item.id, nextAt, sendWindowBlockReason(item, nextAt)],
     );
     return;
   }

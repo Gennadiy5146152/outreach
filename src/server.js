@@ -1619,9 +1619,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
           [draft.company || draft.to_email, draft.to_email, draft.contact_name, parseEmail(draft.to_email).domain, draft.segment],
         );
         const leadId = draft.lead_id || lead.rows[0].id;
-        const scheduledAt = draft.send_after
-          ? new Date(draft.send_after)
-          : new Date(Date.now() + index * 7 * 60 * 1000);
+        const scheduledAt = draft.send_after ? new Date(draft.send_after) : new Date();
         const queue = await client.query(
           `
             INSERT INTO sending_queue(

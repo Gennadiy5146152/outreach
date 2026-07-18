@@ -171,6 +171,14 @@ function fmtCountdown(value) {
   return `${minutes} мин ${String(seconds).padStart(2, "0")} сек`;
 }
 
+function queueScheduleLabel(value) {
+  if (!value) return "сразу";
+  const date = new Date(value);
+  const diff = date.getTime() - Date.now();
+  const label = diff <= 0 ? "сейчас" : `через ${fmtCountdown(value)}`;
+  return `${label}<br><span class="muted">${fmtDate(value)}</span>`;
+}
+
 const STATUS_LABELS = {
   new: "новый",
   validated: "проверен",
@@ -327,6 +335,7 @@ function queueModeLabel(value) {
 
 function queueStatusHint(item) {
   if (item.requires_approval && !item.approved_at) return "Перед отправкой нужно подтвердить письмо.";
+  if (item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")) return item.last_error;
   if (item.status === "pending") return "Ждет своего времени отправки.";
   if (item.status === "retrying") return "Будет повторная попытка после ошибки.";
   if (item.status === "sent") return "Письмо уже отправлено.";
@@ -1638,7 +1647,7 @@ async function loadQueue() {
         .map(
           (item) => `
             <tr>
-              <td>${fmtDate(item.scheduled_at)}</td>
+              <td>${queueScheduleLabel(item.scheduled_at)}</td>
               <td>${esc(item.campaign_name)}</td>
               <td>${esc(item.company)}<br><span class="muted">${esc(item.email)}</span></td>
               <td>${esc(item.mailbox_email || "")}</td>
