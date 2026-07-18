@@ -815,6 +815,24 @@ function selectedOutreachDraftSignature(draftIds = [...state.selectedOutreachDra
   return [...draftIds].sort().join("|");
 }
 
+function canDeleteOutreachDraft(draft) {
+  return ["draft", "ready", "blocked", "cancelled"].includes(draft.status);
+}
+
+function selectedReadyOutreachDraftIds() {
+  const selected = new Set(state.selectedOutreachDraftIds);
+  return state.outreachDrafts
+    .filter((draft) => draft.status === "ready" && selected.has(draft.id))
+    .map((draft) => draft.id);
+}
+
+function selectedDeletableOutreachDraftIds() {
+  const selected = new Set(state.selectedOutreachDraftIds);
+  return state.outreachDrafts
+    .filter((draft) => canDeleteOutreachDraft(draft) && selected.has(draft.id))
+    .map((draft) => draft.id);
+}
+
 function clearOutreachDraftLaunchReview() {
   state.outreachDraftLaunchReview = null;
   $("#outreachDraftLaunchReview").hidden = true;
@@ -1025,8 +1043,9 @@ async function loadOutreachDrafts() {
   }
   const ready = state.outreachDrafts.filter((draft) => draft.status === "ready").length;
   const blocked = state.outreachDrafts.filter((draft) => draft.status === "blocked").length;
-  const readySelected = state.outreachDrafts
-    .filter((draft) => draft.status === "ready" && state.selectedOutreachDraftIds.has(draft.id))
+  const deletable = state.outreachDrafts.filter(canDeleteOutreachDraft).length;
+  const deletableSelected = state.outreachDrafts
+    .filter((draft) => canDeleteOutreachDraft(draft) && state.selectedOutreachDraftIds.has(draft.id))
     .length;
   $("#outreachDraftsSummary").innerHTML = `
     <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
@@ -1035,14 +1054,14 @@ async function loadOutreachDrafts() {
     <span>Выбрано: <strong>${state.selectedOutreachDraftIds.size}</strong></span>
   `;
   $("#outreachDraftsTable").innerHTML = `
-    <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${ready && readySelected === ready ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
+    <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${deletable && deletableSelected === deletable ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
         ? state.outreachDrafts.map((draft) => {
-          const canDelete = ["draft", "ready", "blocked", "cancelled"].includes(draft.status);
+          const canDelete = canDeleteOutreachDraft(draft);
           return `
           <tr>
-            <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
+            <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${canDelete ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
             <td>${esc(draft.to_email)}${draft.error_reason ? `<br><span class="muted">${esc(draft.error_reason)}</span>` : ""}</td>
             <td><strong>${esc(draft.company || "Без компании")}</strong><br><span class="muted">${esc(draft.contact_name || "")}</span></td>
@@ -2431,13 +2450,13 @@ $("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction(
   title: "Проверка выбранных черновиков",
   button: event.currentTarget,
 }, async () => {
-  const draftIds = [...state.selectedOutreachDraftIds];
+  const draftIds = selectedReadyOutreachDraftIds();
   if (!draftIds.length) {
     clearOutreachDraftLaunchReview();
     setActionResult({
       status: "warn",
       title: "Проверка выбранных черновиков",
-      message: "Сначала отметь один или несколько готовых черновиков.",
+      message: "Среди выбранных нет готовых черновиков для проверки перед запуском.",
     });
     return;
   }
@@ -2456,23 +2475,63 @@ $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
   title: "Запуск выбранных черновиков",
   button: event.currentTarget,
 }, async () => {
-  const draftIds = [...state.selectedOutreachDraftIds];
+  const draftIds = selectedReadyOutreachDraftIds();
   if (!draftIds.length) {
     clearOutreachDraftLaunchReview();
     setActionResult({
       status: "warn",
       title: "Запуск выбранных черновиков",
-      message: "Сначала отметь один или несколько готовых черновиков.",
+      message: "Среди выбранных нет готовых черновиков для запуска.",
     });
     return;
   }
   await startOutreachDrafts(draftIds, { requireReview: true });
 }));
 
+$("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
+  const draftIds = selectedDeletableOutreachDraftIds();
+  if (!draftIds.length) {
+    setActionResult({
+      status: "warn",
+      title: "Удаление выбранных черновиков",
+      message: "Среди выбранных нет черновиков, которые можно безопасно удалить.",
+    });
+    return;
+  }
+  if (!window.confirm(`Удалить выбранные черновики: ${draftIds.length}? Это уберет их из списка черновиков.`)) return;
+  runAction({
+    title: "Удаление выбранных черновиков",
+    button: event.currentTarget,
+  }, async () => {
+    const deleted = [];
+    const errors = [];
+    for (const draftId of draftIds) {
+      try {
+        const result = await api(`/api/outreach/drafts/${draftId}`, { method: "DELETE" });
+        deleted.push(result);
+        state.selectedOutreachDraftIds.delete(draftId);
+      } catch (error) {
+        errors.push({ draftId, error: errorMessage(error), details: error.data || error.message });
+      }
+    }
+    clearOutreachDraftLaunchReview();
+    await Promise.all([loadOutreachDrafts(), loadOutreachImports(), loadDashboard()]);
+    if (state.openOutreachDraftId && !state.outreachDrafts.some((draft) => draft.id === state.openOutreachDraftId)) {
+      refreshOpenOutreachDraftDrawer(state.openOutreachDraftId);
+    }
+    setActionResult({
+      status: errors.length ? "warn" : "success",
+      title: "Удаление выбранных черновиков",
+      message: `Удалено: ${deleted.length}. Ошибок: ${errors.length}.`,
+      details: { deleted, errors },
+    });
+  });
+});
+
 document.body.addEventListener("change", (event) => {
   if (event.target.id === "outreachDraftSelectAll") {
     state.selectedOutreachDraftIds = event.target.checked
-      ? new Set(state.outreachDrafts.filter((draft) => draft.status === "ready").map((draft) => draft.id))
+      ? new Set(state.outreachDrafts.filter(canDeleteOutreachDraft).map((draft) => draft.id))
       : new Set();
     clearOutreachDraftLaunchReview();
     loadOutreachDrafts();
