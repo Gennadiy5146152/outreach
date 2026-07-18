@@ -1054,7 +1054,15 @@ async function loadOutreachDrafts() {
     <span>Выбрано: <strong>${state.selectedOutreachDraftIds.size}</strong></span>
   `;
   $("#outreachDraftsTable").innerHTML = `
-    <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${deletable && deletableSelected === deletable ? "checked" : ""} /></th><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Отправитель</th><th>Действия</th></tr></thead>
+    <colgroup>
+      <col class="draft-col-check" />
+      <col class="draft-col-status" />
+      <col class="draft-col-recipient" />
+      <col class="draft-col-message" />
+      <col class="draft-col-mailbox" />
+      <col class="draft-col-actions" />
+    </colgroup>
+    <thead><tr><th><input id="outreachDraftSelectAll" class="compact-check" type="checkbox" ${deletable && deletableSelected === deletable ? "checked" : ""} /></th><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Отправитель</th><th>Действия</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
         ? state.outreachDrafts.map((draft) => {
@@ -1062,7 +1070,7 @@ async function loadOutreachDrafts() {
           const followups = (draft.steps || []).filter((step) => Number(step.position) > 1);
           return `
           <tr class="draft-row">
-            <td class="draft-check"><input type="checkbox" data-outreach-draft-select="${draft.id}" ${canDelete ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
+            <td class="draft-check"><input class="compact-check" type="checkbox" data-outreach-draft-select="${draft.id}" ${canDelete ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td class="draft-status">${pill(draft.status)}<span>строка ${draft.source_row_number}</span></td>
             <td>
               <div class="draft-recipient">
@@ -1081,7 +1089,7 @@ async function loadOutreachDrafts() {
                 </div>
               </div>
             </td>
-            <td>${esc(draft.mailbox_email || "выберется позже")}</td>
+            <td><span class="draft-mailbox">${esc(draft.mailbox_email || "выберется позже")}</span></td>
             <td>
               <div class="row-actions">
                 <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Старт</button>

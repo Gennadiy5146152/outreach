@@ -841,8 +841,33 @@ h2 {
 }
 
 #outreachDraftsTable {
-  min-width: 900px;
+  table-layout: fixed;
+  min-width: 1040px;
   font-size: 12px;
+}
+
+#outreachDraftsTable .draft-col-check {
+  width: 38px;
+}
+
+#outreachDraftsTable .draft-col-status {
+  width: 110px;
+}
+
+#outreachDraftsTable .draft-col-recipient {
+  width: 230px;
+}
+
+#outreachDraftsTable .draft-col-message {
+  width: auto;
+}
+
+#outreachDraftsTable .draft-col-mailbox {
+  width: 190px;
+}
+
+#outreachDraftsTable .draft-col-actions {
+  width: 172px;
 }
 
 #outreachDraftsTable th,
@@ -856,12 +881,15 @@ h2 {
 }
 
 #outreachDraftsTable .draft-check {
-  width: 32px;
+  text-align: center;
+  vertical-align: middle;
 }
 
-#outreachDraftsTable .draft-check input {
+#outreachDraftsTable .compact-check {
   width: 16px;
   height: 16px;
+  min-height: 16px;
+  padding: 0;
 }
 
 .draft-row {
@@ -890,6 +918,7 @@ h2 {
 .draft-message strong {
   color: var(--text);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .draft-recipient em {
@@ -911,6 +940,13 @@ h2 {
   color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.draft-mailbox {
+  display: block;
+  color: var(--text);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 #outreachDraftsTable .pill {
@@ -949,19 +985,18 @@ h2 {
 }
 
 .row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
-  min-width: 210px;
-  max-width: 230px;
+  width: 156px;
 }
 
 .row-actions .small-button {
   min-height: 28px;
-  padding: 4px 6px;
-  font-size: 12px;
+  padding: 3px 5px;
+  font-size: 11px;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .form {
