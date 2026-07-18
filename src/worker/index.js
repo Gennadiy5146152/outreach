@@ -376,7 +376,7 @@ async function handleJob(job) {
 
   if (job.job_type === "sync_inbox") {
     const mailbox = (await query("SELECT * FROM mailboxes WHERE id = $1", [job.payload.mailboxId])).rows[0];
-    if (mailbox) await syncInbox(mailbox);
+    if (mailbox) await syncInbox(mailbox, { forceRecent: Boolean(job.payload.forceRecent) });
     return;
   }
 
@@ -851,7 +851,7 @@ async function recoverInterruptedQueues({ staleOnly = false } = {}) {
   }
 }
 
-async function syncInbox(mailbox) {
+async function syncInbox(mailbox, { forceRecent = false } = {}) {
   const runtime = await getRuntimeSettings();
   if (runtime.dryRun) return;
 
@@ -862,11 +862,14 @@ async function syncInbox(mailbox) {
     const state = (
       await query("SELECT * FROM imap_sync_state WHERE mailbox_id = $1 AND folder = 'INBOX'", [mailbox.id])
     ).rows[0];
-    const fromUid = Number(state?.last_uid || 0) + 1;
+    const uidNext = lock.uidNext ? Number(lock.uidNext) : 0;
+    const fromUid = forceRecent && uidNext
+      ? Math.max(1, uidNext - 200)
+      : Number(state?.last_uid || 0) + 1;
     let maxUid = Number(state?.last_uid || 0);
 
     for await (const msg of client.fetch(`${fromUid}:*`, { uid: true, envelope: true, source: true, headers: true })) {
-      if (!msg.uid || msg.uid <= maxUid) continue;
+      if (!msg.uid || (!forceRecent && msg.uid <= maxUid)) continue;
       maxUid = Math.max(maxUid, msg.uid);
       const parsed = await simpleParser(msg.source);
       const fromEmail = parsed.from?.value?.[0]?.address?.toLowerCase() || "";
@@ -876,6 +879,7 @@ async function syncInbox(mailbox) {
       const warmupPeer = await findWarmupPeer(fromEmail);
       const isWarmup = Boolean(warmupPeer) && (headers["x-outreach-warmup"] === "true" || /рабочая заметка|warmup|проверка связи|проверка маршрута|тест входящей/i.test(subject));
       const classification = classifyInbound({ subject, body: bodyText, headers });
+      if (await inboundAlreadySaved(mailbox.id, parsed.messageId)) continue;
       const linked = await findLinkedOutbound(parsed, fromEmail);
 
       const inserted = await query(
@@ -913,6 +917,13 @@ async function syncInbox(mailbox) {
         await handleWarmupInbound(mailbox, warmupPeer, inserted.rows[0], subject);
       } else {
         await applyInboundEffects(inserted.rows[0], classification);
+        if (!linked) {
+          await logEvent("inbound_unlinked", {
+            mailboxId: mailbox.id,
+            messageId: inserted.rows[0].id,
+            payload: { from: fromEmail, subject, reason: "no_matching_outbound" },
+          });
+        }
       }
     }
 
@@ -1043,25 +1054,101 @@ async function handleWarmupInbound(mailbox, fromMailbox, message, subject) {
   });
 }
 
+function headerValues(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.flatMap(headerValues);
+  return String(value)
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeMessageId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^<+|>+$/g, "")
+    .toLowerCase();
+}
+
+function messageIdCandidates(...values) {
+  const normalized = new Set();
+  const variants = new Set();
+  for (const value of values.flatMap(headerValues)) {
+    const id = normalizeMessageId(value);
+    if (!id) continue;
+    normalized.add(id);
+    variants.add(id);
+    variants.add(`<${id}>`);
+    variants.add(value.trim());
+  }
+  return { normalized: [...normalized], variants: [...variants] };
+}
+
+function normalizeReplySubject(value) {
+  return String(value || "")
+    .replace(/^\s*(re|fw|fwd)\s*:\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+async function inboundAlreadySaved(mailboxId, messageId) {
+  const candidates = messageIdCandidates(messageId);
+  if (!candidates.variants.length) return false;
+  const existing = await query(
+    `
+      SELECT id
+      FROM messages
+      WHERE mailbox_id = $1
+        AND direction = 'inbound'
+        AND (
+          message_id_header = ANY($2::text[])
+          OR lower(replace(replace(message_id_header, '<', ''), '>', '')) = ANY($3::text[])
+        )
+      LIMIT 1
+    `,
+    [mailboxId, candidates.variants, candidates.normalized],
+  );
+  return existing.rowCount > 0;
+}
+
 async function findLinkedOutbound(parsed, fromEmail) {
-  const ids = [parsed.inReplyTo, ...(parsed.references || [])].filter(Boolean);
-  if (ids.length) {
-    const byHeader = await query("SELECT * FROM messages WHERE message_id_header = ANY($1::text[]) ORDER BY sent_at DESC LIMIT 1", [ids]);
+  const ids = messageIdCandidates(parsed.inReplyTo, parsed.references);
+  if (ids.variants.length) {
+    const byHeader = await query(
+      `
+        SELECT *
+        FROM messages
+        WHERE type <> 'warmup'
+          AND (
+            message_id_header = ANY($1::text[])
+            OR lower(replace(replace(message_id_header, '<', ''), '>', '')) = ANY($2::text[])
+          )
+        ORDER BY COALESCE(sent_at, received_at, created_at) DESC
+        LIMIT 1
+      `,
+      [ids.variants, ids.normalized],
+    );
     if (byHeader.rowCount) return byHeader.rows[0];
   }
   if (fromEmail) {
-    const byLead = await query(
+    const candidates = await query(
       `
         SELECT msg.*
         FROM messages msg
         JOIN leads l ON l.id = msg.lead_id
-        WHERE l.email = $1 AND msg.direction = 'outbound'
+        WHERE lower(l.email) = $1
+          AND msg.direction = 'outbound'
+          AND msg.type <> 'warmup'
         ORDER BY msg.sent_at DESC NULLS LAST, msg.created_at DESC
-        LIMIT 1
+        LIMIT 20
       `,
       [fromEmail],
     );
-    if (byLead.rowCount) return byLead.rows[0];
+    const subject = normalizeReplySubject(parsed.subject);
+    const bySubject = candidates.rows.find((message) => normalizeReplySubject(message.subject) === subject);
+    if (bySubject) return bySubject;
+    if (candidates.rowCount) return candidates.rows[0];
   }
   return null;
 }

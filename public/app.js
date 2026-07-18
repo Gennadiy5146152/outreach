@@ -3849,7 +3849,7 @@ document.body.addEventListener("click", async (event) => {
       setActionResult({
         status: "success",
         title: "Синхронизация входящих",
-        message: "Задача поставлена в очередь worker. Новые письма появятся во «Входящих» после обработки.",
+        message: "Задача поставлена в очередь worker. Сервис перечитает последние письма и попробует связать ответы с цепочками.",
         details: result,
         target: { type: "mailbox", id: syncMailboxId },
       });

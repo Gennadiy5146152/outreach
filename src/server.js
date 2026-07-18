@@ -2829,7 +2829,7 @@ app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {
-  await query("INSERT INTO job_queue(job_type, payload) VALUES ('sync_inbox', $1)", [{ mailboxId: req.params.id }]);
+  await query("INSERT INTO job_queue(job_type, payload) VALUES ('sync_inbox', $1)", [{ mailboxId: req.params.id, forceRecent: true }]);
   res.json({ queued: true });
 }));
 
@@ -3404,7 +3404,7 @@ app.get("/api/inbox", asyncHandler(async (_req, res) => {
 app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {
   const result = await query(`
     INSERT INTO job_queue(job_type, payload)
-    SELECT 'sync_inbox', jsonb_build_object('mailboxId', id)
+    SELECT 'sync_inbox', jsonb_build_object('mailboxId', id, 'forceRecent', true)
     FROM mailboxes
     WHERE is_active = true
     RETURNING id

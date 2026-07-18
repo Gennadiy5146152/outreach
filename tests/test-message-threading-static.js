@@ -25,6 +25,14 @@ for (const expected of [
   "inReplyTo: inReplyTo || undefined",
   "references: references || undefined",
   "isWarmup || !linked ? \"new_thread\" : \"reply_to_previous\"",
+  "function normalizeMessageId",
+  "function messageIdCandidates",
+  "function normalizeReplySubject",
+  "function inboundAlreadySaved",
+  "forceRecent",
+  "uidNext - 200",
+  "normalizeReplySubject(message.subject) === subject",
+  "inbound_unlinked",
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should preserve message threading: ${expected}`);
