@@ -819,18 +819,38 @@ function canDeleteOutreachDraft(draft) {
   return ["draft", "ready", "blocked", "cancelled"].includes(draft.status);
 }
 
+function syncSelectedOutreachDraftIdsFromDom() {
+  const checkedIds = $$("[data-outreach-draft-select]:checked").map((input) => input.dataset.outreachDraftSelect);
+  if (checkedIds.length || $("#outreachDraftsTable")) {
+    state.selectedOutreachDraftIds = new Set(checkedIds);
+  }
+  return state.selectedOutreachDraftIds;
+}
+
+function outreachDraftSelectionStats() {
+  const selected = syncSelectedOutreachDraftIdsFromDom();
+  const selectedDrafts = state.outreachDrafts.filter((draft) => selected.has(draft.id));
+  return {
+    selectedDrafts,
+    selectedCount: selectedDrafts.length,
+    readyDrafts: selectedDrafts.filter((draft) => draft.status === "ready"),
+    deletableDrafts: selectedDrafts.filter(canDeleteOutreachDraft),
+    selectedStatusLabels: [...new Set(selectedDrafts.map((draft) => statusLabel(draft.status)))],
+  };
+}
+
 function selectedReadyOutreachDraftIds() {
-  const selected = new Set(state.selectedOutreachDraftIds);
-  return state.outreachDrafts
-    .filter((draft) => draft.status === "ready" && selected.has(draft.id))
-    .map((draft) => draft.id);
+  return outreachDraftSelectionStats().readyDrafts.map((draft) => draft.id);
 }
 
 function selectedDeletableOutreachDraftIds() {
-  const selected = new Set(state.selectedOutreachDraftIds);
-  return state.outreachDrafts
-    .filter((draft) => canDeleteOutreachDraft(draft) && selected.has(draft.id))
-    .map((draft) => draft.id);
+  return outreachDraftSelectionStats().deletableDrafts.map((draft) => draft.id);
+}
+
+function selectedReadyWarningMessage(action) {
+  const stats = outreachDraftSelectionStats();
+  if (!stats.selectedCount) return `Сначала отметь черновики галочками, потом нажми “${action}”.`;
+  return `Выбрано: ${stats.selectedCount}. Готовых к запуску: ${stats.readyDrafts.length}. Сейчас выбраны статусы: ${stats.selectedStatusLabels.join(", ") || "нет"}. Запускать можно только черновики со статусом “готово”; остальные нужно исправить, удалить или остановить.`;
 }
 
 function clearOutreachDraftLaunchReview() {
@@ -2475,7 +2495,7 @@ $("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction(
     setActionResult({
       status: "warn",
       title: "Проверка выбранных черновиков",
-      message: "Среди выбранных нет готовых черновиков для проверки перед запуском.",
+      message: selectedReadyWarningMessage("Проверить"),
     });
     return;
   }
@@ -2500,7 +2520,7 @@ $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
     setActionResult({
       status: "warn",
       title: "Запуск выбранных черновиков",
-      message: "Среди выбранных нет готовых черновиков для запуска.",
+      message: selectedReadyWarningMessage("Запустить"),
     });
     return;
   }
