@@ -58,7 +58,7 @@ for (const expected of [
 }
 
 for (const expected of [
-  "sent.sent_at AS sent_at",
+  "WHEN q.status = 'sent' THEN COALESCE(sent.sent_at, q.updated_at)",
   "LEFT JOIN messages sent ON sent.id = q.sent_message_id",
 ]) {
   if (!server.includes(expected)) {

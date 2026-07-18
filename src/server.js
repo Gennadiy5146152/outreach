@@ -3238,7 +3238,10 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
            COALESCE(c.name, 'Персональный импорт') AS campaign_name,
            m.email AS mailbox_email,
            COALESCE(s.name, 'Шаг ' || ods.position::text) AS step_name,
-           sent.sent_at AS sent_at
+           CASE
+             WHEN q.status = 'sent' THEN COALESCE(sent.sent_at, q.updated_at)
+             ELSE sent.sent_at
+           END AS sent_at
     FROM sending_queue q
     JOIN leads l ON l.id = q.lead_id
     LEFT JOIN campaigns c ON c.id = q.campaign_id
