@@ -208,6 +208,7 @@ for (const expected of [
   ".row-actions",
   ".danger-button",
   ".add-followup-card",
+  ".draft-toolbar",
   "#outreachDraftsTable",
   "#outreachDraftsTable .pill",
   ".row-actions .small-button",
