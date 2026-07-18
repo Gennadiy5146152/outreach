@@ -80,8 +80,89 @@ function toast(message) {
 
 function actionDetails(details) {
   if (!details) return "";
-  const body = typeof details === "string" ? details : JSON.stringify(details, null, 2);
-  return `<details><summary>Детали</summary><pre>${esc(body)}</pre></details>`;
+  const body = actionDetailsBody(details);
+  return body ? `<details class="action-details"><summary>Детали</summary>${body}</details>` : "";
+}
+
+function actionDetailsBody(details) {
+  if (!details) return "";
+  if (typeof details === "string") return `<p>${esc(details)}</p>`;
+  if (Array.isArray(details)) {
+    return details.length
+      ? `<ul>${details.map((item) => `<li>${esc(actionDetailLine(item))}</li>`).join("")}</ul>`
+      : `<p>Дополнительных деталей нет.</p>`;
+  }
+  if (typeof details !== "object") return `<p>${esc(String(details))}</p>`;
+
+  const blocks = [];
+  if (details.ok !== undefined) blocks.push(`<p>Результат проверки: <strong>${details.ok ? "можно продолжать" : "нужно исправить"}</strong>.</p>`);
+  if (details.queued !== undefined) blocks.push(`<p>Поставлено в очередь: <strong>${esc(details.queued)}</strong>.</p>`);
+  if (details.approved !== undefined) blocks.push(`<p>Подтверждено писем: <strong>${esc(details.approved)}</strong>.</p>`);
+  if (details.cancelled_queue !== undefined) blocks.push(`<p>Снято с очереди: <strong>${esc(details.cancelled_queue)}</strong>.</p>`);
+  if (details.deleted !== undefined) blocks.push(`<p>Удалено: <strong>${esc(details.deleted)}</strong>.</p>`);
+  if (details.imapSyncQueued !== undefined) blocks.push(`<p>IMAP-проверок запущено: <strong>${esc(details.imapSyncQueued)}</strong>.</p>`);
+  if (details.stats) blocks.push(actionStatsList(details.stats));
+  if (details.imapUncheckedMailboxes?.length) {
+    blocks.push(`<p>IMAP проверяется автоматически для ящиков: <strong>${esc(details.imapUncheckedMailboxes.join(", "))}</strong>.</p>`);
+  }
+  if (details.errors?.length) blocks.push(actionList("Что исправить", details.errors));
+  if (details.warnings?.length) blocks.push(actionList("На что обратить внимание", details.warnings));
+  if (details.items?.length) blocks.push(actionItemsList(details.items));
+  if (details.fixes?.length) blocks.push(actionList("Автоисправления", details.fixes));
+
+  if (blocks.length) return `<div class="action-detail-body">${blocks.join("")}</div>`;
+  return `<pre>${esc(JSON.stringify(details, null, 2))}</pre>`;
+}
+
+function actionDetailLine(item) {
+  if (typeof item === "string") return item;
+  if (!item || typeof item !== "object") return String(item ?? "");
+  return item.error || item.warning || item.message || item.email || item.id || JSON.stringify(item);
+}
+
+function actionList(title, items) {
+  return `
+    <div class="action-detail-section">
+      <strong>${esc(title)}</strong>
+      <ul>${items.map((item) => `<li>${esc(actionDetailLine(item))}</li>`).join("")}</ul>
+    </div>
+  `;
+}
+
+function actionStatsList(stats) {
+  const labels = {
+    selected: "Выбрано",
+    found: "Найдено",
+    ready: "Готово",
+    blocked: "Заблокировано",
+    withMailbox: "С почтой отправителя",
+    fallbackMailboxes: "Запасных mailbox",
+    withFollowups: "С follow-up",
+  };
+  const rows = Object.entries(stats)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `<span>${esc(labels[key] || key)}: <strong>${esc(value)}</strong></span>`);
+  return rows.length ? `<div class="action-detail-stats">${rows.join("")}</div>` : "";
+}
+
+function actionItemsList(items) {
+  const visible = items.slice(0, 8);
+  return `
+    <div class="action-detail-section">
+      <strong>Письма</strong>
+      <ul>
+        ${visible.map((item) => `
+          <li>
+            ${esc([item.company, item.email].filter(Boolean).join(" · ") || item.id || "Письмо")}
+            ${item.status ? ` — ${esc(statusLabel(item.status))}` : ""}
+            ${item.mailbox ? `, отправитель: ${esc(item.mailbox)}` : ""}
+            ${item.errors?.length ? `. Ошибки: ${esc(item.errors.join("; "))}` : ""}
+          </li>
+        `).join("")}
+      </ul>
+      ${items.length > visible.length ? `<p>И еще ${items.length - visible.length} записей.</p>` : ""}
+    </div>
+  `;
 }
 
 function actionResultHtml(result) {

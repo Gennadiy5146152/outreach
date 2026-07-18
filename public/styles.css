@@ -779,6 +779,53 @@ h2 {
   margin: 8px 0 0;
 }
 
+.action-details {
+  display: grid;
+  gap: 8px;
+}
+
+.action-detail-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.action-detail-body p,
+.action-detail-body ul {
+  margin: 0;
+}
+
+.action-detail-body ul {
+  padding-left: 18px;
+}
+
+.action-detail-body li {
+  margin: 3px 0;
+}
+
+.action-detail-section {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.action-detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action-detail-stats span {
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
 .env-panel {
   border-color: rgba(161, 92, 7, 0.22);
 }

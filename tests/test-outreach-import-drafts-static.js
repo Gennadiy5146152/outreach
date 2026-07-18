@@ -194,6 +194,10 @@ for (const expected of [
   "reviewOutreachDrafts",
   "renderOutreachDraftLaunchReview",
   "IMAP-проверка запущена автоматически",
+  "function actionDetailsBody",
+  "function actionItemsList",
+  "Что исправить",
+  "Письма",
   "selectedOutreachDraftSignature",
   "canDeleteOutreachDraft",
   "syncSelectedOutreachDraftIdsFromDom",
@@ -268,10 +272,17 @@ for (const expected of [
   "#outreachDraftsTable",
   "#outreachDraftsTable .pill",
   ".row-actions .small-button",
+  ".action-detail-body",
+  ".action-detail-section",
+  ".action-detail-stats",
 ]) {
   if (!styles.includes(expected)) {
     throw new Error(`outreach drafts drawer styles should include ${expected}`);
   }
+}
+
+if (app.includes("const body = typeof details === \"string\" ? details : JSON.stringify(details, null, 2);")) {
+  throw new Error("action result details should be human-readable instead of raw JSON by default");
 }
 
 for (const forbidden of [
