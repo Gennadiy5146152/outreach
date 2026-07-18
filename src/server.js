@@ -1298,6 +1298,116 @@ app.post("/api/outreach/drafts/:id/cancel", asyncHandler(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
+app.delete("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_draft" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const draft = (await client.query(
+        `
+          SELECT d.*,
+                 EXISTS (
+                   SELECT 1
+                   FROM sending_queue q
+                   WHERE q.outreach_draft_id = d.id
+                     AND q.status IN ('pending','running','retrying','sent')
+                 ) AS has_active_queue,
+                 EXISTS (
+                   SELECT 1
+                   FROM messages msg
+                   WHERE msg.outreach_draft_id = d.id
+                      OR msg.outreach_step_id IN (
+                        SELECT id FROM outreach_draft_steps WHERE draft_id = d.id
+                      )
+                 ) AS has_messages,
+                 (SELECT count(*)::int FROM outreach_draft_steps WHERE draft_id = d.id) AS steps_count
+          FROM outreach_drafts d
+          WHERE d.id = $1
+        `,
+        [req.params.id],
+      )).rows[0];
+
+      if (!draft) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      const canDelete = ["draft", "ready", "blocked", "cancelled"].includes(draft.status)
+        && !draft.has_active_queue
+        && !draft.has_messages;
+      if (!canDelete) {
+        const error = new Error("Черновик уже был запущен или имеет историю. Используй “Отменить”, чтобы остановить будущие письма.");
+        error.status = 409;
+        throw error;
+      }
+
+      const deleted = (await client.query("DELETE FROM outreach_drafts WHERE id = $1 RETURNING *", [draft.id])).rows[0];
+      if (deleted.import_id) {
+        await client.query(
+          `
+            UPDATE outreach_imports i
+            SET rows_ready = (
+                  SELECT count(*)::int FROM outreach_drafts d
+                  WHERE d.import_id = i.id AND d.status = 'ready'
+                ),
+                rows_blocked = (
+                  SELECT count(*)::int FROM outreach_drafts d
+                  WHERE d.import_id = i.id AND d.status = 'blocked'
+                ),
+                rows_skipped = GREATEST(
+                  i.rows_total - (
+                    SELECT count(*)::int FROM outreach_drafts d
+                    WHERE d.import_id = i.id
+                  ),
+                  0
+                )
+            WHERE i.id = $1
+          `,
+          [deleted.import_id],
+        );
+      }
+
+      let deletedConversation = null;
+      if (deleted.conversation_id) {
+        deletedConversation = (await client.query(
+          `
+            DELETE FROM outreach_conversations oc
+            WHERE oc.id = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM outreach_drafts d WHERE d.conversation_id = oc.id
+              )
+            RETURNING id
+          `,
+          [deleted.conversation_id],
+        )).rows[0] || null;
+      }
+
+      await client.query("COMMIT");
+      return {
+        draft: deleted,
+        deleted_steps: draft.steps_count,
+        deleted_conversation: Boolean(deletedConversation),
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  if (!result) return res.status(404).json({ error: "not_found" });
+  await logEvent("outreach_draft_deleted", {
+    leadId: result.draft.lead_id,
+    payload: {
+      draftId: result.draft.id,
+      email: result.draft.to_email,
+      deletedSteps: result.deleted_steps,
+      deletedConversation: result.deleted_conversation,
+    },
+  });
+  res.json(result);
+}));
+
 app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
   if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });

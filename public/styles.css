@@ -82,6 +82,22 @@ button:hover,
   color: var(--accent);
 }
 
+button:disabled,
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.danger-button {
+  border-color: #f4c7c3;
+  color: var(--danger);
+}
+
+.danger-button:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .sidebar {
   position: sticky;
   top: 0;

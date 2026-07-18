@@ -6,6 +6,7 @@ const state = {
   outreachDrafts: [],
   selectedOutreachDraftIds: new Set(),
   outreachDraftLaunchReview: null,
+  openOutreachDraftId: null,
   outreachImportPreview: null,
   outreachConversations: [],
   reviewConversations: [],
@@ -967,6 +968,7 @@ function openOutreachDraftDrawer(draftId) {
     });
     return;
   }
+  state.openOutreachDraftId = draftId;
   renderOutreachDraftDrawer(draft);
   const drawer = $("#outreachDraftDrawer");
   if (!drawer.open) drawer.showModal();
@@ -974,10 +976,14 @@ function openOutreachDraftDrawer(draftId) {
 
 function refreshOpenOutreachDraftDrawer(draftId) {
   const drawer = $("#outreachDraftDrawer");
-  if (!drawer?.open) return;
+  if (!drawer?.open || state.openOutreachDraftId !== draftId) return;
   const fresh = state.outreachDrafts.find((item) => item.id === draftId);
-  if (fresh) renderOutreachDraftDrawer(fresh);
-  else drawer.close();
+  if (fresh) {
+    renderOutreachDraftDrawer(fresh);
+  } else {
+    state.openOutreachDraftId = null;
+    drawer.close();
+  }
 }
 
 async function loadOutreachDrafts() {
@@ -1008,7 +1014,9 @@ async function loadOutreachDrafts() {
     <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${ready && readySelected === ready ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
-        ? state.outreachDrafts.map((draft) => `
+        ? state.outreachDrafts.map((draft) => {
+          const canDelete = ["draft", "ready", "blocked", "cancelled"].includes(draft.status);
+          return `
           <tr>
             <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
@@ -1025,10 +1033,12 @@ async function loadOutreachDrafts() {
                 <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Запустить</button>
                 <button class="small-button" data-edit-outreach-draft="${draft.id}">Редактировать</button>
                 <button class="small-button" data-cancel-draft="${draft.id}" ${["cancelled", "completed"].includes(draft.status) ? "disabled" : ""}>Отменить</button>
+                <button class="small-button danger-button" data-delete-draft="${draft.id}" ${canDelete ? "" : "disabled"} title="${canDelete ? "Удалить черновик из списка" : "Нельзя удалять черновики, которые уже ушли в отправку"}">Удалить</button>
               </div>
             </td>
           </tr>
-        `).join("")
+        `;
+        }).join("")
         : `<tr><td colspan="7" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
     </tbody>
   `;
@@ -2569,8 +2579,31 @@ document.body.addEventListener("click", (event) => {
   const draftId = event.target.dataset.startDraft;
   const cancelDraftId = event.target.dataset.cancelDraft;
   const editDraftId = event.target.dataset.editOutreachDraft;
+  const deleteDraftId = event.target.dataset.deleteDraft;
   if (editDraftId) {
     openOutreachDraftDrawer(editDraftId);
+    return;
+  }
+  if (deleteDraftId) {
+    const draft = state.outreachDrafts.find((item) => item.id === deleteDraftId);
+    const label = draft ? `${draft.company || "Без компании"} · ${draft.to_email}` : "этот черновик";
+    if (!window.confirm(`Удалить черновик “${label}”? Это уберет письмо из списка черновиков.`)) return;
+    runAction({
+      title: "Удаление черновика",
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/outreach/drafts/${deleteDraftId}`, { method: "DELETE" });
+      state.selectedOutreachDraftIds.delete(deleteDraftId);
+      clearOutreachDraftLaunchReview();
+      await Promise.all([loadOutreachDrafts(), loadOutreachImports(), loadDashboard()]);
+      refreshOpenOutreachDraftDrawer(deleteDraftId);
+      setActionResult({
+        status: "success",
+        title: "Удаление черновика",
+        message: `Черновик удален. Удалено шагов цепочки: ${result.deleted_steps}.`,
+        details: result,
+      });
+    });
     return;
   }
   if (draftId) {
@@ -3146,7 +3179,13 @@ document.body.addEventListener("submit", (event) => {
 
 $("#closeLeadDialog").addEventListener("click", () => $("#leadDialog").close());
 $("#closeConversationDialog").addEventListener("click", () => $("#conversationDialog").close());
-$("#closeOutreachDraftDrawer").addEventListener("click", () => $("#outreachDraftDrawer").close());
+$("#closeOutreachDraftDrawer").addEventListener("click", () => {
+  state.openOutreachDraftId = null;
+  $("#outreachDraftDrawer").close();
+});
+$("#outreachDraftDrawer").addEventListener("close", () => {
+  state.openOutreachDraftId = null;
+});
 
 refresh();
 setInterval(loadQueue, 15000);

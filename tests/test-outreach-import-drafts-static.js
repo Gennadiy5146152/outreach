@@ -56,6 +56,10 @@ for (const expected of [
   "app.patch(\"/api/outreach/drafts/:id\"",
   "app.put(\"/api/outreach/drafts/:id/steps/:position\"",
   "app.post(\"/api/outreach/drafts/:id/cancel\"",
+  "app.delete(\"/api/outreach/drafts/:id\"",
+  "outreach_draft_deleted",
+  "DELETE FROM outreach_drafts",
+  "Черновик уже был запущен или имеет историю",
   "app.post(\"/api/outreach/drafts/preflight\"",
   "app.post(\"/api/outreach/drafts/start\"",
   "first_step_body_text",
@@ -159,6 +163,7 @@ for (const expected of [
   "data-edit-outreach-draft",
   "data-start-draft",
   "data-cancel-draft",
+  "data-delete-draft",
   "openOutreachDraftDrawer",
   "refreshOpenOutreachDraftDrawer",
   "Email получателя",
@@ -169,6 +174,9 @@ for (const expected of [
   "Сохранение follow-up",
   "Follow-up сохранен как “нужно исправить”",
   "Отмена черновика",
+  "Удаление черновика",
+  "Удалить черновик",
+  "Нельзя удалять черновики, которые уже ушли в отправку",
   "switchView(\"outreachDrafts\")",
   "нужно исправить",
 ]) {
@@ -183,6 +191,7 @@ for (const expected of [
   ".drawer-section",
   ".field-help",
   ".row-actions",
+  ".danger-button",
 ]) {
   if (!styles.includes(expected)) {
     throw new Error(`outreach drafts drawer styles should include ${expected}`);
