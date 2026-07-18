@@ -1042,7 +1042,7 @@ function renderOutreachDraftLaunchReview() {
     <span>Можно запускать: <strong>${review.ok ? "да" : "нет"}</strong></span>
     <span>Ошибок: <strong>${review.errors.length}</strong></span>
     <span>Предупреждений: <strong>${review.warnings.length}</strong></span>
-    ${(review.imapUncheckedMailboxes || []).length ? `<span>Ответы: <strong>IMAP проверится после отправки</strong></span>` : ""}
+    ${(review.imapUncheckedMailboxes || []).length ? `<span>Ответы: <strong>IMAP-проверка запущена автоматически</strong></span>` : ""}
   `;
   $("#outreachDraftLaunchTable").innerHTML = `
     <thead><tr><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Почта отправителя</th><th>Когда</th><th>Что проверить</th></tr></thead>
@@ -2820,7 +2820,7 @@ async function startOutreachDrafts(draftIds, options = {}) {
         status: review.ok ? "success" : "warn",
         title: "Проверка перед запуском",
         message: review.ok
-          ? `Список писем подготовлен ниже. Можно запускать: ${review.stats.ready}. Нажми “Запустить выбранные” еще раз. ${review.imapUncheckedMailboxes?.length ? "Ответы IMAP проверятся автоматически после отправки." : ""}`
+          ? `Список писем подготовлен ниже. Можно запускать: ${review.stats.ready}. Нажми “Запустить выбранные” еще раз. ${review.imapUncheckedMailboxes?.length ? `IMAP-проверка запущена автоматически для ящиков: ${review.imapUncheckedMailboxes.join(", ")}.` : ""}`
           : `Запуск остановлен: ошибок ${review.errors.length}, предупреждений ${review.warnings.length}. Исправь ошибки в таблице проверки.`,
         details: review.ok ? undefined : review,
       });
@@ -2887,7 +2887,7 @@ $("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction(
     status: result.ok ? "success" : "warn",
     title: "Проверка выбранных черновиков",
     message: result.ok
-      ? `Можно запускать: выбрано ${result.stats.selected}. ${result.imapUncheckedMailboxes?.length ? "Ответы IMAP проверятся автоматически после отправки." : "Критичных замечаний нет."}`
+      ? `Можно запускать: выбрано ${result.stats.selected}. ${result.imapUncheckedMailboxes?.length ? `IMAP-проверка запущена автоматически для ящиков: ${result.imapUncheckedMailboxes.join(", ")}.` : "Критичных замечаний нет."}`
       : `Нужно исправить: ошибок ${result.errors.length}, предупреждений ${result.warnings.length}.`,
     details: result.ok ? undefined : result,
   });

@@ -1495,6 +1495,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
   const errors = [];
   const warnings = [];
   const imapUncheckedMailboxes = new Set();
+  const imapUncheckedMailboxIds = new Set();
   const fallbackMailboxRows = readyMailboxes.rows;
   const fallbackMailboxes = fallbackMailboxRows.length;
   const itemIssues = new Map();
@@ -1529,7 +1530,10 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
       const imapReady = draft.imap_verified_at || draft.last_inbox_sync_at;
       if (!draft.mailbox_active) rowErrors.push("выбранный mailbox выключен");
       if (!smtpReady) rowErrors.push("у выбранного mailbox не проверен SMTP");
-      if (!imapReady && draft.mailbox_email) imapUncheckedMailboxes.add(draft.mailbox_email);
+      if (!imapReady && draft.mailbox_id) {
+        imapUncheckedMailboxIds.add(draft.mailbox_id);
+        if (draft.mailbox_email) imapUncheckedMailboxes.add(draft.mailbox_email);
+      }
     } else if (!fallbackMailboxes) {
       rowErrors.push("mailbox не выбран, и нет активного mailbox с проверенным SMTP или успешной историей отправки");
     }
@@ -1545,11 +1549,31 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
 
   if (runtime.dryRun) warnings.push("Сейчас включен dry-run: письма попадут в очередь и будут показаны как отправленные без реальной отправки наружу.");
 
+  const imapSyncQueued = imapUncheckedMailboxIds.size
+    ? (await query(
+      `
+        INSERT INTO job_queue(job_type, payload, run_at)
+        SELECT 'sync_inbox', jsonb_build_object('mailboxId', mailbox_id::text), now()
+        FROM unnest($1::uuid[]) AS mailbox_id
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM job_queue j
+          WHERE j.job_type = 'sync_inbox'
+            AND j.status IN ('pending','running','retrying')
+            AND j.payload->>'mailboxId' = mailbox_id::text
+        )
+        RETURNING id
+      `,
+      [[...imapUncheckedMailboxIds]],
+    )).rowCount
+    : 0;
+
   res.json({
     ok: errors.length === 0,
     errors,
     warnings,
     imapUncheckedMailboxes: [...imapUncheckedMailboxes],
+    imapSyncQueued,
     items: rows.map((row) => {
       const issues = itemIssues.get(row.id) || { mailbox: row.mailbox_email || "", errors: [], warnings: [] };
       return {
