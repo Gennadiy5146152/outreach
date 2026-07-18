@@ -2,6 +2,8 @@ import fs from "node:fs";
 
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
+const env = fs.readFileSync("src/config/env.js", "utf8");
+const envExample = fs.readFileSync(".env.example", "utf8");
 
 for (const expected of [
   "async function recoverInterruptedQueues",
@@ -36,6 +38,18 @@ for (const expected of [
   if (!app.includes(expected)) {
     throw new Error(`worker recovery UI labels should include ${expected}`);
   }
+}
+
+for (const expected of [
+  "inboxSyncIntervalMinutes: Number(process.env.INBOX_SYNC_INTERVAL_MINUTES || 1)",
+]) {
+  if (!env.includes(expected)) {
+    throw new Error(`inbox sync should run every minute by default: ${expected}`);
+  }
+}
+
+if (!envExample.includes("INBOX_SYNC_INTERVAL_MINUTES=1")) {
+  throw new Error("env example should configure inbox sync every minute");
 }
 
 console.log("OK: worker recovery static test passed");

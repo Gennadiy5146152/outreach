@@ -23,7 +23,7 @@ export const env = {
     .map((item) => item.trim())
     .filter(Boolean),
   workerPollMs: Number(process.env.WORKER_POLL_MS || 5000),
-  inboxSyncIntervalMinutes: Number(process.env.INBOX_SYNC_INTERVAL_MINUTES || 5),
+  inboxSyncIntervalMinutes: Number(process.env.INBOX_SYNC_INTERVAL_MINUTES || 1),
   validationBatchSize: Number(process.env.VALIDATION_BATCH_SIZE || 100),
 };
 
