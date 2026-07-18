@@ -3300,10 +3300,12 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
            COALESCE(c.name, 'Персональный импорт') AS campaign_name,
            m.email AS mailbox_email,
            COALESCE(s.name, 'Шаг ' || ods.position::text) AS step_name,
+           ods.position AS outreach_step_position,
            CASE
              WHEN q.status = 'sent' THEN COALESCE(sent.sent_at, q.updated_at)
              ELSE sent.sent_at
-           END AS sent_at
+           END AS sent_at,
+           COALESCE(history.messages, '[]'::json) AS chain_messages
     FROM sending_queue q
     JOIN leads l ON l.id = q.lead_id
     LEFT JOIN campaigns c ON c.id = q.campaign_id
@@ -3311,6 +3313,52 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
     LEFT JOIN campaign_steps s ON s.id = q.campaign_step_id
     LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
     LEFT JOIN messages sent ON sent.id = q.sent_message_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(json_agg(json_build_object(
+        'id', item.id,
+        'direction', item.direction,
+        'status', item.status,
+        'subject', item.subject,
+        'body_text', item.body_text,
+        'reply_classification', item.reply_classification,
+        'outreach_step_id', item.outreach_step_id,
+        'outreach_step_position', item.outreach_step_position,
+        'campaign_step_id', item.campaign_step_id,
+        'step_name', item.step_name,
+        'mailbox_email', item.mailbox_email,
+        'sent_at', item.sent_at,
+        'received_at', item.received_at,
+        'created_at', item.created_at,
+        'event_at', item.event_at
+      ) ORDER BY item.event_at ASC), '[]'::json) AS messages
+      FROM (
+        SELECT msg.id, msg.direction, msg.status, msg.subject,
+               left(COALESCE(msg.body_text, ''), 800) AS body_text,
+               msg.reply_classification,
+               msg.outreach_step_id,
+               ods_history.position AS outreach_step_position,
+               msg.campaign_step_id,
+               COALESCE(cs_history.name, 'Письмо ' || ods_history.position::text) AS step_name,
+               history_mailbox.email AS mailbox_email,
+               msg.sent_at,
+               msg.received_at,
+               msg.created_at,
+               COALESCE(msg.received_at, msg.sent_at, msg.created_at) AS event_at
+        FROM messages msg
+        LEFT JOIN mailboxes history_mailbox ON history_mailbox.id = msg.mailbox_id
+        LEFT JOIN outreach_draft_steps ods_history ON ods_history.id = msg.outreach_step_id
+        LEFT JOIN campaign_steps cs_history ON cs_history.id = msg.campaign_step_id
+        WHERE msg.lead_id = q.lead_id
+          AND msg.type <> 'warmup'
+          AND (
+            q.outreach_draft_id IS NOT NULL
+            OR q.campaign_id IS NULL
+            OR msg.campaign_id = q.campaign_id
+          )
+        ORDER BY COALESCE(msg.received_at, msg.sent_at, msg.created_at) ASC
+        LIMIT 80
+      ) item
+    ) history ON true
     ORDER BY q.scheduled_at ASC
     LIMIT 300
   `);

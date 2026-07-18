@@ -29,6 +29,10 @@ for (const expected of [
   "function queueNeedsSending",
   "function queueFilterLabel",
   "function queueSortRank",
+  "function queueGroupKey",
+  "function queueGroups",
+  "function queueChainEvents",
+  "function renderQueueGroupDetails",
   "Когда</th>",
   "Кому и что",
   "Отправитель",
@@ -46,11 +50,18 @@ for (const expected of [
   "Ждут подтверждения",
   "Ничего нажимать не нужно",
   "Показано",
+  "Цепочек на экране",
+  "Цепочка писем",
+  "Отправленные письма",
+  "Ответ получателя",
   "visibleQueue",
+  "visibleGroups",
   "data-queue-filter",
+  "data-queue-group-toggle",
   "sent_at",
   "item.sent_at || item.updated_at",
   "updated_at",
+  "chain_messages",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`queue UI should include ${expected}`);
@@ -60,6 +71,9 @@ for (const expected of [
 for (const expected of [
   "WHEN q.status = 'sent' THEN COALESCE(sent.sent_at, q.updated_at)",
   "LEFT JOIN messages sent ON sent.id = q.sent_message_id",
+  "COALESCE(history.messages, '[]'::json) AS chain_messages",
+  "LEFT JOIN LATERAL",
+  "msg.type <> 'warmup'",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`queue API should expose real sent time: ${expected}`);
@@ -81,6 +95,8 @@ for (const expected of [
   ".queue-recipient",
   ".queue-state",
   ".queue-action",
+  ".queue-chain",
+  ".queue-chain-event",
   ".quick-filters",
 ]) {
   if (!fs.readFileSync("public/styles.css", "utf8").includes(expected)) {

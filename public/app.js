@@ -19,6 +19,7 @@ const state = {
   segments: [],
   queue: [],
   queueFilter: "waiting",
+  expandedQueueGroups: new Set(),
   suppressions: [],
   warmup: null,
   warmupPage: 1,
@@ -604,6 +605,159 @@ function queueSortRank(item) {
   if (item.status === "sent") return 6;
   if (item.status === "cancelled") return 7;
   return 8;
+}
+
+function queueGroupKey(item) {
+  if (item.outreach_draft_id) return `draft:${item.outreach_draft_id}`;
+  if (item.enrollment_id) return `enrollment:${item.enrollment_id}`;
+  if (item.campaign_id) return `campaign:${item.campaign_id}:${item.lead_id}`;
+  return `lead:${item.lead_id || item.email}`;
+}
+
+function queueStepTitle(item) {
+  if (item.step_name) return item.step_name;
+  if (item.outreach_step_position) return `Письмо ${item.outreach_step_position}`;
+  return "Письмо";
+}
+
+function queueGroups(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = queueGroupKey(item);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        company: item.company || item.email,
+        email: item.email,
+        campaignName: item.campaign_name || "Персональный импорт",
+        mailboxEmail: item.mailbox_email || "",
+        items: [],
+        messages: [],
+      });
+    }
+    const group = groups.get(key);
+    group.items.push(item);
+    for (const message of item.chain_messages || []) {
+      if (!group.messages.some((existing) => existing.id === message.id)) group.messages.push(message);
+    }
+  }
+  return [...groups.values()].sort((left, right) => {
+    const leftItem = left.items[0] || {};
+    const rightItem = right.items[0] || {};
+    const rank = queueSortRank(leftItem) - queueSortRank(rightItem);
+    if (rank !== 0) return rank;
+    const leftDate = new Date(leftItem.scheduled_at || leftItem.sent_at || leftItem.updated_at || 0).getTime();
+    const rightDate = new Date(rightItem.scheduled_at || rightItem.sent_at || rightItem.updated_at || 0).getTime();
+    return leftDate - rightDate;
+  });
+}
+
+function queueGroupStats(group) {
+  return {
+    sentMessages: group.messages.filter((message) => message.direction === "outbound" && message.status === "sent").length,
+    replies: group.messages.filter((message) => message.direction === "inbound").length,
+    waiting: group.items.filter(queueNeedsSending).length,
+    failed: group.items.filter((item) => item.status === "failed").length,
+  };
+}
+
+function queueGroupMainItem(group) {
+  return group.items.find(queueNeedsSending) || group.items.find((item) => item.status === "failed") || group.items[0] || {};
+}
+
+function queueGroupStateLabel(group) {
+  const main = queueGroupMainItem(group);
+  const stats = queueGroupStats(group);
+  if (stats.waiting > 0) return queueStateLabel(main);
+  if (stats.failed > 0) return "Есть ошибка";
+  if (stats.sentMessages > 0) return "Цепочка отправляется";
+  return queueStateLabel(main);
+}
+
+function queueGroupReasonText(group) {
+  const main = queueGroupMainItem(group);
+  const stats = queueGroupStats(group);
+  if (stats.waiting > 0 || stats.failed > 0) return queueReasonText(main);
+  if (stats.replies > 0) return "Есть ответы в диалоге.";
+  if (stats.sentMessages > 0) return "Отправленные письма видны внутри цепочки.";
+  return queueReasonText(main);
+}
+
+function queueGroupTimeLabel(group) {
+  return queueTimeLabel(queueGroupMainItem(group));
+}
+
+function queueEventTime(event) {
+  return event.event_at || event.received_at || event.sent_at || event.scheduled_at || event.updated_at || event.created_at || "";
+}
+
+function queueChainEvents(group) {
+  const messageEvents = group.messages.map((message) => ({ kind: "message", id: `message:${message.id}`, date: queueEventTime(message), message }));
+  const queuedEvents = group.items
+    .filter((item) => item.status !== "sent" || !item.sent_message_id)
+    .map((item) => ({ kind: "queue", id: `queue:${item.id}`, date: queueEventTime(item), item }));
+  return [...messageEvents, ...queuedEvents].sort((left, right) => new Date(left.date || 0).getTime() - new Date(right.date || 0).getTime());
+}
+
+function queueMessageStepLabel(message) {
+  if (message.step_name) return message.step_name;
+  if (message.outreach_step_position) return `Письмо ${message.outreach_step_position}`;
+  return message.direction === "inbound" ? "Ответ" : "Письмо";
+}
+
+function queueTimelineEvent(event) {
+  if (event.kind === "message") {
+    const message = event.message;
+    const inbound = message.direction === "inbound";
+    const preview = String(message.body_text || "").replace(/\s+/g, " ").trim();
+    return `
+      <article class="queue-chain-event ${inbound ? "inbound" : "outbound"}">
+        <div class="queue-chain-dot"></div>
+        <div>
+          <div class="queue-chain-head">
+            <strong>${inbound ? "Ответ получателя" : "Отправленное письмо"}</strong>
+            <span>${fmtDate(queueEventTime(message))}</span>
+          </div>
+          <p>${esc(queueMessageStepLabel(message))} · ${esc(message.subject || "Без темы")}</p>
+          <span>${esc(message.mailbox_email || "")}${message.reply_classification ? ` · ${esc(statusLabel(message.reply_classification))}` : ""}</span>
+          ${preview ? `<pre>${esc(preview.length > 420 ? `${preview.slice(0, 420)}...` : preview)}</pre>` : ""}
+        </div>
+      </article>
+    `;
+  }
+  const item = event.item;
+  return `
+    <article class="queue-chain-event queued">
+      <div class="queue-chain-dot"></div>
+      <div>
+        <div class="queue-chain-head">
+          <strong>${esc(queueStateLabel(item))}</strong>
+          <span>${queueTimeLabel(item).replace(/<[^>]+>/g, " ")}</span>
+        </div>
+        <p>${esc(queueStepTitle(item))}</p>
+        <span>${esc(queueReasonText(item))}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderQueueGroupDetails(group) {
+  const events = queueChainEvents(group);
+  return `
+    <tr class="queue-chain-row">
+      <td colspan="5">
+        <div class="queue-chain">
+          <div class="queue-chain-title">
+            <strong>Цепочка писем</strong>
+            <span>Отправленные письма, ожидающие шаги и ответы по этому контакту</span>
+          </div>
+          ${events.length
+            ? events.map(queueTimelineEvent).join("")
+            : `<p class="muted">По этой цепочке пока нет отправленных писем и ответов.</p>`}
+        </div>
+      </td>
+    </tr>
+  `;
 }
 
 function stepName(position) {
@@ -2025,8 +2179,12 @@ async function loadQueue() {
     if (state.queueFilter === "all") return true;
     return queueNeedsSending(item);
   });
+  const visibleGroups = queueGroups(visibleQueue);
+  const visibleGroupKeys = new Set(visibleGroups.map((group) => group.key));
+  state.expandedQueueGroups = new Set([...state.expandedQueueGroups].filter((key) => visibleGroupKeys.has(key)));
   $("#queueSummary").innerHTML = `
     <span>В очереди: <strong>${total}</strong></span>
+    <span>Цепочек на экране: <strong>${visibleGroups.length}</strong></span>
     <span>Готовы к обработке: <strong>${readyToSend}</strong></span>
     <span>Ждут окна: <strong>${waitingWindow}</strong></span>
     <span>Ждут подтверждения: <strong>${approvalNeeded}</strong></span>
@@ -2037,26 +2195,37 @@ async function loadQueue() {
   $("#queueTable").innerHTML = `
     <thead><tr><th>Когда</th><th>Кому и что</th><th>Отправитель</th><th>Состояние</th><th>Действие</th></tr></thead>
     <tbody>
-      ${visibleQueue.length
-        ? visibleQueue
-        .map((item) => {
-          const action = queueNextAction(item);
+      ${visibleGroups.length
+        ? visibleGroups
+        .map((group) => {
+          const main = queueGroupMainItem(group);
+          const action = queueNextAction(main);
+          const stats = queueGroupStats(group);
+          const expanded = state.expandedQueueGroups.has(group.key);
           return `
-            <tr class="queue-row">
-              <td class="queue-time">${queueTimeLabel(item)}</td>
+            <tr class="queue-row queue-group-row" data-queue-group-toggle="${esc(group.key)}" aria-expanded="${expanded ? "true" : "false"}">
+              <td class="queue-time">
+                <span class="queue-expand">${expanded ? "Свернуть" : "Раскрыть"}</span>
+                ${queueGroupTimeLabel(group)}
+              </td>
               <td>
                 <div class="queue-recipient">
-                  <strong>${esc(item.company || item.email)}</strong>
-                  <span>${esc(item.email)}</span>
-                  <em>${esc(item.campaign_name)} · ${esc(item.step_name || "Письмо")}</em>
+                  <strong>${esc(group.company || group.email)}</strong>
+                  <span>${esc(group.email)}</span>
+                  <em>${esc(group.campaignName)} · ${esc(queueStepTitle(main))}</em>
+                  <div class="queue-chain-counters">
+                    <span>отправлено: ${stats.sentMessages}</span>
+                    <span>ответов: ${stats.replies}</span>
+                    <span>ждет: ${stats.waiting}</span>
+                  </div>
                 </div>
               </td>
-              <td><span class="queue-mailbox">${esc(item.mailbox_email || "не выбран")}</span></td>
+              <td><span class="queue-mailbox">${esc(group.mailboxEmail || main.mailbox_email || "не выбран")}</span></td>
               <td>
                 <div class="queue-state">
-                  <strong>${esc(queueStateLabel(item))}</strong>
-                  <span>${esc(queueReasonText(item))}</span>
-                  <em>${esc(queueModeLabel(item.mode))}</em>
+                  <strong>${esc(queueGroupStateLabel(group))}</strong>
+                  <span>${esc(queueGroupReasonText(group))}</span>
+                  <em>${esc(queueModeLabel(main.mode))}</em>
                 </div>
               </td>
               <td>
@@ -2066,6 +2235,7 @@ async function loadQueue() {
                 </div>
               </td>
             </tr>
+            ${expanded ? renderQueueGroupDetails(group) : ""}
           `;
         })
         .join("")
@@ -3621,9 +3791,17 @@ document.body.addEventListener("click", async (event) => {
   const deleteAttachmentId = event.target.dataset.deleteAttachment;
   const deleteSuppressionId = event.target.dataset.deleteSuppression;
   const warmupPage = event.target.dataset.warmupPage;
+  const queueGroupRow = event.target.closest("[data-queue-group-toggle]");
   if (warmupPage) {
     state.warmupPage = Number(warmupPage);
     await loadWarmup();
+    return;
+  }
+  if (queueGroupRow && !event.target.closest("button,a,input,select,textarea")) {
+    const key = queueGroupRow.dataset.queueGroupToggle;
+    if (state.expandedQueueGroups.has(key)) state.expandedQueueGroups.delete(key);
+    else state.expandedQueueGroups.add(key);
+    loadQueue();
     return;
   }
   if (mailboxId) {
