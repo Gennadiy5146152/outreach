@@ -186,8 +186,9 @@ function queueScheduleLabel(value) {
 
 function queueTimeLabel(item) {
   if (item.status === "sent") {
-    return item.sent_at
-      ? `Отправлено<br><span class="muted">${fmtDate(item.sent_at)}</span>`
+    const sentAt = item.sent_at || item.updated_at;
+    return sentAt
+      ? `Отправлено<br><span class="muted">${fmtDate(sentAt)}</span>`
       : "Отправлено";
   }
   if (item.status === "cancelled") {

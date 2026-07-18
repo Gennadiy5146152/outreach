@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
+const server = fs.readFileSync("src/server.js", "utf8");
 
 for (const expected of [
   "Очередь отправки",
@@ -48,10 +49,20 @@ for (const expected of [
   "visibleQueue",
   "data-queue-filter",
   "sent_at",
+  "item.sent_at || item.updated_at",
   "updated_at",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`queue UI should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "sent.sent_at AS sent_at",
+  "LEFT JOIN messages sent ON sent.id = q.sent_message_id",
+]) {
+  if (!server.includes(expected)) {
+    throw new Error(`queue API should expose real sent time: ${expected}`);
   }
 }
 
