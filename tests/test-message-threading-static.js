@@ -36,6 +36,7 @@ for (const expected of [
   "await applyInboundEffects(relinked, classification)",
   "forceRecent",
   "uidNext - 200",
+  "client.fetch({ uid: `${fromUid}:*` }",
   "x-outreach-parsed-from",
   "inbound_repair_completed",
   "normalizeReplySubject(message.subject) === subject",

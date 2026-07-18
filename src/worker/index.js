@@ -876,7 +876,7 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       duplicates: 0,
     };
 
-    for await (const msg of client.fetch(`${fromUid}:*`, { uid: true, envelope: true, source: true, headers: true })) {
+    for await (const msg of client.fetch({ uid: `${fromUid}:*` }, { uid: true, envelope: true, source: true, headers: true })) {
       if (!msg.uid || (!forceRecent && msg.uid <= maxUid)) continue;
       maxUid = Math.max(maxUid, msg.uid);
       stats.scanned += 1;
