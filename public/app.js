@@ -1054,35 +1054,46 @@ async function loadOutreachDrafts() {
     <span>Выбрано: <strong>${state.selectedOutreachDraftIds.size}</strong></span>
   `;
   $("#outreachDraftsTable").innerHTML = `
-    <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${deletable && deletableSelected === deletable ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
+    <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${deletable && deletableSelected === deletable ? "checked" : ""} /></th><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Отправитель</th><th>Действия</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
         ? state.outreachDrafts.map((draft) => {
           const canDelete = canDeleteOutreachDraft(draft);
+          const followups = (draft.steps || []).filter((step) => Number(step.position) > 1);
           return `
-          <tr>
-            <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${canDelete ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
-            <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
-            <td>${esc(draft.to_email)}${draft.error_reason ? `<br><span class="muted">${esc(draft.error_reason)}</span>` : ""}</td>
-            <td><strong>${esc(draft.company || "Без компании")}</strong><br><span class="muted">${esc(draft.contact_name || "")}</span></td>
+          <tr class="draft-row">
+            <td class="draft-check"><input type="checkbox" data-outreach-draft-select="${draft.id}" ${canDelete ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
+            <td class="draft-status">${pill(draft.status)}<span>строка ${draft.source_row_number}</span></td>
             <td>
-              <strong>${esc(draft.subject)}</strong><br>
-              <span class="muted">${esc((draft.body_text || "").slice(0, 140))}${draft.body_text && draft.body_text.length > 140 ? "..." : ""}</span>
-              <div class="draft-steps">${(draft.steps || []).map((step) => `<span>${pill(step.status)} шаг ${step.position}${step.position > 1 ? ` · +${Number(step.delay_days || 0)} дн.` : ""}</span>`).join("")}</div>
+              <div class="draft-recipient">
+                <strong>${esc(draft.to_email)}</strong>
+                <span>${esc(draft.company || "Без компании")}${draft.contact_name ? ` · ${esc(draft.contact_name)}` : ""}</span>
+                ${draft.error_reason ? `<em>${esc(draft.error_reason)}</em>` : ""}
+              </div>
+            </td>
+            <td>
+              <div class="draft-message">
+                <strong>${esc(draft.subject || "Без темы")}</strong>
+                <span>${esc((draft.body_text || "").slice(0, 180))}${draft.body_text && draft.body_text.length > 180 ? "..." : ""}</span>
+                <div class="draft-steps">${followups.length
+                  ? followups.map((step) => `<span>FU${Number(step.position) - 1}: +${Number(step.delay_days || 0)} дн.</span>`).join("")
+                  : `<span>follow-up нет</span>`}
+                </div>
+              </div>
             </td>
             <td>${esc(draft.mailbox_email || "выберется позже")}</td>
             <td>
               <div class="row-actions">
-                <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Запустить</button>
-                <button class="small-button" data-edit-outreach-draft="${draft.id}">Редактировать</button>
-                <button class="small-button" data-cancel-draft="${draft.id}" ${["cancelled", "completed"].includes(draft.status) ? "disabled" : ""}>Отменить</button>
+                <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Старт</button>
+                <button class="small-button" data-edit-outreach-draft="${draft.id}">Править</button>
+                <button class="small-button" data-cancel-draft="${draft.id}" ${["cancelled", "completed"].includes(draft.status) ? "disabled" : ""}>Остановить</button>
                 <button class="small-button danger-button" data-delete-draft="${draft.id}" ${canDelete ? "" : "disabled"} title="${canDelete ? "Удалить черновик из списка" : "Нельзя удалять черновики, которые уже ушли в отправку"}">Удалить</button>
               </div>
             </td>
           </tr>
         `;
         }).join("")
-        : `<tr><td colspan="7" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
+        : `<tr><td colspan="6" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
     </tbody>
   `;
 }
