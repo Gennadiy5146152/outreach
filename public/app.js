@@ -343,6 +343,38 @@ function queueStatusHint(item) {
   return "";
 }
 
+function queueStateLabel(item) {
+  if (item.requires_approval && !item.approved_at) return "Ждет подтверждения";
+  if (item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")) return "Ждет окна отправки";
+  if (item.status === "pending") return "В очереди";
+  if (item.status === "retrying") return "Повтор после ошибки";
+  if (item.status === "running") return "Отправляется";
+  if (item.status === "sent") return "Отправлено";
+  if (item.status === "failed") return "Ошибка";
+  if (item.status === "cancelled") return "Отменено";
+  return statusLabel(item.status) || "Неизвестно";
+}
+
+function queueNextAction(item) {
+  if (item.requires_approval && !item.approved_at) {
+    return {
+      html: `<button class="small-button" data-approve="${item.id}">Подтвердить</button>`,
+      text: "Проверь письмо и разреши отправку.",
+    };
+  }
+  if (item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")) {
+    return { html: `<span class="muted">Ждет автоматически</span>`, text: "Ничего нажимать не нужно: отправится в ближайшее разрешенное окно." };
+  }
+  if (item.status === "pending") return { html: `<span class="muted">Ждет автоматически</span>`, text: "Ничего нажимать не нужно." };
+  if (item.status === "retrying") return { html: `<span class="muted">Ждет повтор</span>`, text: "Сервис попробует отправить еще раз." };
+  if (item.status === "failed") return { html: `<span class="muted">Смотри ошибку</span>`, text: "Проверь почту отправителя или текст ошибки." };
+  return { html: `<span class="muted">Действий нет</span>`, text: "" };
+}
+
+function queueReasonText(item) {
+  return queueStatusHint(item) || queueNextAction(item).text || "Письмо ждет обработки.";
+}
+
 function stepName(position) {
   const number = Number(position || 0);
   if (number <= 1) return "Первое письмо";
@@ -1639,27 +1671,53 @@ async function loadQueue() {
       </div>
     </div>
   `;
+  const waitingWindow = state.queue.filter((item) => item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")).length;
+  const approvalNeeded = state.queue.filter((item) => item.requires_approval && !item.approved_at).length;
+  const failed = state.queue.filter((item) => item.status === "failed").length;
+  const readyToSend = state.queue.filter((item) => ["pending", "retrying"].includes(item.status) && !(item.requires_approval && !item.approved_at)).length;
+  $("#queueSummary").innerHTML = `
+    <span>В очереди: <strong>${total}</strong></span>
+    <span>Готовы к обработке: <strong>${readyToSend}</strong></span>
+    <span>Ждут окна: <strong>${waitingWindow}</strong></span>
+    <span>Ждут подтверждения: <strong>${approvalNeeded}</strong></span>
+    <span>Ошибки: <strong>${failed}</strong></span>
+  `;
   $("#queueTable").innerHTML = `
-    <thead><tr><th>Когда отправлять</th><th>Кампания</th><th>Получатель</th><th>Почта отправителя</th><th>Письмо</th><th>Режим</th><th>Состояние</th><th>Что сделать</th></tr></thead>
+    <thead><tr><th>Когда</th><th>Кому и что</th><th>Отправитель</th><th>Состояние</th><th>Действие</th></tr></thead>
     <tbody>
       ${state.queue.length
         ? state.queue
-        .map(
-          (item) => `
-            <tr>
-              <td>${queueScheduleLabel(item.scheduled_at)}</td>
-              <td>${esc(item.campaign_name)}</td>
-              <td>${esc(item.company)}<br><span class="muted">${esc(item.email)}</span></td>
-              <td>${esc(item.mailbox_email || "")}</td>
-              <td>${esc(item.step_name || "")}</td>
-              <td>${esc(queueModeLabel(item.mode))}</td>
-              <td>${pill(item.status)} ${item.requires_approval && !item.approved_at ? pill("approval") : ""}<br><span class="muted">${esc(queueStatusHint(item))}</span></td>
-              <td>${item.requires_approval && !item.approved_at ? `<button data-approve="${item.id}">Подтвердить</button>` : `<span class="muted">Действий нет</span>`}</td>
+        .map((item) => {
+          const action = queueNextAction(item);
+          return `
+            <tr class="queue-row">
+              <td class="queue-time">${queueScheduleLabel(item.scheduled_at)}</td>
+              <td>
+                <div class="queue-recipient">
+                  <strong>${esc(item.company || item.email)}</strong>
+                  <span>${esc(item.email)}</span>
+                  <em>${esc(item.campaign_name)} · ${esc(item.step_name || "Письмо")}</em>
+                </div>
+              </td>
+              <td><span class="queue-mailbox">${esc(item.mailbox_email || "не выбран")}</span></td>
+              <td>
+                <div class="queue-state">
+                  <strong>${esc(queueStateLabel(item))}</strong>
+                  <span>${esc(queueReasonText(item))}</span>
+                  <em>${esc(queueModeLabel(item.mode))}</em>
+                </div>
+              </td>
+              <td>
+                <div class="queue-action">
+                  ${action.html}
+                  ${action.text ? `<span>${esc(action.text)}</span>` : ""}
+                </div>
+              </td>
             </tr>
-          `,
-        )
+          `;
+        })
         .join("")
-        : `<tr><td colspan="8" class="muted">Очередь пуста. Нажми “Запустить отправку” или “Тест на мои почты”, и здесь появятся письма с временем отправки. Если после запуска пусто, смотри сообщение сверху: там будет причина.</td></tr>`}
+        : `<tr><td colspan="5" class="muted">Очередь пуста. Запусти черновики или кампанию: здесь появятся письма, время отправки и причина ожидания.</td></tr>`}
     </tbody>
   `;
 }

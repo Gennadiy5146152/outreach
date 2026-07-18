@@ -1024,6 +1024,69 @@ h2 {
   white-space: nowrap;
 }
 
+#queueTable {
+  table-layout: fixed;
+  min-width: 980px;
+  font-size: 13px;
+}
+
+#queueTable th,
+#queueTable td {
+  padding: 9px 10px;
+  vertical-align: top;
+}
+
+.queue-row {
+  cursor: default;
+}
+
+.queue-time,
+.queue-mailbox {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.queue-time {
+  width: 150px;
+  font-weight: 700;
+}
+
+.queue-recipient,
+.queue-state,
+.queue-action {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.queue-recipient strong,
+.queue-state strong {
+  color: var(--text);
+}
+
+.queue-recipient span,
+.queue-state span,
+.queue-action span {
+  color: var(--muted);
+}
+
+.queue-recipient em,
+.queue-state em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+}
+
+.queue-action {
+  width: 150px;
+}
+
+.queue-action .small-button {
+  width: max-content;
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
 .form {
   display: grid;
   gap: 10px;
