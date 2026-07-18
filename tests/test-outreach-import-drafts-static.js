@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
+const styles = fs.readFileSync("public/styles.css", "utf8");
 const server = fs.readFileSync("src/server.js", "utf8");
 const csv = fs.readFileSync("src/services/csv.js", "utf8");
 const migration = fs.readFileSync("db/migrations/003_outreach_imports.sql", "utf8");
@@ -120,6 +121,9 @@ for (const expected of [
   "outreachDraftLaunchReview",
   "outreachDraftLaunchTable",
   "outreachDraftsTable",
+  "outreachDraftDrawer",
+  "outreachDraftDrawerBody",
+  "closeOutreachDraftDrawer",
   "Создать черновики",
   "Черновики персональных писем",
   "Запустить выбранные",
@@ -152,8 +156,15 @@ for (const expected of [
   "$(\"#startSelectedDraftsBtn\").addEventListener",
   "data-outreach-draft-form",
   "data-outreach-step-form",
+  "data-edit-outreach-draft",
   "data-start-draft",
   "data-cancel-draft",
+  "openOutreachDraftDrawer",
+  "refreshOpenOutreachDraftDrawer",
+  "Email получателя",
+  "Почта отправителя",
+  "Отправить не раньше",
+  "Если лид ответит",
   "Follow-up",
   "Сохранение follow-up",
   "Follow-up сохранен как “нужно исправить”",
@@ -166,6 +177,18 @@ for (const expected of [
   }
 }
 
+for (const expected of [
+  ".drawer-dialog",
+  ".drawer-card",
+  ".drawer-section",
+  ".field-help",
+  ".row-actions",
+]) {
+  if (!styles.includes(expected)) {
+    throw new Error(`outreach drafts drawer styles should include ${expected}`);
+  }
+}
+
 for (const forbidden of [
   "outreachColumnMapping",
   "data-outreach-map-field",
@@ -175,6 +198,8 @@ for (const forbidden of [
   "Как это читать",
   "previewOutreachImportBtn",
   "Показать предпросмотр",
+  "<details class=\"inline-edit\">",
+  "<summary>Редактировать</summary>",
 ]) {
   if (index.includes(forbidden) || app.includes(forbidden)) {
     throw new Error(`outreach import UI should not expose manual mapping: ${forbidden}`);

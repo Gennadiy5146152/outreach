@@ -806,28 +806,18 @@ h2 {
   margin-top: 10px;
 }
 
-.inline-edit {
-  margin-top: 8px;
-}
-
-.inline-edit summary {
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.outreach-draft-edit-form,
-.outreach-step-edit-form {
-  min-width: min(520px, 76vw);
-  margin-top: 8px;
-}
-
 .outreach-step-edit-form {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfb;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 180px;
 }
 
 .form {
@@ -866,6 +856,13 @@ fieldset.field {
 .field > span,
 .field > legend {
   color: var(--muted);
+}
+
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .compact-field {
@@ -1495,6 +1492,65 @@ dialog::backdrop {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.drawer-dialog {
+  width: min(640px, calc(100vw - 16px));
+  max-height: 100vh;
+  margin: 0 0 0 auto;
+}
+
+.drawer-card {
+  min-height: 100vh;
+  max-height: 100vh;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 8px 0 0 8px;
+  box-shadow: -18px 0 44px rgba(16, 24, 20, 0.18);
+}
+
+.drawer-head {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.drawer-head h2 {
+  margin-bottom: 0;
+}
+
+.drawer-head p {
+  margin: 4px 0 0;
+}
+
+.drawer-body {
+  display: grid;
+  gap: 18px;
+  padding-top: 16px;
+}
+
+.drawer-section {
+  display: grid;
+  gap: 12px;
+}
+
+.drawer-section + .drawer-section {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.drawer-section h3 {
+  margin: 0;
+  color: var(--text);
+}
+
+.drawer-section textarea {
+  min-height: 150px;
 }
 
 @media (max-width: 980px) {

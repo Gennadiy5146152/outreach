@@ -856,6 +856,130 @@ function renderOutreachDraftLaunchReview() {
   `;
 }
 
+function outreachDraftMailboxOptions(selectedId) {
+  return [
+    `<option value="">Выбрать автоматически</option>`,
+    ...state.mailboxes
+      .filter((mailbox) => mailbox.is_active)
+      .map((mailbox) => `<option value="${mailbox.id}" ${mailbox.id === selectedId ? "selected" : ""}>${esc(mailbox.email)}</option>`),
+  ].join("");
+}
+
+function outreachDraftStepForm(draft, position) {
+  const stepByPosition = new Map((draft.steps || []).map((step) => [Number(step.position), step]));
+  const step = stepByPosition.get(position) || {};
+  const defaultDelay = position === 2 ? 3 : position === 3 ? 4 : 5;
+  return `
+    <form class="form outreach-step-edit-form" data-outreach-step-form="${draft.id}" data-position="${position}">
+      <div class="form-section-title">Follow-up ${position - 1}</div>
+      <label class="field">
+        <span>Тема follow-up</span>
+        <input name="subject" value="${esc(step.subject || draft.subject || "")}" placeholder="Например: Re: короткий вопрос по вашей задаче" />
+        <small class="field-help">Можно оставить тему первого письма или написать отдельную тему для этого шага.</small>
+      </label>
+      <label class="field">
+        <span>Текст follow-up</span>
+        <textarea name="body_text" placeholder="Напиши короткое продолжение диалога. Если оставить пустым, этот шаг удалится.">${esc(step.body_text || "")}</textarea>
+        <small class="field-help">Если лид ответит, следующие письма цепочки остановятся и уйдут на ручное решение.</small>
+      </label>
+      <label class="field">
+        <span>Через сколько дней отправить</span>
+        <input name="delay_days" type="number" min="0" step="1" value="${step.delay_days ?? defaultDelay}" placeholder="Например: ${defaultDelay}" />
+        <small class="field-help">Считается от предыдущего письма в этой цепочке.</small>
+      </label>
+      <div class="form-actions">
+        <button ${step.status === "sent" ? "disabled" : ""}>Сохранить follow-up</button>
+        ${step.status ? `<span class="muted">${esc(statusLabel(step.status))}</span>` : ""}
+      </div>
+    </form>
+  `;
+}
+
+function renderOutreachDraftDrawer(draft) {
+  $("#outreachDraftDrawerTitle").textContent = `${draft.company || "Без компании"} · ${draft.to_email}`;
+  $("#outreachDraftDrawerBody").innerHTML = `
+    <section class="drawer-section">
+      <h3>Основное письмо</h3>
+      <form class="form outreach-draft-edit-form" data-outreach-draft-form="${draft.id}">
+        <label class="field">
+          <span>Email получателя</span>
+          <input name="to_email" type="email" value="${esc(draft.to_email)}" placeholder="Например: ivan@company.ru — адрес, куда уйдет письмо" required />
+          <small class="field-help">Главный адрес лида. По нему будет создана цепочка и история переписки.</small>
+        </label>
+        <label class="field">
+          <span>Компания</span>
+          <input name="company" value="${esc(draft.company || "")}" placeholder="Например: Студия мебели “Север”" />
+          <small class="field-help">Название компании для поиска, фильтров и переменных в письме.</small>
+        </label>
+        <label class="field">
+          <span>Контакт</span>
+          <input name="contact_name" value="${esc(draft.contact_name || "")}" placeholder="Например: Иван Петров" />
+          <small class="field-help">Имя человека, если письмо персонализировано под конкретного получателя.</small>
+        </label>
+        <label class="field">
+          <span>Сегмент</span>
+          <input name="segment" value="${esc(draft.segment || "")}" placeholder="Например: рестораны, мебель, B2B SaaS" />
+          <small class="field-help">Помогает потом фильтровать отправки и анализировать ответы по нишам.</small>
+        </label>
+        <label class="field">
+          <span>Почта отправителя</span>
+          <select name="mailbox_id">${outreachDraftMailboxOptions(draft.mailbox_id)}</select>
+          <small class="field-help">Можно выбрать конкретный ящик или оставить автоматический выбор активного mailbox.</small>
+        </label>
+        <label class="field">
+          <span>Тема письма</span>
+          <input name="subject" value="${esc(draft.subject)}" placeholder="Например: короткий вопрос по заявкам с сайта" required />
+          <small class="field-help">То, что получатель увидит в теме входящего письма.</small>
+        </label>
+        <label class="field">
+          <span>Текст письма</span>
+          <textarea name="body_text" placeholder="Вставь персональное письмо из Excel. Можно использовать обычный текст без HTML." required>${esc(draft.body_text)}</textarea>
+          <small class="field-help">Это первое письмо цепочки. Ответы по нему будут собираться в историю диалога.</small>
+        </label>
+        <label class="field">
+          <span>Отправить не раньше</span>
+          <input name="send_after" type="datetime-local" value="${draft.send_after ? new Date(draft.send_after).toISOString().slice(0, 16) : ""}" placeholder="Оставь пустым, если можно отправлять сразу" />
+          <small class="field-help">Пустое поле означает, что письмо можно ставить в очередь сразу после запуска.</small>
+        </label>
+        <div class="form-actions">
+          <button>Сохранить основное письмо</button>
+          ${draft.status ? pill(draft.status) : ""}
+        </div>
+      </form>
+    </section>
+    <section class="drawer-section">
+      <h3>Цепочка follow-up</h3>
+      <p class="muted">Каждый follow-up отправляется только если получатель не ответил. Пустой текст удаляет шаг из цепочки.</p>
+      <div class="draft-followups">
+        ${[2, 3, 4].map((position) => outreachDraftStepForm(draft, position)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function openOutreachDraftDrawer(draftId) {
+  const draft = state.outreachDrafts.find((item) => item.id === draftId);
+  if (!draft) {
+    setActionResult({
+      status: "warn",
+      title: "Редактирование черновика",
+      message: "Черновик не найден в текущем списке. Обнови список или сбрось фильтр статуса.",
+    });
+    return;
+  }
+  renderOutreachDraftDrawer(draft);
+  const drawer = $("#outreachDraftDrawer");
+  if (!drawer.open) drawer.showModal();
+}
+
+function refreshOpenOutreachDraftDrawer(draftId) {
+  const drawer = $("#outreachDraftDrawer");
+  if (!drawer?.open) return;
+  const fresh = state.outreachDrafts.find((item) => item.id === draftId);
+  if (fresh) renderOutreachDraftDrawer(fresh);
+  else drawer.close();
+}
+
 async function loadOutreachDrafts() {
   if (!$("#outreachDraftsTable")) return;
   if (!state.mailboxes.length) {
@@ -874,12 +998,6 @@ async function loadOutreachDrafts() {
   const readySelected = state.outreachDrafts
     .filter((draft) => draft.status === "ready" && state.selectedOutreachDraftIds.has(draft.id))
     .length;
-  const mailboxOptions = (selectedId) => [
-    `<option value="">Выбрать автоматически</option>`,
-    ...state.mailboxes
-      .filter((mailbox) => mailbox.is_active)
-      .map((mailbox) => `<option value="${mailbox.id}" ${mailbox.id === selectedId ? "selected" : ""}>${esc(mailbox.email)}</option>`),
-  ].join("");
   $("#outreachDraftsSummary").innerHTML = `
     <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
     <span>Готовы: <strong>${ready}</strong></span>
@@ -890,22 +1008,7 @@ async function loadOutreachDrafts() {
     <thead><tr><th><input id="outreachDraftSelectAll" type="checkbox" ${ready && readySelected === ready ? "checked" : ""} /></th><th>Статус</th><th>Email</th><th>Компания</th><th>Письмо</th><th>Отправитель</th><th>Что сделать</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
-        ? state.outreachDrafts.map((draft) => {
-          const stepByPosition = new Map((draft.steps || []).map((step) => [Number(step.position), step]));
-          const followupForms = [2, 3, 4].map((position) => {
-            const step = stepByPosition.get(position) || {};
-            return `
-              <form class="form outreach-step-edit-form" data-outreach-step-form="${draft.id}" data-position="${position}">
-                <div class="form-section-title">Follow-up ${position - 1}</div>
-                <input name="subject" value="${esc(step.subject || draft.subject || "")}" placeholder="Тема follow-up" />
-                <textarea name="body_text" placeholder="Текст follow-up. Оставь пустым, чтобы удалить шаг.">${esc(step.body_text || "")}</textarea>
-                <input name="delay_days" type="number" min="0" step="1" value="${step.delay_days ?? (position === 2 ? 3 : position === 3 ? 4 : 5)}" />
-                <button ${step.status === "sent" ? "disabled" : ""}>Сохранить follow-up</button>
-                ${step.status ? `<span class="muted">${esc(statusLabel(step.status))}</span>` : ""}
-              </form>
-            `;
-          }).join("");
-          return `
+        ? state.outreachDrafts.map((draft) => `
           <tr>
             <td><input type="checkbox" data-outreach-draft-select="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td>${pill(draft.status)}<br><span class="muted">строка ${draft.source_row_number}</span></td>
@@ -918,29 +1021,14 @@ async function loadOutreachDrafts() {
             </td>
             <td>${esc(draft.mailbox_email || "выберется позже")}</td>
             <td>
-              <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Запустить</button>
-              <details class="inline-edit">
-                <summary>Редактировать</summary>
-                <form class="form outreach-draft-edit-form" data-outreach-draft-form="${draft.id}">
-                  <input name="to_email" type="email" value="${esc(draft.to_email)}" placeholder="Email" required />
-                  <input name="company" value="${esc(draft.company || "")}" placeholder="Компания" />
-                  <input name="contact_name" value="${esc(draft.contact_name || "")}" placeholder="Контакт" />
-                  <input name="segment" value="${esc(draft.segment || "")}" placeholder="Сегмент" />
-                  <select name="mailbox_id">${mailboxOptions(draft.mailbox_id)}</select>
-                  <input name="subject" value="${esc(draft.subject)}" placeholder="Тема" required />
-                  <textarea name="body_text" placeholder="Текст письма" required>${esc(draft.body_text)}</textarea>
-                  <input name="send_after" type="datetime-local" value="${draft.send_after ? new Date(draft.send_after).toISOString().slice(0, 16) : ""}" />
-                  <button>Сохранить</button>
-                </form>
-                <div class="draft-followups">
-                  ${followupForms}
-                </div>
-              </details>
-              <button class="small-button" data-cancel-draft="${draft.id}" ${["cancelled", "completed"].includes(draft.status) ? "disabled" : ""}>Отменить</button>
+              <div class="row-actions">
+                <button class="small-button" data-start-draft="${draft.id}" ${draft.status !== "ready" ? "disabled" : ""}>Запустить</button>
+                <button class="small-button" data-edit-outreach-draft="${draft.id}">Редактировать</button>
+                <button class="small-button" data-cancel-draft="${draft.id}" ${["cancelled", "completed"].includes(draft.status) ? "disabled" : ""}>Отменить</button>
+              </div>
             </td>
           </tr>
-        `;
-        }).join("")
+        `).join("")
         : `<tr><td colspan="7" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
     </tbody>
   `;
@@ -2379,6 +2467,7 @@ document.body.addEventListener("submit", (event) => {
       body: JSON.stringify(payload),
     });
     await loadOutreachDrafts();
+    refreshOpenOutreachDraftDrawer(draftId);
     setActionResult({
       status: result.status === "ready" ? "success" : "warn",
       title: "Сохранение черновика",
@@ -2405,6 +2494,7 @@ document.body.addEventListener("submit", (event) => {
       body: JSON.stringify(payload),
     });
     await Promise.all([loadOutreachDrafts(), loadQueue()]);
+    refreshOpenOutreachDraftDrawer(draftId);
     const hasGuardErrors = Array.isArray(result.guard_errors) && result.guard_errors.length > 0;
     setActionResult({
       status: hasGuardErrors ? "warn" : "success",
@@ -2478,6 +2568,11 @@ document.body.addEventListener("submit", (event) => {
 document.body.addEventListener("click", (event) => {
   const draftId = event.target.dataset.startDraft;
   const cancelDraftId = event.target.dataset.cancelDraft;
+  const editDraftId = event.target.dataset.editOutreachDraft;
+  if (editDraftId) {
+    openOutreachDraftDrawer(editDraftId);
+    return;
+  }
   if (draftId) {
     runAction({
       title: "Запуск черновика",
@@ -2493,6 +2588,7 @@ document.body.addEventListener("click", (event) => {
       const result = await api(`/api/outreach/drafts/${cancelDraftId}/cancel`, { method: "POST" });
       state.selectedOutreachDraftIds.delete(cancelDraftId);
       await Promise.all([loadOutreachDrafts(), loadQueue(), loadConversations(), loadReviewConversations()]);
+      if ($("#outreachDraftDrawer").open) refreshOpenOutreachDraftDrawer(cancelDraftId);
       setActionResult({
         status: "success",
         title: "Отмена черновика",
@@ -3050,6 +3146,7 @@ document.body.addEventListener("submit", (event) => {
 
 $("#closeLeadDialog").addEventListener("click", () => $("#leadDialog").close());
 $("#closeConversationDialog").addEventListener("click", () => $("#conversationDialog").close());
+$("#closeOutreachDraftDrawer").addEventListener("click", () => $("#outreachDraftDrawer").close());
 
 refresh();
 setInterval(loadQueue, 15000);
