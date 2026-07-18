@@ -109,8 +109,8 @@ for (const expected of [
   "data-view=\"outreachDrafts\"",
   "outreachImportForm",
   "outreachImportPreview",
-  "previewOutreachImportBtn",
   "createOutreachDraftsBtn",
+  "Строки из файла",
   "Скачать шаблон",
   "/api/outreach/imports/template.csv",
   "outreachImportsTable",
@@ -145,7 +145,8 @@ for (const expected of [
   "selectedOutreachDraftSignature",
   "CSV ошибок",
   "$(\"#outreachImportForm\").addEventListener",
-  "$(\"#previewOutreachImportBtn\").addEventListener",
+  "Читаю файл и готовлю список строк",
+  "После выбора список строк появится автоматически",
   "$(\"#outreachDraftStatus\").addEventListener",
   "$(\"#preflightSelectedDraftsBtn\").addEventListener",
   "$(\"#startSelectedDraftsBtn\").addEventListener",
@@ -172,6 +173,8 @@ for (const forbidden of [
   "function updateOutreachMappingInput()",
   "mapping-field-required",
   "Как это читать",
+  "previewOutreachImportBtn",
+  "Показать предпросмотр",
 ]) {
   if (index.includes(forbidden) || app.includes(forbidden)) {
     throw new Error(`outreach import UI should not expose manual mapping: ${forbidden}`);

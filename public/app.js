@@ -2172,7 +2172,7 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
     setActionResult({
       status: "warn",
       title: "Импорт персональных писем",
-      message: "Сначала нажми “Показать предпросмотр” и проверь, что строки из шаблона прочитались правильно.",
+      message: "Сначала выбери файл из шаблона. После выбора список строк появится автоматически.",
     });
     return;
   }
@@ -2198,7 +2198,7 @@ async function previewOutreachImport() {
   if (!body.get("file")?.name) {
     setActionResult({
       status: "warn",
-      title: "Предпросмотр импорта",
+      title: "Чтение файла",
       message: "Сначала выбери Excel или CSV файл.",
     });
     return;
@@ -2207,21 +2207,22 @@ async function previewOutreachImport() {
   renderOutreachImportPreview();
   setActionResult({
     status: "success",
-    title: "Предпросмотр импорта",
+    title: "Чтение файла",
     message: `Файл прочитан: строк ${state.outreachImportPreview.rowsTotal}. Проверь таблицу ниже и создай черновики.`,
     details: state.outreachImportPreview.errors,
   });
 }
 
-$("#previewOutreachImportBtn").addEventListener("click", (event) => runAction({
-  title: "Предпросмотр импорта",
-  button: event.currentTarget,
-}, previewOutreachImport));
-
 $("#outreachImportForm input[name='file']").addEventListener("change", () => {
   state.outreachImportPreview = null;
   $("#outreachImportPreview").hidden = true;
   $("#createOutreachDraftsBtn").disabled = true;
+  const file = $("#outreachImportForm input[name='file']").files?.[0];
+  if (!file) return;
+  runAction({
+    title: "Чтение файла",
+    pending: "Читаю файл и готовлю список строк...",
+  }, previewOutreachImport);
 });
 
 $("#outreachDraftStatus").addEventListener("change", () => {
