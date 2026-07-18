@@ -62,6 +62,26 @@ const WEEKDAY_SHORT_LABELS = {
   6: "Сб",
   7: "Вс",
 };
+const ACTIVE_VIEW_STORAGE_KEY = "outreachDesk.activeView";
+const VIEW_TITLES = {
+  dashboard: "Обзор",
+  start: "Что делать",
+  outreachImport: "Импорт Excel",
+  outreachDrafts: "Черновики",
+  review: "Требуют решения",
+  conversations: "Диалоги",
+  aiExport: "Экспорт для ИИ",
+  leads: "База",
+  mailboxes: "Почтовые ящики",
+  campaigns: "Рассылка",
+  queue: "Очередь",
+  inbox: "Входящие",
+  warmup: "Прогрев",
+  suppression: "Стоп-лист",
+  events: "События",
+  settings: "Настройки",
+};
+const VALID_VIEWS = new Set(Object.keys(VIEW_TITLES));
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -996,28 +1016,29 @@ function sendDaysCheckboxes(selectedDays = []) {
   )).join("");
 }
 
-function switchView(view) {
+function normalizeView(view) {
+  return VALID_VIEWS.has(view) ? view : "start";
+}
+
+function viewFromLocation() {
+  const hashView = decodeURIComponent(window.location.hash.replace(/^#\/?/, ""));
+  return normalizeView(hashView || window.localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "start");
+}
+
+function rememberView(view, { updateUrl = true } = {}) {
+  window.localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, view);
+  if (updateUrl && window.location.hash !== `#${view}`) {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${view}`);
+  }
+}
+
+function switchView(view, options = {}) {
+  const nextView = normalizeView(view);
   $$(".view").forEach((node) => node.classList.remove("active"));
-  $(`#${view}View`).classList.add("active");
-  $$("nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  $("#title").textContent = {
-    dashboard: "Обзор",
-    start: "Что делать",
-    outreachImport: "Импорт Excel",
-    outreachDrafts: "Черновики",
-    review: "Требуют решения",
-    conversations: "Диалоги",
-    aiExport: "Экспорт для ИИ",
-    leads: "База",
-    mailboxes: "Почтовые ящики",
-    campaigns: "Рассылка",
-    queue: "Очередь",
-    inbox: "Входящие",
-    warmup: "Прогрев",
-    suppression: "Стоп-лист",
-    events: "События",
-    settings: "Настройки",
-  }[view];
+  $(`#${nextView}View`).classList.add("active");
+  $$("nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === nextView));
+  $("#title").textContent = VIEW_TITLES[nextView];
+  rememberView(nextView, options);
 }
 
 function switchCampaignStep(step) {
@@ -2846,6 +2867,7 @@ async function refresh() {
   renderAiExportFilters();
 }
 
+window.addEventListener("hashchange", () => switchView(viewFromLocation(), { updateUrl: false }));
 $$("nav button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
 $("#refreshBtn").addEventListener("click", (event) => runAction({
   title: "Обновление данных",
@@ -4062,6 +4084,7 @@ $("#outreachDraftDrawer").addEventListener("close", () => {
   state.openOutreachDraftId = null;
 });
 
+switchView(viewFromLocation());
 refresh();
 setInterval(loadQueue, 15000);
 setInterval(loadWarmup, 30000);

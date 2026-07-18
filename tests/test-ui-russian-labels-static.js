@@ -41,6 +41,20 @@ for (const expected of [
 }
 
 for (const expected of [
+  "const ACTIVE_VIEW_STORAGE_KEY",
+  "const VIEW_TITLES",
+  "function viewFromLocation()",
+  "window.localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, view)",
+  "window.history.replaceState",
+  "window.addEventListener(\"hashchange\"",
+  "switchView(viewFromLocation())",
+]) {
+  if (!publicFiles.includes(expected)) {
+    throw new Error(`active page should be restored after reload: ${expected}`);
+  }
+}
+
+for (const expected of [
   ".nav-group",
   ".nav-group-secondary",
   "overflow-y: auto",
