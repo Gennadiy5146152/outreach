@@ -1688,6 +1688,23 @@ fieldset.field {
   height: 36px;
 }
 
+.settings-inline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-inline-controls input {
+  width: 92px;
+}
+
+.settings-inline-controls small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .settings-footer {
   display: flex;
   align-items: center;

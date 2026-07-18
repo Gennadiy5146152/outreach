@@ -28,6 +28,7 @@ for (const expected of [
   "settings.outreach?.stopScope",
   "normalizeOutreachStopScope",
   "timeZone: normalizeTimeZone",
+  "inboxSyncIntervalSeconds: normalizeInboxSyncIntervalSeconds",
   "VALUES ('tracking', $1, now()), ('attachments', $2, now()), ('outreach', $3, now())",
 ]) {
   if (!runtime.includes(expected)) {
@@ -38,8 +39,10 @@ for (const expected of [
 for (const expected of [
   "outreachStopScope: runtime.outreachStopScope",
   "timeZone: runtime.timeZone",
+  "inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds",
   "const outreachStopScope = cleanText(req.body.outreachStopScope)",
   "const timeZone = cleanText(req.body.timeZone)",
+  "inbox_sync_interval_must_be_between_1_and_3600_seconds",
   "invalid_time_zone",
   "cancelOutreachForScope(client",
   "stopScope",
@@ -66,6 +69,9 @@ for (const expected of [
 for (const expected of [
   "После ответа остановить",
   "Часовой пояс",
+  "Проверять входящие",
+  "inboxSyncIntervalSeconds",
+  "inboxSyncIntervalParts",
   "renderTimeZoneOptions",
   "Только этот email",
   "Всех с тем же доменом",

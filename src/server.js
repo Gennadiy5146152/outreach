@@ -447,6 +447,7 @@ app.get("/api/health", asyncHandler(async (_req, res) => {
     publicTrackingUrl: runtime.publicTrackingUrl,
     maxAttachmentMb: runtime.maxAttachmentMb,
     timeZone: runtime.timeZone,
+    inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
   });
 }));
 
@@ -463,6 +464,7 @@ app.get("/api/settings", asyncHandler(async (_req, res) => {
       maxAttachmentMb: runtime.maxAttachmentMb,
       outreachStopScope: runtime.outreachStopScope,
       timeZone: runtime.timeZone,
+      inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
     },
     settings: Object.fromEntries(settings.rows.map((item) => [item.key, item.value])),
   });
@@ -474,9 +476,13 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
   const maxAttachmentMb = Number(req.body.maxAttachmentMb || env.maxAttachmentMb);
   const outreachStopScope = cleanText(req.body.outreachStopScope);
   const timeZone = cleanText(req.body.timeZone) || env.appTimeZone;
+  const inboxSyncIntervalSeconds = Number(req.body.inboxSyncIntervalSeconds || 60);
 
   if (!Number.isFinite(maxAttachmentMb) || maxAttachmentMb < 1 || maxAttachmentMb > 200) {
     return res.status(400).json({ error: "max_attachment_mb_must_be_between_1_and_200" });
+  }
+  if (!Number.isFinite(inboxSyncIntervalSeconds) || inboxSyncIntervalSeconds < 1 || inboxSyncIntervalSeconds > 3600) {
+    return res.status(400).json({ error: "inbox_sync_interval_must_be_between_1_and_3600_seconds" });
   }
   if (!isValidTimeZone(timeZone)) {
     return res.status(400).json({ error: "invalid_time_zone" });
@@ -488,6 +494,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
     maxAttachmentMb,
     outreachStopScope,
     timeZone,
+    inboxSyncIntervalSeconds,
   });
 
   res.json({
@@ -498,6 +505,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
       maxAttachmentMb: runtime.maxAttachmentMb,
       outreachStopScope: runtime.outreachStopScope,
       timeZone: runtime.timeZone,
+      inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
     },
     restartRequired: [],
     message: "Настройки сохранены в БД и применяются без пересоздания контейнеров.",

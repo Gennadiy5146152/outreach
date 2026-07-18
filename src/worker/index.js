@@ -1281,6 +1281,8 @@ async function applyInboundEffects(message, classification) {
 
 async function scheduleMaintenance() {
   await recoverInterruptedQueues({ staleOnly: true });
+  const runtime = await getRuntimeSettings();
+  const inboxSyncIntervalSeconds = Math.max(1, Number(runtime.inboxSyncIntervalSeconds || env.inboxSyncIntervalMinutes * 60 || 60));
 
   await query(
     `
@@ -1297,7 +1299,7 @@ async function scheduleMaintenance() {
       SELECT 'sync_inbox', jsonb_build_object('mailboxId', id), now()
       FROM mailboxes m
       WHERE is_active = true
-        AND (last_inbox_sync_at IS NULL OR last_inbox_sync_at < now() - (($1 || ' minutes')::interval))
+        AND (last_inbox_sync_at IS NULL OR last_inbox_sync_at < now() - (($1 || ' seconds')::interval))
         AND NOT EXISTS (
           SELECT 1 FROM job_queue j
           WHERE j.job_type = 'sync_inbox'
@@ -1305,7 +1307,7 @@ async function scheduleMaintenance() {
             AND j.payload->>'mailboxId' = m.id::text
         )
     `,
-    [env.inboxSyncIntervalMinutes],
+    [inboxSyncIntervalSeconds],
   );
 
   await query(
@@ -1447,6 +1449,12 @@ async function tick() {
   }
 }
 
+async function workerSleepMs() {
+  const runtime = await getRuntimeSettings().catch(() => null);
+  const inboxIntervalMs = Math.max(1000, Number(runtime?.inboxSyncIntervalSeconds || 60) * 1000);
+  return Math.max(1000, Math.min(env.workerPollMs, inboxIntervalMs));
+}
+
 let stopping = false;
 
 process.on("SIGTERM", async () => {
@@ -1458,5 +1466,5 @@ console.log("Outreach worker started");
 await recoverInterruptedQueues();
 while (!stopping) {
   await tick();
-  await sleep(env.workerPollMs);
+  await sleep(await workerSleepMs());
 }

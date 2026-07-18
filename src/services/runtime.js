@@ -7,6 +7,13 @@ function toNumber(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function normalizeInboxSyncIntervalSeconds(value) {
+  const fallback = Math.max(1, Math.round(Number(env.inboxSyncIntervalMinutes || 1) * 60));
+  const seconds = Math.round(Number(value));
+  if (!Number.isFinite(seconds)) return fallback;
+  return Math.min(Math.max(seconds, 1), 3600);
+}
+
 export function normalizeTimeZone(value) {
   const timeZone = String(value || "").trim() || env.appTimeZone;
   try {
@@ -41,16 +48,18 @@ export async function getRuntimeSettings() {
     maxAttachmentMb: toNumber(runtime.maxAttachmentMb ?? settings.attachments?.maxAttachmentMb, env.maxAttachmentMb),
     outreachStopScope: normalizeOutreachStopScope(runtime.outreachStopScope ?? settings.outreach?.stopScope),
     timeZone: normalizeTimeZone(runtime.timeZone),
+    inboxSyncIntervalSeconds: normalizeInboxSyncIntervalSeconds(runtime.inboxSyncIntervalSeconds),
   };
 }
 
-export async function saveRuntimeSettings({ dryRun, publicTrackingUrl, maxAttachmentMb, outreachStopScope, timeZone }) {
+export async function saveRuntimeSettings({ dryRun, publicTrackingUrl, maxAttachmentMb, outreachStopScope, timeZone, inboxSyncIntervalSeconds }) {
   const runtime = {
     dryRun: Boolean(dryRun),
     publicTrackingUrl: String(publicTrackingUrl || "").trim(),
     maxAttachmentMb: toNumber(maxAttachmentMb, env.maxAttachmentMb),
     outreachStopScope: normalizeOutreachStopScope(outreachStopScope),
     timeZone: normalizeTimeZone(timeZone),
+    inboxSyncIntervalSeconds: normalizeInboxSyncIntervalSeconds(inboxSyncIntervalSeconds),
   };
 
   await query(

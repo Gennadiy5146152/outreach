@@ -284,6 +284,14 @@ function renderTimeZoneOptions(selected) {
     .join("");
 }
 
+function inboxSyncIntervalParts(seconds) {
+  const total = Math.max(1, Math.round(Number(seconds || 60)));
+  return {
+    minutes: Math.floor(total / 60),
+    seconds: total % 60,
+  };
+}
+
 function fmtCountdown(value) {
   if (!value) return "";
   const diff = new Date(value).getTime() - Date.now();
@@ -2732,6 +2740,7 @@ async function loadSuppressions() {
 async function loadSettings() {
   const settings = await api("/api/settings");
   state.settings = settings;
+  const inboxSyncInterval = inboxSyncIntervalParts(settings.runtime.inboxSyncIntervalSeconds);
   $("#settingsPanel").innerHTML = `
     <form id="runtimeSettingsForm" class="settings-form">
       <label class="settings-row">
@@ -2756,6 +2765,15 @@ async function loadSettings() {
         </select>
       </label>
       <label class="settings-row">
+        <span>Проверять входящие</span>
+        <div class="settings-inline-controls">
+          <input name="inboxSyncMinutes" type="number" min="0" max="60" step="1" value="${inboxSyncInterval.minutes}" aria-label="Минуты между проверками входящих" />
+          <small>мин</small>
+          <input name="inboxSyncSeconds" type="number" min="0" max="59" step="1" value="${inboxSyncInterval.seconds}" aria-label="Секунды между проверками входящих" />
+          <small>сек</small>
+        </div>
+      </label>
+      <label class="settings-row">
         <span>После ответа остановить</span>
         <select name="outreachStopScope">
           <option value="contact_only" ${settings.runtime.outreachStopScope === "contact_only" ? "selected" : ""}>Только этот email</option>
@@ -2766,6 +2784,7 @@ async function loadSettings() {
       <div class="settings-footer">
         <p>Вложения: ${esc(settings.runtime.attachmentDir)}</p>
         <p>Время в интерфейсе и окнах отправки: ${esc(settings.runtime.timeZone || currentTimeZone())}</p>
+        <p>Входящие проверяются каждые ${Number(settings.runtime.inboxSyncIntervalSeconds || 60)} сек.</p>
         <button>Сохранить</button>
       </div>
     </form>
@@ -4002,6 +4021,11 @@ document.body.addEventListener("submit", (event) => {
     payload.mailDryRun = payload.mailDryRun === "true";
     payload.maxAttachmentMb = Number(payload.maxAttachmentMb);
     payload.timeZone = payload.timeZone || currentTimeZone();
+    const inboxSyncMinutes = Number(payload.inboxSyncMinutes || 0);
+    const inboxSyncSeconds = Number(payload.inboxSyncSeconds || 0);
+    payload.inboxSyncIntervalSeconds = Math.max(1, Math.round((inboxSyncMinutes * 60) + inboxSyncSeconds));
+    delete payload.inboxSyncMinutes;
+    delete payload.inboxSyncSeconds;
     const result = await api("/api/runtime-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
