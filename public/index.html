@@ -587,9 +587,19 @@
       <section class="view" id="inboxView">
         <section class="panel">
           <div class="panel-head">
-            <h2>Входящие</h2>
+            <div>
+              <h2>Входящие</h2>
+              <p class="muted">Здесь видны новые ответы: что пришло, к какому лиду относится письмо и нужно ли руками выбрать класс ответа.</p>
+            </div>
             <button id="syncInboxBtn">Синхронизировать IMAP</button>
           </div>
+          <div class="quick-filters inbox-filters" aria-label="Фильтр входящих писем">
+            <button class="small-button active" data-inbox-filter="all">Все входящие</button>
+            <button class="small-button" data-inbox-filter="decision">Нужно разобрать</button>
+            <button class="small-button" data-inbox-filter="outreach">По лидам</button>
+            <button class="small-button" data-inbox-filter="positive">Позитивные</button>
+          </div>
+          <div id="inboxSummary" class="summary-line"></div>
           <div id="inboxList" class="inbox"></div>
         </section>
       </section>

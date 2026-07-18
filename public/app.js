@@ -25,6 +25,8 @@ const state = {
   settings: null,
   envCheck: null,
   health: null,
+  inbox: [],
+  inboxFilter: "all",
   editorTarget: null,
   campaignStep: "campaign",
   actionResults: {
@@ -1702,6 +1704,54 @@ function renderAttachments() {
     : `<p class="muted">Вложений пока нет.</p>`;
 }
 
+function inboxClassificationOptions() {
+  return ["positive_reply", "neutral_reply", "negative_reply", "auto_reply", "unsubscribe", "not_target", "bounce", "unknown"];
+}
+
+function inboxFilterLabel(value) {
+  return {
+    all: "Все входящие",
+    decision: "Нужно разобрать",
+    outreach: "По лидам",
+    positive: "Позитивные",
+  }[value] || "Все входящие";
+}
+
+function inboxNeedsDecision(item) {
+  return !item.reply_classification || item.reply_classification === "unknown";
+}
+
+function inboxPreviewText(item) {
+  const text = (item.body_text || "").replace(/\s+/g, " ").trim();
+  if (!text) return "Текста письма нет.";
+  return text.length > 320 ? `${text.slice(0, 320)}...` : text;
+}
+
+function inboxContextText(item) {
+  const parts = [];
+  parts.push(item.company || "Без компании");
+  if (item.lead_email) parts.push(item.lead_email);
+  if (item.mailbox_email) parts.push(`получено на ${item.mailbox_email}`);
+  return parts.join(" · ");
+}
+
+function inboxDecisionText(item) {
+  if (inboxNeedsDecision(item)) return "Классификацию нужно выбрать вручную.";
+  if (item.reply_classification === "positive_reply") return "Позитивный ответ: стоит обработать как теплый контакт.";
+  if (item.reply_classification === "negative_reply") return "Отказ: цепочку лучше остановить.";
+  if (item.reply_classification === "auto_reply") return "Автоответ: проверь, нужно ли переносить follow-up.";
+  if (item.reply_classification === "bounce") return "Недоставка: проверь адрес или домен.";
+  if (item.reply_classification === "unsubscribe") return "Просьба не писать: контакт должен быть в стоп-листе.";
+  return "Классификация проставлена.";
+}
+
+function inboxVisibleItems() {
+  if (state.inboxFilter === "decision") return state.inbox.filter(inboxNeedsDecision);
+  if (state.inboxFilter === "outreach") return state.inbox.filter((item) => item.lead_email);
+  if (state.inboxFilter === "positive") return state.inbox.filter((item) => item.reply_classification === "positive_reply");
+  return state.inbox;
+}
+
 async function loadQueue() {
   const [queue, progress] = await Promise.all([api("/api/sending"), api("/api/sending/progress")]);
   state.queue = [...queue].sort((a, b) => {
@@ -1785,28 +1835,60 @@ async function loadQueue() {
 }
 
 async function loadInbox() {
-  const inbox = await api("/api/inbox");
-  $("#inboxList").innerHTML = inbox
-    .map(
-      (item) => `
+  state.inbox = await api("/api/inbox");
+  const visibleItems = inboxVisibleItems();
+  const decisionCount = state.inbox.filter(inboxNeedsDecision).length;
+  const outreachCount = state.inbox.filter((item) => item.lead_email).length;
+  const positiveCount = state.inbox.filter((item) => item.reply_classification === "positive_reply").length;
+  $("#inboxSummary").innerHTML = `
+    <span>Всего входящих: <strong>${state.inbox.length}</strong></span>
+    <span>Нужно разобрать: <strong>${decisionCount}</strong></span>
+    <span>По лидам: <strong>${outreachCount}</strong></span>
+    <span>Позитивные: <strong>${positiveCount}</strong></span>
+    <span>Показано: <strong>${esc(inboxFilterLabel(state.inboxFilter).toLowerCase())}</strong></span>
+  `;
+  $("#inboxList").innerHTML = visibleItems.length
+    ? visibleItems
+      .map(
+        (item) => `
         <article class="card inbox-card">
           <div class="inbox-card-head">
-            <div>
+            <div class="inbox-title">
               <strong>${esc(item.subject || "Без темы")}</strong>
-              <p>${esc(item.company || "Без компании")} · ${esc(item.lead_email || "")} · ${fmtDate(item.received_at || item.created_at)}</p>
+              <p>${esc(inboxContextText(item))}</p>
             </div>
-            ${pill(item.reply_classification || item.type)}
+            <div class="inbox-badges">
+              ${pill(item.reply_classification || "unknown")}
+              ${item.type ? pill(item.type) : ""}
+            </div>
           </div>
-          <pre class="inbox-message">${esc((item.body_text || "").slice(0, 2500))}</pre>
-          <label class="field inbox-classify"><span>Класс ответа</span><select data-classify="${item.id}">
-            ${["positive_reply", "neutral_reply", "negative_reply", "auto_reply", "unsubscribe", "not_target", "bounce", "unknown"]
+          <div class="inbox-meta">
+            <span>Получено: <strong>${fmtDate(item.received_at || item.created_at)}</strong></span>
+            <span>Отправитель: <strong>${esc(item.lead_email || "не определен")}</strong></span>
+          </div>
+          <p class="inbox-preview">${esc(inboxPreviewText(item))}</p>
+          <div class="inbox-next">
+            <strong>${esc(inboxDecisionText(item))}</strong>
+          </div>
+          <div class="inbox-actions">
+            <label class="field inbox-classify"><span>Класс ответа</span><select data-classify="${item.id}">
+              ${inboxClassificationOptions()
               .map((value) => `<option value="${value}" ${value === item.reply_classification ? "selected" : ""}>${esc(statusLabel(value))}</option>`)
               .join("")}
-          </select></label>
+            </select></label>
+            <details class="inbox-full">
+              <summary>Показать полный текст</summary>
+              <pre class="inbox-message">${esc(item.body_text || "Текста письма нет.")}</pre>
+            </details>
+          </div>
         </article>
       `,
-    )
-    .join("");
+      )
+      .join("")
+    : `<p class="muted">По фильтру “${esc(inboxFilterLabel(state.inboxFilter))}” писем нет.</p>`;
+  $$("[data-inbox-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.inboxFilter === state.inboxFilter);
+  });
 }
 
 function conversationQuery() {
@@ -2339,6 +2421,10 @@ $("#leadFiltersReset").addEventListener("click", () => {
 $$("[data-queue-filter]").forEach((button) => button.addEventListener("click", () => {
   state.queueFilter = button.dataset.queueFilter || "waiting";
   loadQueue();
+}));
+$$("[data-inbox-filter]").forEach((button) => button.addEventListener("click", () => {
+  state.inboxFilter = button.dataset.inboxFilter || "all";
+  loadInbox();
 }));
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
 $("#stepCampaign").addEventListener("change", () => renderCampaignStepList());
@@ -3413,9 +3499,10 @@ document.body.addEventListener("change", async (event) => {
     setActionResult({
       status: "success",
       title: "Классификация ответа",
-      message: `Класс ответа обновлен на ${event.target.value}.`,
+      message: `Класс ответа обновлен: ${statusLabel(event.target.value)}.`,
       details: result,
     });
+    await Promise.all([loadInbox(), loadConversations(), loadReviewConversations(), loadDashboard()]);
   });
 });
 

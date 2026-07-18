@@ -1702,7 +1702,9 @@ th {
 }
 
 .inbox-card {
+  display: grid;
   gap: 12px;
+  padding: 12px;
 }
 
 .inbox-card-head {
@@ -1713,27 +1715,122 @@ th {
   min-width: 0;
 }
 
-.inbox-card-head > div {
+.inbox-title {
   min-width: 0;
 }
 
-.inbox-card-head strong {
+.inbox-title strong {
   display: block;
+  font-size: 16px;
 }
 
-.inbox-card-head .pill {
+.inbox-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inbox-badges {
+  display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 42%;
+}
+
+.inbox-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inbox-meta strong {
+  color: var(--text);
+}
+
+.inbox-preview {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.inbox-next {
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: #f4fbf8;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.inbox-actions {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
 }
 
 .inbox-message {
   max-width: 100%;
+  max-height: 360px;
   white-space: pre-wrap;
+  overflow: auto;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .inbox-classify {
-  max-width: 320px;
+  margin: 0;
+}
+
+.inbox-full {
+  min-width: 0;
+}
+
+.inbox-full summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.inbox-filters {
+  width: fit-content;
+  max-width: 100%;
+  gap: 4px;
+  margin: 8px 0 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.inbox-filters .small-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.inbox-filters .small-button:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.inbox-filters .small-button.active {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(15, 30, 24, 0.08);
+  font-weight: 800;
 }
 
 .log,
@@ -2024,6 +2121,7 @@ dialog::backdrop {
   .field-grid.two,
   .lead-filters,
   .conversation-overview,
+  .inbox-actions,
   .setup-list,
   .setup-step,
   .hero-help,
@@ -2056,6 +2154,15 @@ dialog::backdrop {
   }
 
   .conversation-badges {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+
+  .inbox-card-head {
+    flex-direction: column;
+  }
+
+  .inbox-badges {
     justify-content: flex-start;
     max-width: 100%;
   }
