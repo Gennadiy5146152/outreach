@@ -1517,6 +1517,17 @@ h2 {
   margin: 2px 0;
 }
 
+.queue-chain-event .queue-chain-warning,
+.inbox-warning {
+  margin: 0;
+  padding: 7px 9px;
+  border-left: 3px solid #f4c56b;
+  background: #fff9e8;
+  color: #7a5a12;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .queue-chain-event pre {
   max-height: 120px;
   margin: 6px 0 0;

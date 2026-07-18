@@ -852,7 +852,8 @@ function queueTimelineEvent(event) {
             <span>${fmtDate(queueEventTime(message))}</span>
           </div>
           <p>${esc(queueMessageStepLabel(message))} · ${esc(message.subject || "Без темы")}</p>
-          <span>${esc(message.mailbox_email || "")}${message.reply_classification ? ` · ${esc(statusLabel(message.reply_classification))}` : ""}</span>
+          <span>${esc(message.mailbox_email || "")}${message.reply_classification ? ` · ${esc(statusLabel(message.reply_classification))}` : ""}${inbound ? ` · ${esc(replyLinkText(message))}` : ""}</span>
+          ${inbound && message.reply_link_warning ? `<p class="queue-chain-warning">${esc(message.reply_link_warning)}</p>` : ""}
           ${preview ? `<pre>${esc(preview.length > 420 ? `${preview.slice(0, 420)}...` : preview)}</pre>` : ""}
         </div>
       </article>
@@ -2285,6 +2286,11 @@ function inboxDecisionText(item) {
   return "Классификация проставлена.";
 }
 
+function replyLinkText(item) {
+  if (!item || item.direction && item.direction !== "inbound") return "";
+  return item.reply_link_label || (item.lead_email ? "привязано к лиду" : "не привязано к рассылке");
+}
+
 function inboxVisibleItems() {
   if (state.inboxFilter === "decision") return state.inbox.filter(inboxNeedsDecision);
   if (state.inboxFilter === "outreach") return state.inbox.filter((item) => item.lead_email);
@@ -2436,7 +2442,9 @@ async function loadInbox() {
           <div class="inbox-meta">
             <span>Получено: <strong>${fmtDate(item.received_at || item.created_at)}</strong></span>
             <span>Отправитель: <strong>${esc(item.lead_email || "не определен")}</strong></span>
+            <span>Привязка: <strong>${esc(replyLinkText(item))}</strong></span>
           </div>
+          ${item.reply_link_warning ? `<p class="inbox-warning">${esc(item.reply_link_warning)}</p>` : ""}
           <p class="inbox-preview">${esc(inboxPreviewText(item))}</p>
           <div class="inbox-next">
             <strong>${esc(inboxDecisionText(item))}</strong>

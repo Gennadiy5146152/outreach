@@ -54,6 +54,8 @@ for (const expected of [
   "Цепочка писем",
   "Отправленные письма",
   "Ответ получателя",
+  "replyLinkText(message)",
+  "queue-chain-warning",
   "visibleQueue",
   "visibleGroups",
   "data-queue-filter",
@@ -74,6 +76,7 @@ for (const expected of [
   "COALESCE(history.messages, '[]'::json) AS chain_messages",
   "LEFT JOIN LATERAL",
   "msg.type <> 'warmup'",
+  "'raw_headers', item.raw_headers",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`queue API should expose real sent time: ${expected}`);

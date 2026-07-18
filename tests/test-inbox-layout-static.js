@@ -27,6 +27,7 @@ for (const expected of [
   "function inboxNeedsDecision",
   "function inboxPreviewText",
   "function inboxDecisionText",
+  "function replyLinkText",
   "function inboxVisibleItems",
   "inbox-card",
   "inbox-card-head",
@@ -37,6 +38,7 @@ for (const expected of [
   "inbox-classify",
   "Без темы",
   "Класс ответа",
+  "Привязка:",
   "Показать полный текст",
   "Нужно разобрать",
   "statusLabel(value)",
@@ -85,8 +87,11 @@ for (const expected of [
 
 for (const expected of [
   "function normalizeInboundReplyText",
-  "result.rows.map(normalizeInboundReplyText)",
-  "chain_messages: (row.chain_messages || []).map(normalizeInboundReplyText)",
+  "function publicMessageRow",
+  "function replyLinkInfo",
+  "result.rows.map(publicMessageRow)",
+  "chain_messages: (row.chain_messages || []).map(publicMessageRow)",
+  "raw_headers: _rawHeaders",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`server should expose cleaned inbound reply text: ${expected}`);

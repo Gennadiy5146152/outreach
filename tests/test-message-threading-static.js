@@ -18,6 +18,7 @@ for (const expected of [
 for (const forbidden of [
   "(parsed.references || []).join",
   "(parsed.inReplyTo || []).join",
+  "if (candidates.rowCount) return candidates.rows[0]",
 ]) {
   if (worker.includes(forbidden)) {
     throw new Error(`worker should normalize mailparser headers via headerValues, not raw join: ${forbidden}`);
@@ -51,6 +52,9 @@ for (const expected of [
   "inbox_sync_skipped",
   "inbox_sync_failed",
   "normalizeReplySubject(message.subject) === subject",
+  "subjectMatches.length === 1",
+  "single_email_thread",
+  "x-outreach-link-method",
   "inbound_unlinked",
   "inbound_relinked",
   "inbox_sync_completed",

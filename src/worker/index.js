@@ -909,6 +909,8 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       const classification = classifyInbound({ subject, body: bodyText, headers });
       const existingInbound = await findExistingInbound(mailbox.id, parsed.messageId);
       const linked = await findLinkedOutbound(parsed, fromEmail);
+      headers["x-outreach-link-method"] = linked?.match_method || "not_linked";
+      headers["x-outreach-link-confidence"] = linked?.match_confidence || "none";
       if (existingInbound) {
         stats.duplicates += 1;
         if (!isWarmup && linked && !existingInbound.lead_id) {
@@ -1166,6 +1168,7 @@ async function findExistingInbound(mailboxId, messageId) {
 async function relinkInboundMessage(message, linked, classification, parsed) {
   const inReplyTo = headerValues(parsed?.inReplyTo ?? parsed?.in_reply_to ?? message.in_reply_to).join(" ");
   const references = headerValues(parsed?.references ?? parsed?.references_header ?? message.references_header).join(" ");
+  const linkMethod = linked.match_method || "unknown";
   const updated = await query(
     `
       UPDATE messages
@@ -1178,7 +1181,8 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
           in_reply_to = COALESCE(NULLIF(in_reply_to, ''), $7),
           references_header = COALESCE(NULLIF(references_header, ''), $8),
           reply_classification = COALESCE(NULLIF(reply_classification, ''), $9),
-          reply_classification_source = COALESCE(reply_classification_source, 'auto')
+          reply_classification_source = COALESCE(reply_classification_source, 'auto'),
+          raw_headers = COALESCE(raw_headers, '{}'::jsonb) || $10::jsonb
       WHERE id = $1
       RETURNING *
     `,
@@ -1192,6 +1196,10 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
       inReplyTo,
       references,
       classification,
+      {
+        "x-outreach-link-method": linkMethod,
+        "x-outreach-link-confidence": linkMethod === "message_id" ? "exact" : "weak",
+      },
     ],
   );
   await logEvent("inbound_relinked", {
@@ -1204,6 +1212,7 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
       outreachDraftId: linked.outreach_draft_id,
       outreachStepId: linked.outreach_step_id,
       classification,
+      linkMethod,
     },
   });
   return updated.rows[0];
@@ -1227,7 +1236,7 @@ async function findLinkedOutbound(parsed, fromEmail) {
       `,
       [ids.variants, ids.normalized],
     );
-    if (byHeader.rowCount) return byHeader.rows[0];
+    if (byHeader.rowCount) return { ...byHeader.rows[0], match_method: "message_id", match_confidence: "exact" };
   }
   if (fromEmail) {
     const candidates = await query(
@@ -1244,9 +1253,10 @@ async function findLinkedOutbound(parsed, fromEmail) {
       [fromEmail],
     );
     const subject = normalizeReplySubject(parsed.subject);
-    const bySubject = candidates.rows.find((message) => normalizeReplySubject(message.subject) === subject);
-    if (bySubject) return bySubject;
-    if (candidates.rowCount) return candidates.rows[0];
+    const subjectMatches = candidates.rows.filter((message) => normalizeReplySubject(message.subject) === subject);
+    if (subjectMatches.length === 1) return { ...subjectMatches[0], match_method: "email_subject", match_confidence: "weak" };
+    if (subjectMatches.length > 1) return null;
+    if (candidates.rowCount === 1) return { ...candidates.rows[0], match_method: "single_email_thread", match_confidence: "weak" };
   }
   return null;
 }

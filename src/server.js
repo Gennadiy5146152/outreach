@@ -65,8 +65,41 @@ const STOPPING_REPLY_CLASSIFICATIONS = new Set([
 ]);
 
 function normalizeInboundReplyText(row) {
-  if (!row || row.direction !== "inbound" || !row.body_text) return row;
-  return { ...row, body_text: cleanReplyText(row.body_text) };
+  if (!row || row.direction !== "inbound") return row;
+  return { ...row, body_text: row.body_text ? cleanReplyText(row.body_text) : row.body_text, ...replyLinkInfo(row) };
+}
+
+function publicMessageRow(row) {
+  const normalized = normalizeInboundReplyText(row);
+  if (!normalized || typeof normalized !== "object") return normalized;
+  const { raw_headers: _rawHeaders, ...publicRow } = normalized;
+  return publicRow;
+}
+
+function replyLinkInfo(row) {
+  if (!row || row.direction !== "inbound") return {};
+  const headers = row.raw_headers || {};
+  const method = headers["x-outreach-link-method"] || headers["X-Outreach-Link-Method"] || (row.lead_id ? "legacy_linked" : "not_linked");
+  const confidence = headers["x-outreach-link-confidence"] || headers["X-Outreach-Link-Confidence"] || (method === "message_id" ? "exact" : row.lead_id ? "unknown" : "none");
+  const labels = {
+    message_id: "точно: ответ в ветке письма",
+    email_subject: "примерно: email и тема совпали",
+    single_email_thread: "примерно: у email была одна цепочка",
+    legacy_linked: "привязано без отметки метода",
+    not_linked: "не привязано к рассылке",
+  };
+  const warnings = {
+    email_subject: "Если у этого контакта несколько рассылок с похожими темами, проверь вручную.",
+    single_email_thread: "Слабая привязка: письмо не содержит технической ссылки на исходящее.",
+    legacy_linked: "Это старое входящее, метод привязки раньше не сохранялся.",
+    not_linked: "Ответ не попал в цепочку, потому что точная ветка письма не найдена.",
+  };
+  return {
+    reply_link_method: method,
+    reply_link_confidence: confidence,
+    reply_link_label: labels[method] || "метод привязки неизвестен",
+    reply_link_warning: warnings[method] || "",
+  };
 }
 
 function timingSafeEqualText(left, right) {
@@ -3393,6 +3426,7 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
         'status', item.status,
         'subject', item.subject,
         'body_text', item.body_text,
+        'raw_headers', item.raw_headers,
         'reply_classification', item.reply_classification,
         'outreach_step_id', item.outreach_step_id,
         'outreach_step_position', item.outreach_step_position,
@@ -3407,6 +3441,7 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
       FROM (
         SELECT msg.id, msg.direction, msg.status, msg.subject,
                left(COALESCE(msg.body_text, ''), 800) AS body_text,
+               msg.raw_headers,
                msg.reply_classification,
                msg.outreach_step_id,
                ods_history.position AS outreach_step_position,
@@ -3437,7 +3472,7 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
   `);
   res.json(result.rows.map((row) => ({
     ...row,
-    chain_messages: (row.chain_messages || []).map(normalizeInboundReplyText),
+    chain_messages: (row.chain_messages || []).map(publicMessageRow),
   })));
 }));
 
@@ -3474,7 +3509,7 @@ app.get("/api/inbox", asyncHandler(async (_req, res) => {
     ORDER BY msg.received_at DESC NULLS LAST, msg.created_at DESC
     LIMIT 200
   `);
-  res.json(result.rows.map(normalizeInboundReplyText));
+  res.json(result.rows.map(publicMessageRow));
 }));
 
 app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {
