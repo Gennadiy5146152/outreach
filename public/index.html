@@ -162,7 +162,6 @@
             <p class="help-text">Поддерживаются `.xlsx` и `.csv`. Ошибочные строки не потеряются: они появятся в черновиках со статусом “нужно исправить”.</p>
             <form id="outreachImportForm" class="form">
               <input name="file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
-              <input name="mapping" type="hidden" />
               <div class="form-actions">
                 <button id="previewOutreachImportBtn" type="button">Показать предпросмотр</button>
                 <button id="createOutreachDraftsBtn" disabled>Создать черновики</button>
@@ -173,10 +172,10 @@
           <section class="panel">
             <h2>Какие колонки нужны</h2>
             <div class="example-box">
-              <code>email — кому отправлять</code>
-              <code>subject — тема первого письма</code>
-              <code>body — текст первого письма</code>
-              <code>mailbox — почта отправителя, если нужно закрепить вручную</code>
+              <code>Почта получателя — кому отправлять</code>
+              <code>Тема письма — тема первого письма</code>
+              <code>Текст письма — готовый текст первого письма</code>
+              <code>Почта отправителя — если нужно закрепить конкретный ящик</code>
             </div>
             <a class="button" href="/api/outreach/imports/template.csv">Скачать шаблон для Excel</a>
           </section>
@@ -186,14 +185,9 @@
           <div class="panel-head">
             <div>
               <h2>Предпросмотр импорта</h2>
-              <p class="muted">Сервис сопоставляет поля письма со столбцами твоего файла. Если скачал шаблон, обычно ничего менять не нужно.</p>
+              <p class="muted">Проверь, что строки из шаблона прочитались правильно. Если есть ошибки, они появятся в последнем столбце.</p>
             </div>
           </div>
-          <div class="mapping-help">
-            <strong>Как это читать:</strong>
-            <span>слева написано, что нужно сервису; в списке справа выбран столбец из твоего Excel/CSV.</span>
-          </div>
-          <div id="outreachColumnMapping" class="mapping-grid"></div>
           <div id="outreachPreviewSummary" class="summary-line"></div>
           <div class="table-wrap"><table id="outreachPreviewTable"></table></div>
         </section>

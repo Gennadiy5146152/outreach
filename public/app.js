@@ -774,87 +774,18 @@ async function loadOutreachImports() {
   `;
 }
 
-const OUTREACH_MAPPING_FIELDS = [
-  ["email", "Кому отправить", "Обязательно. Выбери столбец с email получателя.", true, "required"],
-  ["subject", "Тема первого письма", "Обязательно. Выбери столбец с темой письма.", true, "required"],
-  ["body", "Текст первого письма", "Обязательно. Выбери столбец с готовым текстом письма.", true, "required"],
-  ["company", "Компания", "Для удобства в таблицах, диалогах и AI-выгрузке.", false, "lead"],
-  ["contact_name", "Контакт", "Имя человека, если хочешь видеть его в карточках.", false, "lead"],
-  ["segment", "Сегмент", "Группа лидов: ниша, тип клиента или гипотеза.", false, "lead"],
-  ["mailbox", "Почта отправителя", "Заполняй только если конкретное письмо должно уйти с конкретного твоего ящика.", false, "lead"],
-  ["send_after", "Отправить после", "Заполняй только если письмо нельзя отправлять раньше конкретной даты.", false, "lead"],
-  ["followup_1_subject", "Тема follow-up 1", "Заполняй только если хочешь второе письмо в цепочке.", false, "followup"],
-  ["followup_1_body", "Текст follow-up 1", "Если человек ответит, этот follow-up автоматически остановится.", false, "followup"],
-  ["followup_1_delay_days", "Задержка follow-up 1", "Через сколько дней отправить follow-up 1. Например: 3.", false, "followup"],
-  ["followup_2_subject", "Тема follow-up 2", "Третье касание, если ответа не было.", false, "followup"],
-  ["followup_2_body", "Текст follow-up 2", "Можно не заполнять, тогда этого шага не будет.", false, "followup"],
-  ["followup_2_delay_days", "Задержка follow-up 2", "Через сколько дней отправить follow-up 2. Например: 7.", false, "followup"],
-  ["followup_3_subject", "Тема follow-up 3", "Финальное касание, если оно нужно.", false, "followup"],
-  ["followup_3_body", "Текст follow-up 3", "Можно не заполнять, тогда этого шага не будет.", false, "followup"],
-  ["followup_3_delay_days", "Задержка follow-up 3", "Через сколько дней отправить follow-up 3. Например: 14.", false, "followup"],
-];
-
-function currentOutreachMapping() {
-  return Object.fromEntries($$("[data-outreach-map-field]").map((select) => [select.dataset.outreachMapField, select.value]));
-}
-
-function updateOutreachMappingInput() {
-  const mapping = currentOutreachMapping();
-  $("#outreachImportForm").elements.mapping.value = JSON.stringify(mapping);
-  if (!state.outreachImportPreview) return;
-  state.outreachImportPreview.mapping = mapping;
-}
-
 function renderOutreachImportPreview() {
   const preview = state.outreachImportPreview;
   if (!preview) return;
   $("#outreachImportPreview").hidden = false;
-  const columnOptions = (selected) => [
-    `<option value="">Не использовать</option>`,
-    ...preview.columns.map((column) => `<option value="${column.index}" ${String(column.index) === String(selected) ? "selected" : ""}>${esc(column.name)}</option>`),
-  ].join("");
-  const mappingField = ([field, label, hint, required]) => `
-    <label class="field mapping-field ${required ? "mapping-field-required" : ""}">
-      <span>${esc(label)}${required ? " *" : ""}</span>
-      <select data-outreach-map-field="${field}">
-        ${columnOptions(preview.mapping[field])}
-      </select>
-      <small>${esc(hint)}</small>
-    </label>
-  `;
-  const fieldsByGroup = (group) => OUTREACH_MAPPING_FIELDS.filter(([, , , , fieldGroup]) => fieldGroup === group);
-  $("#outreachColumnMapping").innerHTML = `
-    <div class="mapping-intro">
-      <strong>Для отправки нужны только 3 поля:</strong>
-      <span>кому отправить, тема первого письма и текст первого письма. Остальное можно не использовать.</span>
-    </div>
-    <section class="mapping-section">
-      <h3>1. Проверь обязательные поля</h3>
-      <p>Если справа уже выбраны правильные столбцы из файла, ничего менять не нужно.</p>
-      <div class="mapping-grid">${fieldsByGroup("required").map(mappingField).join("")}</div>
-    </section>
-    <details class="mapping-section">
-      <summary>2. Данные лида для удобства</summary>
-      <p>Эти поля не влияют на саму отправку. Они нужны, чтобы потом удобнее искать диалоги, фильтровать базу и анализировать ответы.</p>
-      <div class="mapping-grid">${fieldsByGroup("lead").map(mappingField).join("")}</div>
-    </details>
-    <details class="mapping-section">
-      <summary>3. Follow-up письма, если нужна цепочка</summary>
-      <p>Заполняй только если хочешь отправлять следующие письма при отсутствии ответа. Если человек ответит, будущие follow-up остановятся.</p>
-      <div class="mapping-grid">${fieldsByGroup("followup").map(mappingField).join("")}</div>
-    </details>
-  `;
   const blocked = preview.errors.filter((item) => item.status === "blocked").length;
-  const requiredMissing = OUTREACH_MAPPING_FIELDS
-    .filter(([, , , required]) => required)
-    .filter(([field]) => preview.mapping[field] === "" || preview.mapping[field] === undefined)
-    .map(([, label]) => label);
+  const ready = Math.max(Number(preview.rowsTotal || 0) - blocked, 0);
   $("#outreachPreviewSummary").innerHTML = `
     <span>Файл: <strong>${esc(preview.fileName)}</strong></span>
     <span>Строк: <strong>${preview.rowsTotal}</strong></span>
-    <span>Первые ошибки: <strong>${blocked}</strong></span>
-    ${requiredMissing.length ? `<span class="warn-text">Не выбраны обязательные поля: ${esc(requiredMissing.join(", "))}</span>` : "<span>Обязательные поля распознаны.</span>"}
-    <span>Если меняешь списки, нажми “Показать предпросмотр” еще раз перед созданием черновиков.</span>
+    <span>Готовы к черновикам: <strong>${ready}</strong></span>
+    <span>Нужно исправить: <strong>${blocked}</strong></span>
+    <span>Файл читается по шаблону автоматически.</span>
   `;
   $("#outreachPreviewTable").innerHTML = `
     <thead><tr><th>Строка</th><th>Email</th><th>Компания</th><th>Тема</th><th>Текст</th><th>Статус</th></tr></thead>
@@ -876,7 +807,6 @@ function renderOutreachImportPreview() {
         : `<tr><td colspan="6" class="muted">В файле не найдено строк для импорта.</td></tr>`}
     </tbody>
   `;
-  updateOutreachMappingInput();
   $("#createOutreachDraftsBtn").disabled = false;
 }
 
@@ -2242,11 +2172,10 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
     setActionResult({
       status: "warn",
       title: "Импорт персональных писем",
-      message: "Сначала нажми “Показать предпросмотр” и проверь сопоставление колонок.",
+      message: "Сначала нажми “Показать предпросмотр” и проверь, что строки из шаблона прочитались правильно.",
     });
     return;
   }
-  updateOutreachMappingInput();
   const body = new FormData(event.target);
   const result = await api("/api/outreach/imports", { method: "POST", body });
   event.target.reset();
@@ -2279,7 +2208,7 @@ async function previewOutreachImport() {
   setActionResult({
     status: "success",
     title: "Предпросмотр импорта",
-    message: `Файл прочитан: строк ${state.outreachImportPreview.rowsTotal}. Проверь сопоставление колонок ниже.`,
+    message: `Файл прочитан: строк ${state.outreachImportPreview.rowsTotal}. Проверь таблицу ниже и создай черновики.`,
     details: state.outreachImportPreview.errors,
   });
 }
@@ -2293,17 +2222,6 @@ $("#outreachImportForm input[name='file']").addEventListener("change", () => {
   state.outreachImportPreview = null;
   $("#outreachImportPreview").hidden = true;
   $("#createOutreachDraftsBtn").disabled = true;
-  $("#outreachImportForm").elements.mapping.value = "";
-});
-
-document.body.addEventListener("change", (event) => {
-  if (!event.target.dataset.outreachMapField) return;
-  updateOutreachMappingInput();
-  $("#createOutreachDraftsBtn").disabled = true;
-  const summary = $("#outreachPreviewSummary");
-  if (!summary.querySelector("[data-preview-stale]")) {
-    summary.insertAdjacentHTML("beforeend", `<span class="warn-text" data-preview-stale>Колонки изменены. Нажми “Показать предпросмотр”, чтобы проверить файл по новой схеме.</span>`);
-  }
 });
 
 $("#outreachDraftStatus").addEventListener("change", () => {

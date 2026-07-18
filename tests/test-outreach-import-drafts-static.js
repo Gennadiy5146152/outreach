@@ -109,8 +109,6 @@ for (const expected of [
   "data-view=\"outreachDrafts\"",
   "outreachImportForm",
   "outreachImportPreview",
-  "outreachColumnMapping",
-  "Как это читать",
   "previewOutreachImportBtn",
   "createOutreachDraftsBtn",
   "Скачать шаблон",
@@ -138,13 +136,7 @@ for (const expected of [
   "outreachDrafts: []",
   "async function loadOutreachImports()",
   "function renderOutreachImportPreview()",
-  "function currentOutreachMapping()",
-  "Для отправки нужны только 3 поля",
-  "1. Проверь обязательные поля",
-  "2. Данные лида для удобства",
-  "3. Follow-up письма, если нужна цепочка",
-  "mapping-field-required",
-  "Обязательные поля распознаны",
+  "Файл читается по шаблону автоматически",
   "async function loadOutreachDrafts()",
   "startOutreachDrafts",
   "preflightOutreachDrafts",
@@ -170,6 +162,19 @@ for (const expected of [
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`outreach import frontend should include ${expected}`);
+  }
+}
+
+for (const forbidden of [
+  "outreachColumnMapping",
+  "data-outreach-map-field",
+  "function currentOutreachMapping()",
+  "function updateOutreachMappingInput()",
+  "mapping-field-required",
+  "Как это читать",
+]) {
+  if (index.includes(forbidden) || app.includes(forbidden)) {
+    throw new Error(`outreach import UI should not expose manual mapping: ${forbidden}`);
   }
 }
 
