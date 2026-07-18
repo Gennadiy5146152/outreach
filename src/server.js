@@ -1425,7 +1425,8 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
         SELECT d.id, d.to_email, d.company, d.contact_name, d.subject, d.body_text,
                d.send_after, d.status, d.error_reason, d.mailbox_id,
                m.email AS mailbox_email, m.is_active AS mailbox_active,
-               m.smtp_verified_at, m.imap_verified_at,
+               m.smtp_verified_at, m.imap_verified_at, m.last_inbox_sync_at,
+               mailbox_sent.last_sent_at,
                first_step.id AS first_step_id,
                first_step.subject AS first_step_subject,
                first_step.body_text AS first_step_body_text,
@@ -1439,6 +1440,13 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
                ) AS first_step_already_queued
         FROM outreach_drafts d
         LEFT JOIN mailboxes m ON m.id = d.mailbox_id
+        LEFT JOIN LATERAL (
+          SELECT max(msg.sent_at) AS last_sent_at
+          FROM messages msg
+          WHERE msg.mailbox_id = m.id
+            AND msg.direction = 'outbound'
+            AND msg.status = 'sent'
+        ) mailbox_sent ON true
         LEFT JOIN outreach_draft_steps first_step ON first_step.draft_id = d.id AND first_step.position = 1
         LEFT JOIN LATERAL (
           SELECT count(*) AS followup_count
@@ -1454,8 +1462,16 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
       SELECT id, email
       FROM mailboxes
       WHERE is_active = true
-        AND smtp_verified_at IS NOT NULL
-        AND imap_verified_at IS NOT NULL
+        AND (
+          smtp_verified_at IS NOT NULL
+          OR EXISTS (
+            SELECT 1
+            FROM messages msg
+            WHERE msg.mailbox_id = mailboxes.id
+              AND msg.direction = 'outbound'
+              AND msg.status = 'sent'
+          )
+        )
       ORDER BY updated_at DESC, created_at ASC
     `),
     query(
@@ -1508,11 +1524,13 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     if (draft.first_step_already_queued) rowErrors.push("первое письмо уже есть в очереди или уже отправлено");
     rowErrors.push(...stepGuardErrors);
     if (draft.mailbox_id) {
+      const smtpReady = draft.smtp_verified_at || draft.last_sent_at;
+      const imapReady = draft.imap_verified_at || draft.last_inbox_sync_at;
       if (!draft.mailbox_active) rowErrors.push("выбранный mailbox выключен");
-      if (!draft.smtp_verified_at) rowErrors.push("у выбранного mailbox не проверен SMTP");
-      if (!draft.imap_verified_at) rowErrors.push("у выбранного mailbox не проверен IMAP для ответов");
+      if (!smtpReady) rowErrors.push("у выбранного mailbox не проверен SMTP");
+      if (!imapReady) rowWarnings.push("у выбранного mailbox не проверен IMAP для ответов, ответы могут не подтянуться автоматически");
     } else if (!fallbackMailboxes) {
-      rowErrors.push("mailbox не выбран, и нет активного mailbox с проверенными SMTP/IMAP");
+      rowErrors.push("mailbox не выбран, и нет активного mailbox с проверенным SMTP или успешной историей отправки");
     }
     if (!draft.followup_count) rowWarnings.push("follow-up шаги не заполнены, будет отправлено только первое письмо");
     rowErrors.forEach((error) => errors.push(`${label}: ${error}.`));
@@ -1582,7 +1600,17 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
         `
           SELECT id, email
           FROM mailboxes
-          WHERE is_active = true AND smtp_verified_at IS NOT NULL
+          WHERE is_active = true
+            AND (
+              smtp_verified_at IS NOT NULL
+              OR EXISTS (
+                SELECT 1
+                FROM messages msg
+                WHERE msg.mailbox_id = mailboxes.id
+                  AND msg.direction = 'outbound'
+                  AND msg.status = 'sent'
+              )
+            )
           ORDER BY updated_at DESC, created_at ASC
         `,
       )).rows;

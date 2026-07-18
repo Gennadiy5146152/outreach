@@ -359,7 +359,16 @@ async function lockNextSend() {
           AND q.scheduled_at <= now()
           AND (q.requires_approval = false OR q.approved_at IS NOT NULL)
           AND m.is_active = true
-          AND m.smtp_verified_at IS NOT NULL
+          AND (
+            m.smtp_verified_at IS NOT NULL
+            OR EXISTS (
+              SELECT 1
+              FROM messages sent_msg
+              WHERE sent_msg.mailbox_id = m.id
+                AND sent_msg.direction = 'outbound'
+                AND sent_msg.status = 'sent'
+            )
+          )
           AND (m.paused_until IS NULL OR m.paused_until <= now())
         ORDER BY q.scheduled_at ASC
         FOR UPDATE OF q SKIP LOCKED
@@ -523,7 +532,18 @@ async function processSend(item) {
     `,
     [item.id, message.id],
   );
-  await query("UPDATE mailboxes SET health_status = 'ok', error_count = 0, paused_until = NULL, updated_at = now() WHERE id = $1", [item.mailbox_id]);
+  await query(
+    `
+      UPDATE mailboxes
+      SET smtp_verified_at = COALESCE(smtp_verified_at, now()),
+          health_status = 'ok',
+          error_count = 0,
+          paused_until = NULL,
+          updated_at = now()
+      WHERE id = $1
+    `,
+    [item.mailbox_id],
+  );
 
   if (item.outreach_draft_id) {
     await query(
@@ -821,7 +841,17 @@ async function syncInbox(mailbox) {
       `,
       [mailbox.id, Math.max(maxUid, lock.uidNext ? Number(lock.uidNext) - 1 : maxUid)],
     );
-    await query("UPDATE mailboxes SET last_inbox_sync_at = now(), health_status = 'ok', updated_at = now() WHERE id = $1", [mailbox.id]);
+    await query(
+      `
+        UPDATE mailboxes
+        SET imap_verified_at = COALESCE(imap_verified_at, now()),
+            last_inbox_sync_at = now(),
+            health_status = 'ok',
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [mailbox.id],
+    );
   } finally {
     await client.logout().catch(() => {});
   }
