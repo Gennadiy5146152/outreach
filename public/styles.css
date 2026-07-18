@@ -897,6 +897,41 @@ h2 {
   font-weight: 800;
 }
 
+.conversation-presets {
+  width: fit-content;
+  max-width: 100%;
+  gap: 4px;
+  margin: 8px 0 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.conversation-presets .small-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.conversation-presets .small-button:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.conversation-presets .small-button.active {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(15, 30, 24, 0.08);
+  font-weight: 800;
+}
+
 .subsection-title {
   margin: 16px 0 6px;
   font-size: 18px;

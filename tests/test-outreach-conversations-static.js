@@ -136,4 +136,10 @@ for (const expected of [".conversation-card", ".conversation-card-head", ".conve
   }
 }
 
+for (const expected of [".conversation-presets", "min-height: 28px", "font-size: 12px"]) {
+  if (!css.includes(expected)) {
+    throw new Error(`conversation preset filters should stay compact: ${expected}`);
+  }
+}
+
 console.log("OK: outreach conversations static test passed");
