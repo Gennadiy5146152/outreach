@@ -38,6 +38,27 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const TIME_ZONE_OPTIONS = [
+  ["Europe/Moscow", "Москва (UTC+3)"],
+  ["Europe/Kaliningrad", "Калининград (UTC+2)"],
+  ["Europe/Samara", "Самара (UTC+4)"],
+  ["Asia/Yekaterinburg", "Екатеринбург (UTC+5)"],
+  ["Asia/Omsk", "Омск (UTC+6)"],
+  ["Asia/Novosibirsk", "Новосибирск (UTC+7)"],
+  ["Asia/Irkutsk", "Иркутск (UTC+8)"],
+  ["Asia/Yakutsk", "Якутск (UTC+9)"],
+  ["Asia/Vladivostok", "Владивосток (UTC+10)"],
+  ["UTC", "UTC"],
+];
+const WEEKDAY_SHORT_LABELS = {
+  1: "Пн",
+  2: "Вт",
+  3: "Ср",
+  4: "Чт",
+  5: "Пт",
+  6: "Сб",
+  7: "Вс",
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -244,7 +265,20 @@ function esc(value = "") {
 
 function fmtDate(value) {
   if (!value) return "";
-  return new Date(value).toLocaleString("ru-RU");
+  return new Date(value).toLocaleString("ru-RU", { timeZone: currentTimeZone() });
+}
+
+function currentTimeZone() {
+  return state.settings?.runtime?.timeZone || state.health?.timeZone || "Europe/Moscow";
+}
+
+function renderTimeZoneOptions(selected) {
+  const value = selected || currentTimeZone();
+  const known = TIME_ZONE_OPTIONS.some(([timeZone]) => timeZone === value);
+  const options = known ? TIME_ZONE_OPTIONS : [[value, value], ...TIME_ZONE_OPTIONS];
+  return options
+    .map(([timeZone, label]) => `<option value="${esc(timeZone)}" ${timeZone === value ? "selected" : ""}>${esc(label)}</option>`)
+    .join("");
 }
 
 function fmtCountdown(value) {
@@ -483,9 +517,30 @@ function queueModeLabel(value) {
   }[value] || value || "";
 }
 
+function normalizeQueueWindowReason(item) {
+  const text = String(item.last_error || "");
+  if (!text.startsWith("Вне окна отправки")) return text;
+  const withoutNextAttempt = text
+    .replace("Вне окна отправки: разрешено в дни ", "Вне окна отправки: ")
+    .replace(/Вне окна отправки: ([0-9,\s]+),/, (_match, rawDays) => {
+      const days = rawDays
+        .split(",")
+        .map((day) => WEEKDAY_SHORT_LABELS[Number(day.trim())] || day.trim())
+        .filter(Boolean)
+        .join(", ");
+      return `Вне окна отправки: ${days},`;
+    })
+    .split(". Ближайшая попытка:")[0];
+  const withTimeZone = withoutNextAttempt.includes("(")
+    ? withoutNextAttempt
+    : `${withoutNextAttempt} (${currentTimeZone()})`;
+  const nextAttempt = item.scheduled_at ? fmtDate(item.scheduled_at) : "по ближайшему окну";
+  return `${withTimeZone}. Ближайшая попытка: ${nextAttempt}`;
+}
+
 function queueStatusHint(item) {
   if (item.requires_approval && !item.approved_at) return "Перед отправкой нужно подтвердить письмо.";
-  if (item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")) return item.last_error;
+  if (item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")) return normalizeQueueWindowReason(item);
   if (item.status === "pending") return "Ждет своего времени отправки.";
   if (item.status === "retrying") return "Будет повторная попытка после ошибки.";
   if (item.status === "sent") return "Письмо уже отправлено.";
@@ -2501,6 +2556,12 @@ async function loadSettings() {
         <input name="maxAttachmentMb" type="number" min="1" max="200" step="1" value="${settings.runtime.maxAttachmentMb}" />
       </label>
       <label class="settings-row">
+        <span>Часовой пояс</span>
+        <select name="timeZone">
+          ${renderTimeZoneOptions(settings.runtime.timeZone)}
+        </select>
+      </label>
+      <label class="settings-row">
         <span>После ответа остановить</span>
         <select name="outreachStopScope">
           <option value="contact_only" ${settings.runtime.outreachStopScope === "contact_only" ? "selected" : ""}>Только этот email</option>
@@ -2510,6 +2571,7 @@ async function loadSettings() {
       </label>
       <div class="settings-footer">
         <p>Вложения: ${esc(settings.runtime.attachmentDir)}</p>
+        <p>Время в интерфейсе и окнах отправки: ${esc(settings.runtime.timeZone || currentTimeZone())}</p>
         <button>Сохранить</button>
       </div>
     </form>
@@ -3733,6 +3795,7 @@ document.body.addEventListener("submit", (event) => {
     const payload = formJson(event.target);
     payload.mailDryRun = payload.mailDryRun === "true";
     payload.maxAttachmentMb = Number(payload.maxAttachmentMb);
+    payload.timeZone = payload.timeZone || currentTimeZone();
     const result = await api("/api/runtime-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

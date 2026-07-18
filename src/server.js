@@ -12,7 +12,7 @@ import { checkSendingDomain } from "./services/domain-check.js";
 import { sendMail, verifyImap, verifySmtp } from "./services/mail.js";
 import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
-import { getRuntimeSettings, saveRuntimeSettings } from "./services/runtime.js";
+import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { cancelOutreachForScope } from "./services/outreach-stop.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
@@ -446,6 +446,7 @@ app.get("/api/health", asyncHandler(async (_req, res) => {
     dryRun: runtime.dryRun,
     publicTrackingUrl: runtime.publicTrackingUrl,
     maxAttachmentMb: runtime.maxAttachmentMb,
+    timeZone: runtime.timeZone,
   });
 }));
 
@@ -461,6 +462,7 @@ app.get("/api/settings", asyncHandler(async (_req, res) => {
       attachmentDir: env.attachmentDir,
       maxAttachmentMb: runtime.maxAttachmentMb,
       outreachStopScope: runtime.outreachStopScope,
+      timeZone: runtime.timeZone,
     },
     settings: Object.fromEntries(settings.rows.map((item) => [item.key, item.value])),
   });
@@ -471,9 +473,13 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
   const publicTrackingUrl = String(req.body.publicTrackingUrl || "").trim();
   const maxAttachmentMb = Number(req.body.maxAttachmentMb || env.maxAttachmentMb);
   const outreachStopScope = cleanText(req.body.outreachStopScope);
+  const timeZone = cleanText(req.body.timeZone) || env.appTimeZone;
 
   if (!Number.isFinite(maxAttachmentMb) || maxAttachmentMb < 1 || maxAttachmentMb > 200) {
     return res.status(400).json({ error: "max_attachment_mb_must_be_between_1_and_200" });
+  }
+  if (!isValidTimeZone(timeZone)) {
+    return res.status(400).json({ error: "invalid_time_zone" });
   }
 
   const runtime = await saveRuntimeSettings({
@@ -481,6 +487,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
     publicTrackingUrl,
     maxAttachmentMb,
     outreachStopScope,
+    timeZone,
   });
 
   res.json({
@@ -490,6 +497,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
       attachmentDir: env.attachmentDir,
       maxAttachmentMb: runtime.maxAttachmentMb,
       outreachStopScope: runtime.outreachStopScope,
+      timeZone: runtime.timeZone,
     },
     restartRequired: [],
     message: "Настройки сохранены в БД и применяются без пересоздания контейнеров.",

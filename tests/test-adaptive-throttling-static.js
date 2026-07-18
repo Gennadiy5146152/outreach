@@ -34,6 +34,14 @@ for (const expected of [
   "pausedUntil",
   "adaptive_throttle",
   "nonMailboxError",
+  "datePartsInTimeZone",
+  "zonedDateTimeToUtc",
+  "formatDateTimeInTimeZone",
+  "Пн",
+  "Вт",
+  "Вс",
+  "sendWindowBlockReason(item, nextAt, runtime.timeZone)",
+  "nextSendWindowAt(item, new Date(), runtime.timeZone)",
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should adaptively throttle mailbox sending: ${expected}`);

@@ -7,6 +7,27 @@ function toNumber(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+export function normalizeTimeZone(value) {
+  const timeZone = String(value || "").trim() || env.appTimeZone;
+  try {
+    new Intl.DateTimeFormat("ru-RU", { timeZone }).format(new Date());
+    return timeZone;
+  } catch {
+    return env.appTimeZone;
+  }
+}
+
+export function isValidTimeZone(value) {
+  const timeZone = String(value || "").trim();
+  if (!timeZone) return true;
+  try {
+    new Intl.DateTimeFormat("ru-RU", { timeZone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getRuntimeSettings() {
   const rows = (
     await query("SELECT key, value FROM settings WHERE key IN ('runtime','tracking','attachments','outreach')")
@@ -19,15 +40,17 @@ export async function getRuntimeSettings() {
     publicTrackingUrl: runtime.publicTrackingUrl ?? settings.tracking?.publicTrackingUrl ?? env.publicTrackingUrl,
     maxAttachmentMb: toNumber(runtime.maxAttachmentMb ?? settings.attachments?.maxAttachmentMb, env.maxAttachmentMb),
     outreachStopScope: normalizeOutreachStopScope(runtime.outreachStopScope ?? settings.outreach?.stopScope),
+    timeZone: normalizeTimeZone(runtime.timeZone),
   };
 }
 
-export async function saveRuntimeSettings({ dryRun, publicTrackingUrl, maxAttachmentMb, outreachStopScope }) {
+export async function saveRuntimeSettings({ dryRun, publicTrackingUrl, maxAttachmentMb, outreachStopScope, timeZone }) {
   const runtime = {
     dryRun: Boolean(dryRun),
     publicTrackingUrl: String(publicTrackingUrl || "").trim(),
     maxAttachmentMb: toNumber(maxAttachmentMb, env.maxAttachmentMb),
     outreachStopScope: normalizeOutreachStopScope(outreachStopScope),
+    timeZone: normalizeTimeZone(timeZone),
   };
 
   await query(

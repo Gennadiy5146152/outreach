@@ -125,45 +125,127 @@ function timeToMinutes(value, fallback) {
   return hours * 60 + minutes;
 }
 
-function setLocalMinutes(date, totalMinutes) {
-  const next = new Date(date);
-  next.setHours(Math.floor(totalMinutes / 60), totalMinutes % 60, 0, 0);
-  return next;
+const WEEKDAY_SHORT_LABELS = {
+  1: "Пн",
+  2: "Вт",
+  3: "Ср",
+  4: "Чт",
+  5: "Пт",
+  6: "Сб",
+  7: "Вс",
+};
+
+function weekdayLabel(day) {
+  return WEEKDAY_SHORT_LABELS[Number(day)] || String(day);
 }
 
-function nextSendWindowAt(row, now = new Date()) {
+function weekdayLabels(days) {
+  return days.map(weekdayLabel).join(", ");
+}
+
+function datePartsInTimeZone(date, timeZone = env.appTimeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    weekday: new Date(Date.UTC(year, month - 1, day)).getUTCDay() || 7,
+  };
+}
+
+function addCalendarDays(parts, offset) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offset));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function zonedDateTimeToUtc(parts, timeZone = env.appTimeZone) {
+  let utc = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0, 0));
+  for (let i = 0; i < 3; i += 1) {
+    const actual = datePartsInTimeZone(utc, timeZone);
+    const expectedMs = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+    const actualMs = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute);
+    const diff = expectedMs - actualMs;
+    if (diff === 0) break;
+    utc = new Date(utc.getTime() + diff);
+  }
+  return utc;
+}
+
+function formatDateTimeInTimeZone(date, timeZone = env.appTimeZone) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
+function nextSendWindowAt(row, now = new Date(), timeZone = env.appTimeZone) {
   const days = sendWindowDays(row);
   const startMinutes = timeToMinutes(row.send_window_start, "09:00");
   const endMinutes = timeToMinutes(row.send_window_end, "18:00");
-  const currentDay = now.getDay() || 7;
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const current = datePartsInTimeZone(now, timeZone);
+  const currentMinutes = current.hour * 60 + current.minute;
 
-  if (days.includes(currentDay) && currentMinutes < startMinutes) {
-    return setLocalMinutes(now, startMinutes);
+  if (days.includes(current.weekday) && currentMinutes < startMinutes) {
+    return zonedDateTimeToUtc({
+      year: current.year,
+      month: current.month,
+      day: current.day,
+      hour: Math.floor(startMinutes / 60),
+      minute: startMinutes % 60,
+    }, timeZone);
   }
 
   for (let offset = 0; offset <= 7; offset += 1) {
-    const candidate = new Date(now);
-    candidate.setDate(now.getDate() + offset);
-    const day = candidate.getDay() || 7;
-    if (!days.includes(day)) continue;
+    const candidate = addCalendarDays(current, offset);
+    const weekday = new Date(Date.UTC(candidate.year, candidate.month - 1, candidate.day)).getUTCDay() || 7;
+    if (!days.includes(weekday)) continue;
     if (offset === 0 && currentMinutes <= endMinutes) return now;
-    return setLocalMinutes(candidate, startMinutes);
+    if (offset === 0) continue;
+    return zonedDateTimeToUtc({
+      ...candidate,
+      hour: Math.floor(startMinutes / 60),
+      minute: startMinutes % 60,
+    }, timeZone);
   }
 
   return new Date(now.getTime() + 30 * 60 * 1000);
 }
 
-function sendWindowBlockReason(row, nextAt) {
+function sendWindowBlockReason(row, nextAt, timeZone = env.appTimeZone) {
   const start = String(row.send_window_start || "09:00").slice(0, 5);
   const end = String(row.send_window_end || "18:00").slice(0, 5);
-  const days = sendWindowDays(row).join(", ");
-  return `Вне окна отправки: разрешено в дни ${days}, ${start}-${end}. Ближайшая попытка: ${nextAt.toLocaleString("ru-RU")}`;
+  const days = weekdayLabels(sendWindowDays(row));
+  return `Вне окна отправки: ${days}, ${start}-${end} (${timeZone}). Ближайшая попытка: ${formatDateTimeInTimeZone(nextAt, timeZone)}`;
 }
 
-function isWithinWindow(row) {
+function isWithinWindow(row, timeZone = env.appTimeZone) {
   const now = new Date();
-  return nextSendWindowAt(row, now).getTime() <= now.getTime();
+  return nextSendWindowAt(row, now, timeZone).getTime() <= now.getTime();
 }
 
 async function lockNextJob() {
@@ -391,11 +473,12 @@ async function processSend(item) {
     throw nonMailboxError("Lead is invalid or suppressed");
   }
 
-  if (!isWithinWindow(item)) {
-    const nextAt = nextSendWindowAt(item);
+  const runtime = await getRuntimeSettings();
+  if (!isWithinWindow(item, runtime.timeZone)) {
+    const nextAt = nextSendWindowAt(item, new Date(), runtime.timeZone);
     await query(
       "UPDATE sending_queue SET status = 'pending', scheduled_at = $2, last_error = $3, updated_at = now() WHERE id = $1",
-      [item.id, nextAt, sendWindowBlockReason(item, nextAt)],
+      [item.id, nextAt, sendWindowBlockReason(item, nextAt, runtime.timeZone)],
     );
     return;
   }
@@ -424,7 +507,6 @@ async function processSend(item) {
     pain: item.pain,
   };
   const settings = (await query("SELECT value FROM settings WHERE key = 'sender'")).rows[0]?.value || {};
-  const runtime = await getRuntimeSettings();
   const subjectTemplate = item.subject_override || item.subject_template || "";
   const textTemplate = item.body_text_override || item.body_template_text || htmlToText(item.body_template_html) || "";
   const htmlTemplate = item.body_html_override || item.body_template_html || textTemplate.replace(/\n/g, "<br>");

@@ -14,6 +14,7 @@ export const env = {
   authCookieSecure: String(process.env.AUTH_COOKIE_SECURE || "false").toLowerCase() === "true",
   databaseUrl: process.env.DATABASE_URL || "postgres://outreach:outreach@localhost:5432/outreach",
   publicTrackingUrl: process.env.PUBLIC_TRACKING_URL || "",
+  appTimeZone: process.env.APP_TIME_ZONE || process.env.TZ || "Europe/Moscow",
   mailDryRun: String(process.env.MAIL_DRY_RUN || "true").toLowerCase() !== "false",
   attachmentDir: path.resolve(root, process.env.ATTACHMENT_DIR || "storage/attachments"),
   maxAttachmentMb: Number(process.env.MAX_ATTACHMENT_MB || 50),
