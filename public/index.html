@@ -293,9 +293,12 @@
         </div>
         <section class="panel">
           <div class="panel-head">
-            <h2>База</h2>
+            <div>
+              <h2>База лидов</h2>
+              <p class="muted">Рабочий список контактов: кто готов к отправке, кого нужно проверить и кого лучше не трогать.</p>
+            </div>
             <div class="lead-filters">
-              <input id="leadSearch" placeholder="Поиск" />
+              <input id="leadSearch" placeholder="Компания, email, контакт или сегмент" />
               <select id="leadSegmentFilter">
                 <option value="">Все сегменты</option>
               </select>
@@ -309,6 +312,13 @@
               <button id="leadFiltersReset" type="button">Сбросить</button>
             </div>
           </div>
+          <div class="quick-filters lead-quick-filters" aria-label="Быстрые фильтры базы лидов">
+            <button class="small-button active" data-lead-quick-filter="all">Все лиды</button>
+            <button class="small-button" data-lead-quick-filter="ready">Готовы к отправке</button>
+            <button class="small-button" data-lead-quick-filter="review">Нужно проверить</button>
+            <button class="small-button" data-lead-quick-filter="blocked">Не отправлять</button>
+          </div>
+          <div id="leadsSummary" class="summary-line"></div>
           <div class="table-wrap"><table id="leadsTable"></table></div>
           <p class="help-text">Проверка email показывает, можно ли отправлять письма этому лиду: “можно отправлять” — формат, домен и почтовые записи в порядке; “нужна проверка” — адрес спорный, например общий ящик info@/team@; “не отправлять” — адрес некорректный или почта вернула недоставку; “еще не проверяли” — нажми “Запустить проверку email”.</p>
           <p class="muted">Клик по строке открывает карточку лида.</p>

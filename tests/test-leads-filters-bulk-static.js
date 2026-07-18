@@ -9,6 +9,12 @@ for (const expected of [
   "leadSegmentFilter",
   "leadValidationFilter",
   "leadFiltersReset",
+  "leadsSummary",
+  "data-lead-quick-filter=\"all\"",
+  "data-lead-quick-filter=\"ready\"",
+  "data-lead-quick-filter=\"review\"",
+  "data-lead-quick-filter=\"blocked\"",
+  "База лидов",
   "campaignAvailableLeadsTable",
   "campaignLeadSelectAll",
   "Добавить выбранных лидов",
@@ -22,6 +28,14 @@ for (const expected of [
 
 for (const expected of [
   "selectedCampaignLeadIds: new Set()",
+  "leadQuickFilter: \"all\"",
+  "function leadQuickFilterLabel",
+  "function leadReadyForSend",
+  "function leadNeedsReview",
+  "function leadBlocked",
+  "function leadVisibleItems",
+  "function leadActionText",
+  "function leadContextText",
   "function renderLeadSegmentFilter()",
   "async function loadCampaignAvailableLeads()",
   "function renderCampaignAvailableLeads()",
@@ -32,6 +46,9 @@ for (const expected of [
   "selectAll.disabled = available.length === 0",
   "enrollButton.disabled = count === 0",
   "leadValidationFilter",
+  "Готовы к отправке",
+  "Нужно проверить",
+  "Клик по строке откроет карточку лида",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`lead filtering frontend should include ${expected}`);
@@ -50,7 +67,7 @@ for (const expected of [
   }
 }
 
-for (const expected of [".lead-filters", ".lead-bulkbar", ".subsection-title"]) {
+for (const expected of [".lead-filters", ".lead-bulkbar", ".subsection-title", ".lead-quick-filters", ".lead-main", ".lead-readiness", ".lead-next"]) {
   if (!css.includes(expected)) {
     throw new Error(`lead filtering styles should include ${expected}`);
   }

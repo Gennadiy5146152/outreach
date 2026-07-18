@@ -945,6 +945,88 @@ h2 {
   width: min(760px, 100%);
 }
 
+.lead-quick-filters {
+  width: fit-content;
+  max-width: 100%;
+  gap: 4px;
+  margin: 8px 0 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.lead-quick-filters .small-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.lead-quick-filters .small-button:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.lead-quick-filters .small-button.active {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(15, 30, 24, 0.08);
+  font-weight: 800;
+}
+
+#leadsTable {
+  table-layout: fixed;
+  min-width: 980px;
+  font-size: 13px;
+}
+
+.lead-row {
+  cursor: pointer;
+}
+
+.lead-main,
+.lead-readiness,
+.lead-context,
+.lead-next {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lead-main strong,
+.lead-context strong,
+.lead-next strong {
+  color: var(--text);
+}
+
+.lead-main span,
+.lead-context span,
+.lead-next span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.lead-main em,
+.lead-readiness em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.lead-readiness > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .draft-toolbar {
   display: flex;
   flex-wrap: wrap;

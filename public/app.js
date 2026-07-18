@@ -27,6 +27,7 @@ const state = {
   health: null,
   inbox: [],
   inboxFilter: "all",
+  leadQuickFilter: "all",
   editorTarget: null,
   campaignStep: "campaign",
   actionResults: {
@@ -346,6 +347,50 @@ function nextActionLabel(value) {
 
 function validationReasonText(value) {
   return VALIDATION_REASON_LABELS[value] || value || "";
+}
+
+function leadQuickFilterLabel(value) {
+  return {
+    all: "Все лиды",
+    ready: "Готовы к отправке",
+    review: "Нужно проверить",
+    blocked: "Не отправлять",
+  }[value] || "Все лиды";
+}
+
+function leadReadyForSend(lead) {
+  return ["valid", "risky"].includes(lead.validation_status) && lead.status !== "suppressed";
+}
+
+function leadNeedsReview(lead) {
+  return ["unknown", "risky"].includes(lead.validation_status || "unknown") && lead.status !== "suppressed";
+}
+
+function leadBlocked(lead) {
+  return lead.status === "suppressed" || lead.validation_status === "invalid";
+}
+
+function leadVisibleItems() {
+  if (state.leadQuickFilter === "ready") return state.leads.filter(leadReadyForSend);
+  if (state.leadQuickFilter === "review") return state.leads.filter(leadNeedsReview);
+  if (state.leadQuickFilter === "blocked") return state.leads.filter(leadBlocked);
+  return state.leads;
+}
+
+function leadActionText(lead) {
+  if (lead.status === "suppressed") return "В стоп-листе: письма этому контакту отправлять нельзя.";
+  if (lead.validation_status === "valid") return "Готов к отправке. Можно добавлять в кампанию или запускать через персональный импорт.";
+  if (lead.validation_status === "risky") return "Нужна ручная проверка: адрес может быть общим ящиком или спорным контактом.";
+  if (lead.validation_status === "invalid") return "Не отправлять: исправь email или убери контакт из рабочей базы.";
+  return "Email еще не проверяли: нажми “Запустить проверку email”.";
+}
+
+function leadContextText(lead) {
+  const parts = [];
+  if (lead.segment) parts.push(`сегмент: ${lead.segment}`);
+  if (lead.city) parts.push(`город: ${lead.city}`);
+  if (lead.source) parts.push(`источник: ${lead.source}`);
+  return parts.join(" · ") || "Сегмент и источник не указаны.";
 }
 
 function queueModeLabel(value) {
@@ -805,7 +850,8 @@ async function loadDashboard() {
 
 async function loadLeads() {
   const search = encodeURIComponent($("#leadSearch")?.value || "");
-  const validation = encodeURIComponent($("#leadValidationFilter")?.value || "");
+  const validationValue = state.leadQuickFilter === "custom" ? ($("#leadValidationFilter")?.value || "") : "";
+  const validation = encodeURIComponent(validationValue);
   const segment = encodeURIComponent($("#leadSegmentFilter")?.value || "");
   try {
     state.leads = await api(`/api/leads?search=${search}&validation=${validation}&segment=${segment}`);
@@ -816,27 +862,62 @@ async function loadLeads() {
     `;
     throw error;
   }
+  const visibleLeads = leadVisibleItems();
+  const readyCount = state.leads.filter(leadReadyForSend).length;
+  const reviewCount = state.leads.filter(leadNeedsReview).length;
+  const blockedCount = state.leads.filter(leadBlocked).length;
+  const segmentCount = new Set(state.leads.map((lead) => lead.segment).filter(Boolean)).size;
+  $("#leadsSummary").innerHTML = `
+    <span>Найдено: <strong>${state.leads.length}</strong></span>
+    <span>Готовы к отправке: <strong>${readyCount}</strong></span>
+    <span>Нужно проверить: <strong>${reviewCount}</strong></span>
+    <span>Не отправлять: <strong>${blockedCount}</strong></span>
+    <span>Сегментов: <strong>${segmentCount}</strong></span>
+    <span>Показано: <strong>${esc(leadQuickFilterLabel(state.leadQuickFilter).toLowerCase())}</strong></span>
+  `;
   $("#leadsTable").innerHTML = `
-    <thead><tr><th>Компания</th><th>Email</th><th>Сегмент</th><th>Статус</th><th>Проверка email</th><th>Источник</th></tr></thead>
+    <thead><tr><th>Лид</th><th>Готовность</th><th>Контекст</th><th>Что делать</th></tr></thead>
     <tbody>
-      ${state.leads.length
-        ? state.leads
+      ${visibleLeads.length
+        ? visibleLeads
         .map(
           (lead) => `
-            <tr data-lead-id="${lead.id}">
-              <td><strong>${esc(lead.company)}</strong><br><span class="muted">${esc(lead.contact_name || "")}</span></td>
-              <td>${esc(lead.email)}</td>
-              <td>${esc(lead.segment || "")}</td>
-              <td>${pill(lead.status)}</td>
-              <td>${pill(lead.validation_status)}<br><span class="muted">${esc(validationReasonText(lead.validation_reason))}</span></td>
-              <td>${esc(lead.source || "")}</td>
+            <tr class="lead-row" data-lead-id="${lead.id}">
+              <td>
+                <div class="lead-main">
+                  <strong>${esc(lead.company || lead.email)}</strong>
+                  <span>${esc(lead.email)}</span>
+                  <em>${esc([lead.contact_name, lead.position].filter(Boolean).join(" · ") || "Контакт не указан")}</em>
+                </div>
+              </td>
+              <td>
+                <div class="lead-readiness">
+                  <span>${pill(lead.validation_status || "unknown")} ${pill(lead.status)}</span>
+                  <em>${esc(validationReasonText(lead.validation_reason) || "Проверку еще не запускали")}</em>
+                </div>
+              </td>
+              <td>
+                <div class="lead-context">
+                  <strong>${esc(lead.segment || "Без сегмента")}</strong>
+                  <span>${esc(leadContextText(lead))}</span>
+                </div>
+              </td>
+              <td>
+                <div class="lead-next">
+                  <strong>${esc(leadActionText(lead))}</strong>
+                  <span>Клик по строке откроет карточку лида.</span>
+                </div>
+              </td>
             </tr>
           `,
         )
         .join("")
-        : `<tr><td colspan="6" class="muted">Лидов пока нет. Добавь одного вручную или импортируй CSV, затем нажми “Запустить проверку email”.</td></tr>`}
+        : `<tr><td colspan="4" class="muted">По фильтру “${esc(leadQuickFilterLabel(state.leadQuickFilter))}” лидов нет. Добавь лида, импортируй CSV или сбрось фильтры.</td></tr>`}
     </tbody>
   `;
+  $$("[data-lead-quick-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.leadQuickFilter === state.leadQuickFilter);
+  });
 }
 
 async function loadOutreachImports() {
@@ -2411,13 +2492,22 @@ $("#logoutBtn").addEventListener("click", async () => {
 });
 $("#leadSearch").addEventListener("input", () => loadLeads());
 $("#leadSegmentFilter").addEventListener("change", () => loadLeads());
-$("#leadValidationFilter").addEventListener("change", () => loadLeads());
+$("#leadValidationFilter").addEventListener("change", () => {
+  state.leadQuickFilter = "custom";
+  loadLeads();
+});
 $("#leadFiltersReset").addEventListener("click", () => {
   $("#leadSearch").value = "";
   $("#leadSegmentFilter").value = "";
   $("#leadValidationFilter").value = "";
+  state.leadQuickFilter = "all";
   loadLeads();
 });
+$$("[data-lead-quick-filter]").forEach((button) => button.addEventListener("click", () => {
+  state.leadQuickFilter = button.dataset.leadQuickFilter || "all";
+  $("#leadValidationFilter").value = "";
+  loadLeads();
+}));
 $$("[data-queue-filter]").forEach((button) => button.addEventListener("click", () => {
   state.queueFilter = button.dataset.queueFilter || "waiting";
   loadQueue();
