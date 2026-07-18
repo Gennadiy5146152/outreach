@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { rowsToOutreachRows } from "../src/services/csv.js";
 
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
@@ -87,6 +88,7 @@ for (const expected of [
 
 for (const expected of [
   "rowsToOutreachRows",
+  "String(value ?? \"\").trim()",
   "followup_1_subject",
   "followup_2_body",
   "фоллоуап 3 задержка",
@@ -99,6 +101,31 @@ for (const expected of [
   if (!csv.includes(expected)) {
     throw new Error(`outreach row parser should include ${expected}`);
   }
+}
+
+const parsedZeroDelays = rowsToOutreachRows([
+  [
+    "Почта получателя",
+    "Тема письма",
+    "Текст письма",
+    "Фоллоуап 1: текст",
+    "Фоллоуап 1: задержка дней",
+    "Фоллоуап 2: текст",
+    "Фоллоуап 2: задержка дней",
+  ],
+  [
+    "client@example.com",
+    "Тема",
+    "Первое письмо",
+    "Первый follow-up",
+    0,
+    "Второй follow-up",
+    0,
+  ],
+]);
+
+if (parsedZeroDelays[0]?.followup_1_delay_days !== "0" || parsedZeroDelays[0]?.followup_2_delay_days !== "0") {
+  throw new Error("outreach Excel parser should preserve numeric zero follow-up delays");
 }
 
 for (const expected of [

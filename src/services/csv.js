@@ -81,7 +81,7 @@ export const OUTREACH_COLUMN_ALIASES = {
 
 function cellText(value) {
   if (value instanceof Date) return value.toISOString();
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
 export function inferOutreachMapping(rows) {
@@ -95,7 +95,7 @@ export function inferOutreachMapping(rows) {
 
 export function rowsToOutreachRows(rows, mapping = {}) {
   const [header = [], ...data] = rows;
-  const keys = header.map((item) => String(item || "").trim().toLowerCase());
+  const keys = header.map((item) => cellText(item).toLowerCase());
   const get = (row, field) => {
     const mappedIndex = mapping[field] === "" || mapping[field] === undefined ? NaN : Number(mapping[field]);
     const index = Number.isInteger(mappedIndex) && mappedIndex >= 0
@@ -133,5 +133,5 @@ export function rowsToOutreachRows(rows, mapping = {}) {
       followup_3_delay_days: get(row, "followup_3_delay_days"),
     }))
     .filter((row) => Object.entries(row)
-      .some(([key, value]) => key !== "source_row_number" && String(value || "").trim()));
+      .some(([key, value]) => key !== "source_row_number" && String(value ?? "").trim()));
 }
