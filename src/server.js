@@ -2836,6 +2836,49 @@ app.post("/api/mailboxes/:id/check", asyncHandler(async (req, res) => {
   res.json(await checkMailboxConnection(mailbox));
 }));
 
+async function inboxSyncQueueStatus(limit = 20) {
+  const [summary, jobs] = await Promise.all([
+    query(
+      `
+        SELECT status, count(*)::int AS count
+        FROM job_queue
+        WHERE job_type = 'sync_inbox'
+          AND created_at > now() - interval '1 day'
+        GROUP BY status
+        ORDER BY status
+      `,
+    ),
+    query(
+      `
+        SELECT
+          j.id,
+          j.status,
+          j.run_at,
+          j.attempts,
+          j.max_attempts,
+          j.locked_at,
+          j.last_error,
+          j.created_at,
+          j.updated_at,
+          round(extract(epoch from (now() - COALESCE(j.locked_at, j.run_at, j.created_at))))::int AS age_seconds,
+          CASE
+            WHEN j.status = 'running' AND j.locked_at < now() - interval '2 minutes' THEN true
+            WHEN j.status IN ('pending','retrying') AND j.run_at < now() - interval '2 minutes' THEN true
+            ELSE false
+          END AS looks_stuck,
+          m.email AS mailbox_email
+        FROM job_queue j
+        LEFT JOIN mailboxes m ON m.id::text = j.payload->>'mailboxId'
+        WHERE j.job_type = 'sync_inbox'
+        ORDER BY j.created_at DESC
+        LIMIT $1
+      `,
+      [limit],
+    ),
+  ]);
+  return { summary: summary.rows, jobs: jobs.rows };
+}
+
 app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {
   const mailbox = (await query("SELECT id, email FROM mailboxes WHERE id = $1", [req.params.id])).rows[0];
   if (!mailbox) return res.status(404).json({ error: "not_found" });
@@ -2844,7 +2887,7 @@ app.post("/api/mailboxes/:id/sync", asyncHandler(async (req, res) => {
     mailboxId: req.params.id,
     payload: { mailbox: mailbox.email, forceRecent: true, source: "manual_mailbox" },
   });
-  res.json({ queued: true, mailbox: mailbox.email });
+  res.json({ queued: true, mailbox: mailbox.email, syncStatus: await inboxSyncQueueStatus(10) });
 }));
 
 app.get("/api/suppressions", asyncHandler(async (_req, res) => {
@@ -3426,7 +3469,11 @@ app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {
   await logEvent("inbox_sync_queued", {
     payload: { queued: result.rowCount, forceRecent: true, source: "manual_all" },
   });
-  res.json({ queued: result.rowCount });
+  res.json({ queued: result.rowCount, syncStatus: await inboxSyncQueueStatus(20) });
+}));
+
+app.get("/api/inbox/sync-status", asyncHandler(async (_req, res) => {
+  res.json(await inboxSyncQueueStatus(30));
 }));
 
 app.patch("/api/inbox/:id/classification", asyncHandler(async (req, res) => {

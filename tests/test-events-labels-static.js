@@ -19,8 +19,13 @@ if (index.includes("Event log")) {
 for (const expected of [
   "const EVENT_LABELS",
   "function eventSummary(event)",
+  "function actionSyncStatus(syncStatus)",
+  "function updateSyncStatusInActionResult(syncStatus)",
+  "function scheduleInboxSyncRefreshes()",
+  "/api/inbox/sync-status",
   "Что произошло",
   "Кратко",
+  "Очередь IMAP",
   "Показать",
   "Лид добавлен",
   "Email проверен",

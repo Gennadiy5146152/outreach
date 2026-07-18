@@ -149,6 +149,7 @@ function actionDetailsBody(details) {
   if (details.imapUncheckedMailboxes?.length) {
     blocks.push(`<p>IMAP проверяется автоматически для ящиков: <strong>${esc(details.imapUncheckedMailboxes.join(", "))}</strong>.</p>`);
   }
+  if (details.syncStatus) blocks.push(actionSyncStatus(details.syncStatus));
   if (details.errors?.length) blocks.push(actionList("Что исправить", details.errors));
   if (details.warnings?.length) blocks.push(actionList("На что обратить внимание", details.warnings));
   if (details.items?.length) blocks.push(actionItemsList(details.items));
@@ -205,6 +206,43 @@ function actionItemsList(items) {
         `).join("")}
       </ul>
       ${items.length > visible.length ? `<p>И еще ${items.length - visible.length} записей.</p>` : ""}
+    </div>
+  `;
+}
+
+function fmtSeconds(value) {
+  const total = Math.max(0, Number(value || 0));
+  if (total < 60) return `${total} сек`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes < 60) return `${minutes} мин ${seconds} сек`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} ч ${minutes % 60} мин`;
+}
+
+function actionSyncStatus(syncStatus) {
+  const jobs = Array.isArray(syncStatus?.jobs) ? syncStatus.jobs.slice(0, 8) : [];
+  const summary = Array.isArray(syncStatus?.summary) ? syncStatus.summary : [];
+  const summaryText = summary.length
+    ? summary.map((item) => `${statusLabel(item.status)}: ${item.count}`).join(" · ")
+    : "за последние сутки задач нет";
+  return `
+    <div class="action-detail-section">
+      <strong>Очередь IMAP</strong>
+      <p>${esc(summaryText)}</p>
+      ${jobs.length ? `
+        <ul>
+          ${jobs.map((job) => `
+            <li>
+              ${esc(job.mailbox_email || "ящик не найден")} — ${esc(statusLabel(job.status))}
+              ${job.looks_stuck ? " · похоже, зависла" : ""}
+              · возраст: ${esc(fmtSeconds(job.age_seconds))}
+              · попытка: ${esc(job.attempts)}/${esc(job.max_attempts)}
+              ${job.last_error ? ` · ошибка: ${esc(job.last_error)}` : ""}
+            </li>
+          `).join("")}
+        </ul>
+      ` : `<p>Активных IMAP-задач не найдено.</p>`}
     </div>
   `;
 }
@@ -2850,6 +2888,36 @@ async function loadEvents() {
   `;
 }
 
+function updateSyncStatusInActionResult(syncStatus) {
+  const apply = (result) => {
+    if (!result || !String(result.title || "").includes("Синхронизация")) return false;
+    result.details = typeof result.details === "object" && result.details
+      ? { ...result.details, syncStatus }
+      : { syncStatus };
+    return true;
+  };
+  const shouldRenderGlobal = apply(state.actionResults.global);
+  for (const [mailboxId, result] of Object.entries(state.actionResults.mailboxes)) {
+    if (apply(result)) renderMailboxActionResult(mailboxId);
+  }
+  if (shouldRenderGlobal) renderGlobalActionResult();
+}
+
+function refreshInboxSyncRelated() {
+  Promise.all([loadEvents(), loadInbox(), loadConversations(), loadReviewConversations(), loadDashboard()])
+    .then(async () => {
+      const syncStatus = await api("/api/inbox/sync-status");
+      updateSyncStatusInActionResult(syncStatus);
+    })
+    .catch(() => {});
+}
+
+function scheduleInboxSyncRefreshes() {
+  refreshInboxSyncRelated();
+  setTimeout(refreshInboxSyncRelated, 4000);
+  setTimeout(refreshInboxSyncRelated, 12000);
+}
+
 async function refresh() {
   await Promise.all([
     loadHealth(),
@@ -3903,7 +3971,7 @@ document.body.addEventListener("click", async (event) => {
       button: event.target,
     }, async () => {
       const result = await api(`/api/mailboxes/${syncMailboxId}/sync`, { method: "POST" });
-      await refresh();
+      scheduleInboxSyncRefreshes();
       setActionResult({
         status: "success",
         title: "Синхронизация входящих",
@@ -4008,6 +4076,7 @@ $("#syncInboxBtn").addEventListener("click", (event) => runAction({
   button: event.currentTarget,
 }, async () => {
   const result = await api("/api/inbox/sync", { method: "POST" });
+  scheduleInboxSyncRefreshes();
   setActionResult({
     status: "success",
     title: "Синхронизация всех входящих",
