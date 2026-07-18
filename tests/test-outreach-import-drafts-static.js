@@ -297,6 +297,9 @@ for (const forbidden of [
 
 for (const forbidden of [
   "outreachColumnMapping",
+  "Какие колонки нужны",
+  "Скачать шаблон для Excel",
+  "Обязательные колонки: email, subject, body",
   "data-outreach-map-field",
   "function currentOutreachMapping()",
   "function updateOutreachMappingInput()",
@@ -315,6 +318,11 @@ for (const forbidden of [
   if (index.includes(forbidden) || app.includes(forbidden)) {
     throw new Error(`outreach import UI should not expose manual mapping: ${forbidden}`);
   }
+}
+
+const templateLinkCount = (index.match(/\/api\/outreach\/imports\/template\.csv/g) || []).length;
+if (templateLinkCount !== 1) {
+  throw new Error(`outreach import UI should show one template download link, got ${templateLinkCount}`);
 }
 
 for (const expected of [

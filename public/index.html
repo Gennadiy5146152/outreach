@@ -169,34 +169,22 @@
           <div>
             <p class="eyebrow">Новый сценарий аутрича</p>
             <h2>Загрузи Excel/CSV, где каждая строка — уже готовое персональное письмо конкретному лиду.</h2>
-            <p>Обязательные колонки: email, subject, body. Дополнительно можно передать company, contact, segment, mailbox, send_after и followup-поля.</p>
+            <p>Работает по одному шаблону: скачай файл, заполни строки, загрузи обратно и сразу проверь будущие черновики.</p>
           </div>
           <button data-go="outreachDrafts">Открыть черновики</button>
         </section>
 
-        <div class="grid two">
-          <section class="panel">
-            <h2>Загрузить файл</h2>
-            <p class="help-text">Поддерживаются `.xlsx` и `.csv`. Ошибочные строки не потеряются: они появятся в черновиках со статусом “нужно исправить”.</p>
-            <form id="outreachImportForm" class="form">
-              <input name="file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
-              <div class="form-actions">
-                <button id="createOutreachDraftsBtn" disabled>Создать черновики</button>
-                <a class="button" href="/api/outreach/imports/template.csv">Скачать шаблон</a>
-              </div>
-            </form>
-          </section>
-          <section class="panel">
-            <h2>Какие колонки нужны</h2>
-            <div class="example-box">
-              <code>Почта получателя — кому отправлять</code>
-              <code>Тема письма — тема первого письма</code>
-              <code>Текст письма — готовый текст первого письма</code>
-              <code>Почта отправителя — если нужно закрепить конкретный ящик</code>
+        <section class="panel">
+          <h2>Загрузить файл</h2>
+          <p class="help-text">Поддерживаются `.xlsx` и `.csv`. Ошибочные строки не потеряются: они появятся в черновиках со статусом “нужно исправить”.</p>
+          <form id="outreachImportForm" class="form">
+            <input name="file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
+            <div class="form-actions">
+              <button id="createOutreachDraftsBtn" disabled>Создать черновики</button>
+              <a class="button" href="/api/outreach/imports/template.csv">Скачать шаблон</a>
             </div>
-            <a class="button" href="/api/outreach/imports/template.csv">Скачать шаблон для Excel</a>
-          </section>
-        </div>
+          </form>
+        </section>
 
         <section class="panel" id="outreachImportPreview" hidden>
           <div class="panel-head">
