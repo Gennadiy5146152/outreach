@@ -574,6 +574,11 @@
             <button id="approveAllBtn">Подтвердить все ожидающие</button>
           </div>
           <div id="sendProgress"></div>
+          <div class="quick-filters" aria-label="Фильтр очереди отправки">
+            <button class="small-button active" data-queue-filter="waiting">Ожидает отправки</button>
+            <button class="small-button" data-queue-filter="sent">Отправлено</button>
+            <button class="small-button" data-queue-filter="all">Все</button>
+          </div>
           <div id="queueSummary" class="summary-line"></div>
           <div class="table-wrap"><table id="queueTable"></table></div>
         </section>

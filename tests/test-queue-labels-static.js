@@ -8,6 +8,9 @@ for (const expected of [
   "какие письма ждут отправки",
   "Подтвердить все ожидающие",
   "queueSummary",
+  "Ожидает отправки",
+  "Отправлено",
+  "Все",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`queue page should include Russian text: ${expected}`);
@@ -18,9 +21,13 @@ for (const expected of [
   "function queueModeLabel",
   "function queueStatusHint",
   "function queueScheduleLabel",
+  "function queueTimeLabel",
   "function queueStateLabel",
   "function queueNextAction",
   "function queueReasonText",
+  "function queueNeedsSending",
+  "function queueFilterLabel",
+  "function queueSortRank",
   "Когда</th>",
   "Кому и что",
   "Отправитель",
@@ -37,6 +44,11 @@ for (const expected of [
   "Ждут окна",
   "Ждут подтверждения",
   "Ничего нажимать не нужно",
+  "Показано",
+  "visibleQueue",
+  "data-queue-filter",
+  "sent_at",
+  "updated_at",
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`queue UI should include ${expected}`);
@@ -58,6 +70,7 @@ for (const expected of [
   ".queue-recipient",
   ".queue-state",
   ".queue-action",
+  ".quick-filters",
 ]) {
   if (!fs.readFileSync("public/styles.css", "utf8").includes(expected)) {
     throw new Error(`queue UI styles should include ${expected}`);

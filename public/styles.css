@@ -757,6 +757,26 @@ h2 {
   font-weight: 700;
 }
 
+.quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+.quick-filters .small-button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.quick-filters .active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 800;
+}
+
 .subsection-title {
   margin: 16px 0 6px;
   font-size: 18px;

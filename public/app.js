@@ -15,6 +15,7 @@ const state = {
   selectedCampaignLeadIds: new Set(),
   segments: [],
   queue: [],
+  queueFilter: "waiting",
   suppressions: [],
   warmup: null,
   warmupPage: 1,
@@ -177,6 +178,25 @@ function queueScheduleLabel(value) {
   const diff = date.getTime() - Date.now();
   const label = diff <= 0 ? "сейчас" : `через ${fmtCountdown(value)}`;
   return `${label}<br><span class="muted">${fmtDate(value)}</span>`;
+}
+
+function queueTimeLabel(item) {
+  if (item.status === "sent") {
+    return item.sent_at
+      ? `Отправлено<br><span class="muted">${fmtDate(item.sent_at)}</span>`
+      : "Отправлено";
+  }
+  if (item.status === "cancelled") {
+    return item.updated_at
+      ? `Отменено<br><span class="muted">${fmtDate(item.updated_at)}</span>`
+      : "Отменено";
+  }
+  if (item.status === "failed") {
+    return item.updated_at
+      ? `Ошибка<br><span class="muted">${fmtDate(item.updated_at)}</span>`
+      : "Ошибка";
+  }
+  return queueScheduleLabel(item.scheduled_at);
 }
 
 const STATUS_LABELS = {
@@ -373,6 +393,30 @@ function queueNextAction(item) {
 
 function queueReasonText(item) {
   return queueStatusHint(item) || queueNextAction(item).text || "Письмо ждет обработки.";
+}
+
+function queueNeedsSending(item) {
+  return ["pending", "retrying", "running"].includes(item.status);
+}
+
+function queueFilterLabel(value) {
+  return {
+    waiting: "Ожидает отправки",
+    sent: "Отправлено",
+    all: "Все",
+  }[value] || "Ожидает отправки";
+}
+
+function queueSortRank(item) {
+  if (item.requires_approval && !item.approved_at) return 0;
+  if (item.status === "running") return 1;
+  if (item.status === "retrying") return 2;
+  if (item.status === "pending" && !item.last_error?.startsWith("Вне окна отправки")) return 3;
+  if (item.status === "pending") return 4;
+  if (item.status === "failed") return 5;
+  if (item.status === "sent") return 6;
+  if (item.status === "cancelled") return 7;
+  return 8;
 }
 
 function stepName(position) {
@@ -1659,9 +1703,15 @@ function renderAttachments() {
 
 async function loadQueue() {
   const [queue, progress] = await Promise.all([api("/api/sending"), api("/api/sending/progress")]);
-  state.queue = queue;
+  state.queue = [...queue].sort((a, b) => {
+    const rank = queueSortRank(a) - queueSortRank(b);
+    if (rank !== 0) return rank;
+    const left = new Date(a.scheduled_at || a.sent_at || a.updated_at || 0).getTime();
+    const right = new Date(b.scheduled_at || b.sent_at || b.updated_at || 0).getTime();
+    return left - right;
+  });
   const total = state.queue.length;
-  const next = state.queue.find((item) => ["pending", "retrying"].includes(item.status));
+  const next = state.queue.find((item) => ["pending", "retrying"].includes(item.status) && !(item.requires_approval && !item.approved_at));
   $("#sendProgress").innerHTML = `
     <div class="progress">
       <div class="bar"><span style="width:${progress.percent}%"></span></div>
@@ -1675,23 +1725,31 @@ async function loadQueue() {
   const approvalNeeded = state.queue.filter((item) => item.requires_approval && !item.approved_at).length;
   const failed = state.queue.filter((item) => item.status === "failed").length;
   const readyToSend = state.queue.filter((item) => ["pending", "retrying"].includes(item.status) && !(item.requires_approval && !item.approved_at)).length;
+  const sent = state.queue.filter((item) => item.status === "sent").length;
+  const visibleQueue = state.queue.filter((item) => {
+    if (state.queueFilter === "sent") return item.status === "sent";
+    if (state.queueFilter === "all") return true;
+    return queueNeedsSending(item);
+  });
   $("#queueSummary").innerHTML = `
     <span>В очереди: <strong>${total}</strong></span>
     <span>Готовы к обработке: <strong>${readyToSend}</strong></span>
     <span>Ждут окна: <strong>${waitingWindow}</strong></span>
     <span>Ждут подтверждения: <strong>${approvalNeeded}</strong></span>
+    <span>Отправлено: <strong>${sent}</strong></span>
     <span>Ошибки: <strong>${failed}</strong></span>
+    <span>Показано: <strong>${queueFilterLabel(state.queueFilter).toLowerCase()}</strong></span>
   `;
   $("#queueTable").innerHTML = `
     <thead><tr><th>Когда</th><th>Кому и что</th><th>Отправитель</th><th>Состояние</th><th>Действие</th></tr></thead>
     <tbody>
-      ${state.queue.length
-        ? state.queue
+      ${visibleQueue.length
+        ? visibleQueue
         .map((item) => {
           const action = queueNextAction(item);
           return `
             <tr class="queue-row">
-              <td class="queue-time">${queueScheduleLabel(item.scheduled_at)}</td>
+              <td class="queue-time">${queueTimeLabel(item)}</td>
               <td>
                 <div class="queue-recipient">
                   <strong>${esc(item.company || item.email)}</strong>
@@ -1717,9 +1775,12 @@ async function loadQueue() {
           `;
         })
         .join("")
-        : `<tr><td colspan="5" class="muted">Очередь пуста. Запусти черновики или кампанию: здесь появятся письма, время отправки и причина ожидания.</td></tr>`}
+        : `<tr><td colspan="5" class="muted">Очередь пуста по фильтру “${esc(queueFilterLabel(state.queueFilter))}”. Переключи фильтр или запусти черновики/кампанию.</td></tr>`}
     </tbody>
   `;
+  $$("[data-queue-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.queueFilter === state.queueFilter);
+  });
 }
 
 async function loadInbox() {
@@ -2202,6 +2263,10 @@ $("#leadFiltersReset").addEventListener("click", () => {
   $("#leadValidationFilter").value = "";
   loadLeads();
 });
+$$("[data-queue-filter]").forEach((button) => button.addEventListener("click", () => {
+  state.queueFilter = button.dataset.queueFilter || "waiting";
+  loadQueue();
+}));
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
 $("#stepCampaign").addEventListener("change", () => renderCampaignStepList());
 $("#stepEditResetBtn").addEventListener("click", () => resetStepForm());
