@@ -1042,6 +1042,7 @@ function renderOutreachDraftLaunchReview() {
     <span>Можно запускать: <strong>${review.ok ? "да" : "нет"}</strong></span>
     <span>Ошибок: <strong>${review.errors.length}</strong></span>
     <span>Предупреждений: <strong>${review.warnings.length}</strong></span>
+    ${(review.imapUncheckedMailboxes || []).length ? `<span>Ответы: <strong>IMAP проверится после отправки</strong></span>` : ""}
   `;
   $("#outreachDraftLaunchTable").innerHTML = `
     <thead><tr><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Почта отправителя</th><th>Когда</th><th>Что проверить</th></tr></thead>
@@ -1055,7 +1056,7 @@ function renderOutreachDraftLaunchReview() {
             <td>${esc(item.mailbox || "нет готовой почты")}</td>
             <td>${item.scheduled_at ? fmtDate(item.scheduled_at) : "при ближайшем запуске"}</td>
             <td>
-              ${item.errors.length ? `<strong>${esc(item.errors.join("; "))}</strong>` : "<span>Блокирующих ошибок нет</span>"}
+              ${item.errors.length ? `<strong>${esc(item.errors.join("; "))}</strong>` : "<span>Можно запускать</span>"}
               ${item.warnings.length ? `<br><span class="muted">${esc(item.warnings.join("; "))}</span>` : ""}
             </td>
           </tr>
@@ -2816,12 +2817,12 @@ async function startOutreachDrafts(draftIds, options = {}) {
     if (!state.outreachDraftLaunchReview || state.outreachDraftLaunchReview.signature !== signature) {
       const review = await reviewOutreachDrafts(draftIds);
       setActionResult({
-        status: "warn",
+        status: review.ok ? "success" : "warn",
         title: "Проверка перед запуском",
         message: review.ok
-          ? "Список писем подготовлен ниже. Проверь его и нажми “Запустить выбранные” еще раз."
+          ? `Список писем подготовлен ниже. Можно запускать: ${review.stats.ready}. Нажми “Запустить выбранные” еще раз. ${review.imapUncheckedMailboxes?.length ? "Ответы IMAP проверятся автоматически после отправки." : ""}`
           : `Запуск остановлен: ошибок ${review.errors.length}, предупреждений ${review.warnings.length}. Исправь ошибки в таблице проверки.`,
-        details: review,
+        details: review.ok ? undefined : review,
       });
       return;
     }
@@ -2886,9 +2887,9 @@ $("#preflightSelectedDraftsBtn").addEventListener("click", (event) => runAction(
     status: result.ok ? "success" : "warn",
     title: "Проверка выбранных черновиков",
     message: result.ok
-      ? `Можно запускать: выбрано ${result.stats.selected}, предупреждений ${result.warnings.length}.`
+      ? `Можно запускать: выбрано ${result.stats.selected}. ${result.imapUncheckedMailboxes?.length ? "Ответы IMAP проверятся автоматически после отправки." : "Критичных замечаний нет."}`
       : `Нужно исправить: ошибок ${result.errors.length}, предупреждений ${result.warnings.length}.`,
-    details: result,
+    details: result.ok ? undefined : result,
   });
 }));
 

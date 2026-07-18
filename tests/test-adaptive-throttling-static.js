@@ -25,6 +25,7 @@ for (const expected of [
   "sent_msg.status = 'sent'",
   "smtp_verified_at = COALESCE(smtp_verified_at, now())",
   "imap_verified_at = COALESCE(imap_verified_at, now())",
+  "await enqueueInboxSync(item.mailbox_id, 45)",
   "health_status = CASE WHEN error_count + 1 >= 3 THEN 'throttled' ELSE 'error' END",
   "paused_until = CASE",
   "interval '120 minutes'",

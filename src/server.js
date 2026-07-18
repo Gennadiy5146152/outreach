@@ -1494,6 +1494,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
   const foundIds = new Set(rows.map((row) => row.id));
   const errors = [];
   const warnings = [];
+  const imapUncheckedMailboxes = new Set();
   const fallbackMailboxRows = readyMailboxes.rows;
   const fallbackMailboxes = fallbackMailboxRows.length;
   const itemIssues = new Map();
@@ -1528,7 +1529,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
       const imapReady = draft.imap_verified_at || draft.last_inbox_sync_at;
       if (!draft.mailbox_active) rowErrors.push("выбранный mailbox выключен");
       if (!smtpReady) rowErrors.push("у выбранного mailbox не проверен SMTP");
-      if (!imapReady) rowWarnings.push("у выбранного mailbox не проверен IMAP для ответов, ответы могут не подтянуться автоматически");
+      if (!imapReady && draft.mailbox_email) imapUncheckedMailboxes.add(draft.mailbox_email);
     } else if (!fallbackMailboxes) {
       rowErrors.push("mailbox не выбран, и нет активного mailbox с проверенным SMTP или успешной историей отправки");
     }
@@ -1548,6 +1549,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     ok: errors.length === 0,
     errors,
     warnings,
+    imapUncheckedMailboxes: [...imapUncheckedMailboxes],
     items: rows.map((row) => {
       const issues = itemIssues.get(row.id) || { mailbox: row.mailbox_email || "", errors: [], warnings: [] };
       return {

@@ -544,6 +544,7 @@ async function processSend(item) {
     `,
     [item.mailbox_id],
   );
+  await enqueueInboxSync(item.mailbox_id, 45);
 
   if (item.outreach_draft_id) {
     await query(
