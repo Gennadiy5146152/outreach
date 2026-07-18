@@ -404,6 +404,9 @@ const EVENT_LABELS = {
   email_opened: "Письмо открыто",
   mailbox_error: "Ошибка почтового ящика",
   queue_recovered: "Очередь восстановлена",
+  inbox_sync_completed: "Входящие проверены",
+  inbound_relinked: "Входящее письмо привязано к цепочке",
+  inbound_unlinked: "Входящее письмо не привязано",
   reply_classified: "Ответ классифицирован",
   email_replied: "Получен ответ",
   email_bounced: "Получена недоставка",
@@ -817,6 +820,12 @@ function eventSummary(event) {
   if (payload.failedJobs !== undefined) parts.push(`job_queue ошибок: ${payload.failedJobs}`);
   if (payload.recoveredSends !== undefined) parts.push(`отправок повторно: ${payload.recoveredSends}`);
   if (payload.failedSends !== undefined) parts.push(`отправок ошибок: ${payload.failedSends}`);
+  if (payload.scanned !== undefined) parts.push(`проверено писем: ${payload.scanned}`);
+  if (payload.inserted !== undefined) parts.push(`новых входящих: ${payload.inserted}`);
+  if (payload.linked !== undefined) parts.push(`привязано к цепочкам: ${payload.linked}`);
+  if (payload.relinked !== undefined) parts.push(`привязано повторно: ${payload.relinked}`);
+  if (payload.unlinked !== undefined) parts.push(`без связи: ${payload.unlinked}`);
+  if (payload.duplicates !== undefined) parts.push(`уже были в базе: ${payload.duplicates}`);
   if (payload.errorCount !== undefined) parts.push(`ошибок подряд: ${payload.errorCount}`);
   if (payload.throttleMinutes !== undefined && payload.throttleMinutes > 0) parts.push(`пауза: ${payload.throttleMinutes} мин`);
   if (payload.pausedUntil) parts.push(`замедлен до: ${fmtDate(payload.pausedUntil)}`);

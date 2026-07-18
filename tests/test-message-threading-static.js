@@ -28,11 +28,16 @@ for (const expected of [
   "function normalizeMessageId",
   "function messageIdCandidates",
   "function normalizeReplySubject",
-  "function inboundAlreadySaved",
+  "function findExistingInbound",
+  "function relinkInboundMessage",
+  "await applyInboundEffects(relinked, classification)",
   "forceRecent",
   "uidNext - 200",
   "normalizeReplySubject(message.subject) === subject",
   "inbound_unlinked",
+  "inbound_relinked",
+  "inbox_sync_completed",
+  "direction = 'outbound'",
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should preserve message threading: ${expected}`);

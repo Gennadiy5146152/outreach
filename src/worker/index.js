@@ -867,10 +867,19 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       ? Math.max(1, uidNext - 200)
       : Number(state?.last_uid || 0) + 1;
     let maxUid = Number(state?.last_uid || 0);
+    const stats = {
+      scanned: 0,
+      inserted: 0,
+      linked: 0,
+      unlinked: 0,
+      relinked: 0,
+      duplicates: 0,
+    };
 
     for await (const msg of client.fetch(`${fromUid}:*`, { uid: true, envelope: true, source: true, headers: true })) {
       if (!msg.uid || (!forceRecent && msg.uid <= maxUid)) continue;
       maxUid = Math.max(maxUid, msg.uid);
+      stats.scanned += 1;
       const parsed = await simpleParser(msg.source);
       const fromEmail = parsed.from?.value?.[0]?.address?.toLowerCase() || "";
       const subject = parsed.subject || "";
@@ -879,8 +888,18 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       const warmupPeer = await findWarmupPeer(fromEmail);
       const isWarmup = Boolean(warmupPeer) && (headers["x-outreach-warmup"] === "true" || /рабочая заметка|warmup|проверка связи|проверка маршрута|тест входящей/i.test(subject));
       const classification = classifyInbound({ subject, body: bodyText, headers });
-      if (await inboundAlreadySaved(mailbox.id, parsed.messageId)) continue;
+      const existingInbound = await findExistingInbound(mailbox.id, parsed.messageId);
       const linked = await findLinkedOutbound(parsed, fromEmail);
+      if (existingInbound) {
+        stats.duplicates += 1;
+        if (!isWarmup && linked && !existingInbound.lead_id) {
+          const relinked = await relinkInboundMessage(existingInbound, linked, classification, parsed);
+          await applyInboundEffects(relinked, classification);
+          stats.relinked += 1;
+          stats.linked += 1;
+        }
+        continue;
+      }
 
       const inserted = await query(
         `
@@ -903,8 +922,8 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           bodyText,
           parsed.html || "",
           parsed.messageId || "",
-          parsed.inReplyTo || "",
-          (parsed.references || []).join(" "),
+          headerValues(parsed.inReplyTo).join(" "),
+          headerValues(parsed.references).join(" "),
           isWarmup || !linked ? "new_thread" : "reply_to_previous",
           isWarmup ? null : linked?.id || null,
           headers,
@@ -912,12 +931,15 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           classification,
         ],
       );
+      stats.inserted += 1;
 
       if (isWarmup) {
         await handleWarmupInbound(mailbox, warmupPeer, inserted.rows[0], subject);
       } else {
         await applyInboundEffects(inserted.rows[0], classification);
+        if (linked) stats.linked += 1;
         if (!linked) {
+          stats.unlinked += 1;
           await logEvent("inbound_unlinked", {
             mailboxId: mailbox.id,
             messageId: inserted.rows[0].id,
@@ -946,6 +968,16 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       `,
       [mailbox.id],
     );
+    await logEvent("inbox_sync_completed", {
+      mailboxId: mailbox.id,
+      payload: {
+        mailbox: mailbox.email,
+        forceRecent,
+        fromUid,
+        lastUid: Math.max(maxUid, lock.uidNext ? Number(lock.uidNext) - 1 : maxUid),
+        ...stats,
+      },
+    });
   } finally {
     await client.logout().catch(() => {});
   }
@@ -1086,18 +1118,18 @@ function messageIdCandidates(...values) {
 
 function normalizeReplySubject(value) {
   return String(value || "")
-    .replace(/^\s*(re|fw|fwd)\s*:\s*/gi, "")
+    .replace(/^\s*(re|fw|fwd|aw|ответ|отв)\s*:\s*/gi, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
-async function inboundAlreadySaved(mailboxId, messageId) {
+async function findExistingInbound(mailboxId, messageId) {
   const candidates = messageIdCandidates(messageId);
-  if (!candidates.variants.length) return false;
+  if (!candidates.variants.length) return null;
   const existing = await query(
     `
-      SELECT id
+      SELECT *
       FROM messages
       WHERE mailbox_id = $1
         AND direction = 'inbound'
@@ -1109,7 +1141,51 @@ async function inboundAlreadySaved(mailboxId, messageId) {
     `,
     [mailboxId, candidates.variants, candidates.normalized],
   );
-  return existing.rowCount > 0;
+  return existing.rows[0] || null;
+}
+
+async function relinkInboundMessage(message, linked, classification, parsed) {
+  const updated = await query(
+    `
+      UPDATE messages
+      SET lead_id = COALESCE(lead_id, $2),
+          campaign_id = COALESCE(campaign_id, $3),
+          outreach_draft_id = COALESCE(outreach_draft_id, $4),
+          outreach_step_id = COALESCE(outreach_step_id, $5),
+          threading_mode = 'reply_to_previous',
+          parent_message_id = COALESCE(parent_message_id, $6),
+          in_reply_to = COALESCE(NULLIF(in_reply_to, ''), $7),
+          references_header = COALESCE(NULLIF(references_header, ''), $8),
+          reply_classification = COALESCE(NULLIF(reply_classification, ''), $9),
+          reply_classification_source = COALESCE(reply_classification_source, 'auto')
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      message.id,
+      linked.lead_id,
+      linked.campaign_id,
+      linked.outreach_draft_id,
+      linked.outreach_step_id,
+      linked.id,
+      headerValues(parsed.inReplyTo).join(" "),
+      headerValues(parsed.references).join(" "),
+      classification,
+    ],
+  );
+  await logEvent("inbound_relinked", {
+    leadId: linked.lead_id,
+    campaignId: linked.campaign_id,
+    mailboxId: message.mailbox_id,
+    messageId: message.id,
+    payload: {
+      parentMessageId: linked.id,
+      outreachDraftId: linked.outreach_draft_id,
+      outreachStepId: linked.outreach_step_id,
+      classification,
+    },
+  });
+  return updated.rows[0];
 }
 
 async function findLinkedOutbound(parsed, fromEmail) {
@@ -1119,7 +1195,8 @@ async function findLinkedOutbound(parsed, fromEmail) {
       `
         SELECT *
         FROM messages
-        WHERE type <> 'warmup'
+        WHERE direction = 'outbound'
+          AND type <> 'warmup'
           AND (
             message_id_header = ANY($1::text[])
             OR lower(replace(replace(message_id_header, '<', ''), '>', '')) = ANY($2::text[])
