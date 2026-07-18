@@ -7,7 +7,7 @@ import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
-import { htmlToText, renderTemplate } from "../services/template.js";
+import { cleanReplyText, htmlToText, renderTemplate } from "../services/template.js";
 import { persistValidation, validateEmail } from "../services/validation.js";
 
 function sleep(ms) {
@@ -900,7 +900,7 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       const parsed = await simpleParser(msg.source);
       const fromEmail = parsed.from?.value?.[0]?.address?.toLowerCase() || "";
       const subject = parsed.subject || "";
-      const bodyText = parsed.text || "";
+      const bodyText = cleanReplyText(parsed.text || "");
       const headers = Object.fromEntries([...parsed.headers.entries()].map(([key, value]) => [key, String(value)]));
       headers["x-outreach-parsed-from"] = fromEmail;
       headers["x-outreach-imap-uid"] = String(msg.uid);

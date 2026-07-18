@@ -3,6 +3,9 @@ import fs from "node:fs";
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
 const css = fs.readFileSync("public/styles.css", "utf8");
+const server = fs.readFileSync("src/server.js", "utf8");
+const worker = fs.readFileSync("src/worker/index.js", "utf8");
+const template = fs.readFileSync("src/services/template.js", "utf8");
 
 for (const expected of [
   "Здесь видны новые ответы",
@@ -59,6 +62,34 @@ for (const expected of [
 ]) {
   if (!css.includes(expected)) {
     throw new Error(`inbox layout CSS should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "export function cleanReplyText",
+  "original message",
+  "От|From",
+]) {
+  if (!template.includes(expected)) {
+    throw new Error(`reply cleaner should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "cleanReplyText(parsed.text || \"\")",
+]) {
+  if (!worker.includes(expected)) {
+    throw new Error(`worker should save cleaned inbound reply text: ${expected}`);
+  }
+}
+
+for (const expected of [
+  "function normalizeInboundReplyText",
+  "result.rows.map(normalizeInboundReplyText)",
+  "chain_messages: (row.chain_messages || []).map(normalizeInboundReplyText)",
+]) {
+  if (!server.includes(expected)) {
+    throw new Error(`server should expose cleaned inbound reply text: ${expected}`);
   }
 }
 

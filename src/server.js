@@ -14,6 +14,7 @@ import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { cancelOutreachForScope } from "./services/outreach-stop.js";
+import { cleanReplyText } from "./services/template.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
@@ -62,6 +63,11 @@ const STOPPING_REPLY_CLASSIFICATIONS = new Set([
   "not_target",
   "bounce",
 ]);
+
+function normalizeInboundReplyText(row) {
+  if (!row || row.direction !== "inbound" || !row.body_text) return row;
+  return { ...row, body_text: cleanReplyText(row.body_text) };
+}
 
 function timingSafeEqualText(left, right) {
   const leftBuffer = Buffer.from(String(left || ""));
@@ -3429,7 +3435,10 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
     ORDER BY q.scheduled_at ASC
     LIMIT 300
   `);
-  res.json(result.rows);
+  res.json(result.rows.map((row) => ({
+    ...row,
+    chain_messages: (row.chain_messages || []).map(normalizeInboundReplyText),
+  })));
 }));
 
 app.get("/api/sending/progress", asyncHandler(async (_req, res) => {
@@ -3465,7 +3474,7 @@ app.get("/api/inbox", asyncHandler(async (_req, res) => {
     ORDER BY msg.received_at DESC NULLS LAST, msg.created_at DESC
     LIMIT 200
   `);
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeInboundReplyText));
 }));
 
 app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {

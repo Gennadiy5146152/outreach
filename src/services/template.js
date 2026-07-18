@@ -10,6 +10,34 @@ export function htmlToText(html = "") {
     .trim();
 }
 
+export function cleanReplyText(text = "") {
+  const lines = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n");
+  const result = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+    if (/^[-_]{2,}\s*(original message|forwarded message|исходное сообщение|пересылаемое сообщение)\s*[-_]{2,}$/i.test(trimmed)) break;
+    if (/^On .+wrote:$/i.test(trimmed)) break;
+    if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4},?\s+.+\s+(wrote|пишет):$/i.test(trimmed)) break;
+    if (/^(От|From):\s.+/i.test(trimmed)) break;
+    if (/^(Кому|To):\s.+/i.test(trimmed) && result.some((item) => item.trim())) break;
+    if (/^(Тема|Subject):\s.+/i.test(trimmed) && result.some((item) => item.trim())) break;
+    if (/^>{1,}/.test(trimmed)) break;
+    if (/^--\s*$/.test(trimmed)) break;
+    result.push(line);
+  }
+
+  const cleaned = result
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return cleaned || String(text || "").trim();
+}
+
 export function escapeHtml(value = "") {
   return String(value)
     .replaceAll("&", "&amp;")
