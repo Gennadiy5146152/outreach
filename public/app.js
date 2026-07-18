@@ -263,6 +263,18 @@ function renderInboxSyncStatus() {
     node.innerHTML = `<div class="inbox-sync-status muted">Статус IMAP еще не загружен.</div>`;
     return;
   }
+  if (syncStatus.unavailable) {
+    node.innerHTML = `
+      <div class="inbox-sync-status warn">
+        <div class="inbox-sync-status-head">
+          <strong>Очередь IMAP</strong>
+          <span>статус backend недоступен</span>
+        </div>
+        <p>${esc(syncStatus.message || "Статус IMAP временно недоступен.")}</p>
+      </div>
+    `;
+    return;
+  }
   const jobs = Array.isArray(syncStatus.jobs) ? syncStatus.jobs.slice(0, 6) : [];
   node.innerHTML = `
     <div class="inbox-sync-status">
@@ -2274,7 +2286,17 @@ function inboxVisibleItems() {
 }
 
 async function loadInboxSyncStatus() {
-  state.inboxSyncStatus = await api("/api/inbox/sync-status");
+  try {
+    state.inboxSyncStatus = await api("/api/inbox/sync-status");
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    state.inboxSyncStatus = {
+      unavailable: true,
+      summary: [],
+      jobs: [],
+      message: "Backend еще не отдает статус IMAP. Обнови код на сервере и пересобери web-контейнер.",
+    };
+  }
   renderInboxSyncStatus();
 }
 

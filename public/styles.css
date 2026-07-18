@@ -2001,6 +2001,11 @@ th {
   min-width: 0;
 }
 
+.inbox-sync-status.warn {
+  border-color: #f4c56b;
+  background: #fff9e8;
+}
+
 .inbox-sync-status-head {
   display: flex;
   align-items: baseline;
