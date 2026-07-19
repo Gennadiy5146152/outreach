@@ -203,3 +203,82 @@ export async function analyzeInboundReplyWithAi({
     };
   }
 }
+
+export function buildThreadMatchPrompt({
+  inboundSubject = "",
+  inboundBody = "",
+  fromEmail = "",
+  candidates = [],
+} = {}) {
+  const compactCandidates = candidates.slice(0, 5).map((candidate, index) => ({
+    index: index + 1,
+    id: candidate.id,
+    subject: compactText(candidate.subject, 300),
+    body: compactText(candidate.body_text, 1200),
+    sent_at: candidate.sent_at || candidate.created_at || "",
+    campaign_id: candidate.campaign_id || "",
+    outreach_draft_id: candidate.outreach_draft_id || "",
+  }));
+
+  return [
+    "Ты помогаешь привязать входящий ответ к одной из исходящих B2B-аутрич цепочек.",
+    "Техническая привязка по Message-ID не найдена или слабая, поэтому нужно оценить смысловую близость.",
+    "Не угадывай. Если подходящей цепочки нет или есть несколько похожих вариантов, верни suggested_message_id=null.",
+    "",
+    "Верни только JSON одной строкой, без Markdown и пояснений вокруг.",
+    "",
+    "JSON формат:",
+    '{"suggested_message_id":"uuid или null","confidence":0.86,"reason":"короткая причина по-русски","needs_human_review":false}',
+    "",
+    `Email отправителя: ${compactText(fromEmail, 200)}`,
+    `Тема входящего: ${compactText(inboundSubject, 500)}`,
+    "Текст входящего ответа:",
+    compactText(inboundBody, 4000),
+    "",
+    "Возможные исходящие письма:",
+    JSON.stringify(compactCandidates),
+  ].join("\n");
+}
+
+export async function suggestThreadMatchWithAi({
+  inboundSubject = "",
+  inboundBody = "",
+  fromEmail = "",
+  candidates = [],
+} = {}) {
+  if (!isYandexGptConfigured() || !candidates.length) return null;
+
+  try {
+    const result = await callYandexGpt({
+      prompt: buildThreadMatchPrompt({ inboundSubject, inboundBody, fromEmail, candidates }),
+      maxTokens: 180,
+      temperature: 0.05,
+    });
+    const parsed = safeParseJsonFromAi(result.text);
+    const suggestedMessageId = String(parsed?.suggested_message_id || "").trim();
+    const confidence = normalizeConfidence(parsed?.confidence);
+    const reason = compactText(parsed?.reason, 1000);
+    const needsHumanReview = Boolean(parsed?.needs_human_review);
+    const matchedCandidate = candidates.find((candidate) => candidate.id === suggestedMessageId) || null;
+
+    return {
+      suggestedMessageId: matchedCandidate ? matchedCandidate.id : null,
+      confidence,
+      reason,
+      needsHumanReview: needsHumanReview || !matchedCandidate || confidence == null || confidence < 0.85,
+      model: result.model,
+      usage: result.usage,
+      error: "",
+    };
+  } catch (error) {
+    return {
+      suggestedMessageId: null,
+      confidence: null,
+      reason: "",
+      needsHumanReview: true,
+      model: "",
+      usage: null,
+      error: compactText(error?.message || error, 1000),
+    };
+  }
+}

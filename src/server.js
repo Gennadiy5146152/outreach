@@ -81,24 +81,35 @@ function replyLinkInfo(row) {
   const headers = row.raw_headers || {};
   const method = headers["x-outreach-link-method"] || headers["X-Outreach-Link-Method"] || (row.lead_id ? "legacy_linked" : "not_linked");
   const confidence = headers["x-outreach-link-confidence"] || headers["X-Outreach-Link-Confidence"] || (method === "message_id" ? "exact" : row.lead_id ? "unknown" : "none");
+  const aiThreadConfidence = headers["x-outreach-ai-thread-confidence"] || "";
+  const aiThreadReason = headers["x-outreach-ai-thread-reason"] || "";
+  const aiThreadSuggestedMessageId = headers["x-outreach-ai-thread-suggested-message-id"] || "";
   const labels = {
     message_id: "точно: ответ в ветке письма",
     email_subject: "примерно: email и тема совпали",
     single_email_thread: "примерно: у email была одна цепочка",
+    ai_semantic: "ИИ: вероятно та же цепочка",
     legacy_linked: "привязано без отметки метода",
     not_linked: "не привязано к рассылке",
   };
   const warnings = {
     email_subject: "Если у этого контакта несколько рассылок с похожими темами, проверь вручную.",
     single_email_thread: "Слабая привязка: письмо не содержит технической ссылки на исходящее.",
+    ai_semantic: "Привязка сделана ИИ по смыслу. Проверь, если у контакта несколько похожих рассылок.",
     legacy_linked: "Это старое входящее, метод привязки раньше не сохранялся.",
     not_linked: "Ответ не попал в цепочку, потому что точная ветка письма не найдена.",
   };
+  const aiWarning = method === "not_linked" && aiThreadSuggestedMessageId
+    ? `ИИ нашел возможную цепочку, но нужна ручная проверка${aiThreadConfidence ? `, уверенность ${Math.round(Number(aiThreadConfidence) * 100)}%` : ""}${aiThreadReason ? `: ${aiThreadReason}` : ""}.`
+    : "";
   return {
     reply_link_method: method,
     reply_link_confidence: confidence,
     reply_link_label: labels[method] || "метод привязки неизвестен",
-    reply_link_warning: warnings[method] || "",
+    reply_link_warning: aiWarning || warnings[method] || "",
+    ai_thread_confidence: aiThreadConfidence,
+    ai_thread_reason: aiThreadReason,
+    ai_thread_suggested_message_id: aiThreadSuggestedMessageId,
   };
 }
 

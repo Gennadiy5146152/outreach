@@ -555,6 +555,7 @@ const EVENT_LABELS = {
   inbound_relinked: "Входящее письмо привязано к цепочке",
   inbound_unlinked: "Входящее письмо не привязано",
   inbound_ai_classified: "Ответ разобран ИИ",
+  inbound_ai_thread_match: "ИИ проверил привязку ответа",
   reply_classified: "Ответ классифицирован",
   email_replied: "Получен ответ",
   email_bounced: "Получена недоставка",

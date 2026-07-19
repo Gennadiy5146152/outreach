@@ -5,7 +5,13 @@ import { fileURLToPath } from "node:url";
 
 process.env.YANDEX_GPT_MOCK = "1";
 
-const { analyzeInboundReplyWithAi, buildReplyClassificationPrompt, safeParseJsonFromAi } = await import("../src/services/ai-reply.js");
+const {
+  analyzeInboundReplyWithAi,
+  buildReplyClassificationPrompt,
+  buildThreadMatchPrompt,
+  safeParseJsonFromAi,
+  suggestThreadMatchWithAi,
+} = await import("../src/services/ai-reply.js");
 
 const prompt = buildReplyClassificationPrompt({
   subject: "Интересно обсудить",
@@ -35,6 +41,37 @@ assert.equal(result.ai.replyReason, "wants_details", "AI should return reply rea
 assert.equal(result.ai.nextBestAction, "reply_manually", "AI should return next best action");
 assert.ok(result.ai.summary.includes("подробности"), "AI should return short summary");
 
+const threadPrompt = buildThreadMatchPrompt({
+  inboundSubject: "Re: Оплата",
+  inboundBody: "Да, по оплате вернусь завтра.",
+  fromEmail: "client@example.com",
+  candidates: [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      subject: "Оплата по проекту",
+      body_text: "Когда сможете закрыть оплату?",
+      sent_at: "2026-07-19T09:00:00.000Z",
+    },
+  ],
+});
+
+assert.ok(threadPrompt.includes("suggested_message_id"), "thread prompt should request suggested message id");
+const threadSuggestion = await suggestThreadMatchWithAi({
+  inboundSubject: "Re: Оплата",
+  inboundBody: "Да, по оплате вернусь завтра.",
+  fromEmail: "client@example.com",
+  candidates: [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      subject: "Оплата по проекту",
+      body_text: "Когда сможете закрыть оплату?",
+      sent_at: "2026-07-19T09:00:00.000Z",
+    },
+  ],
+});
+assert.equal(threadSuggestion.suggestedMessageId, "11111111-1111-4111-8111-111111111111", "AI should suggest candidate thread");
+assert.equal(threadSuggestion.needsHumanReview, false, "high-confidence mock suggestion should not require review");
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const worker = fs.readFileSync(path.join(root, "src/worker/index.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "db/migrations/006_ai_reply_analysis.sql"), "utf8");
@@ -43,7 +80,11 @@ const publicApp = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "src/server.js"), "utf8");
 
 assert.ok(worker.includes("analyzeInboundReplyWithAi"), "worker should call AI reply analysis");
+assert.ok(worker.includes("suggestThreadMatchWithAi"), "worker should call AI thread matcher");
+assert.ok(worker.includes("findLinkedOutboundWithAi"), "worker should route weak thread matching through AI helper");
+assert.ok(worker.includes("ai_semantic"), "worker should mark AI semantic links");
 assert.ok(worker.includes("inbound_ai_classified"), "worker should log AI classification event");
+assert.ok(worker.includes("inbound_ai_thread_match"), "worker should log AI thread match event");
 assert.ok(worker.includes("ai_classification, ai_confidence, ai_reason"), "worker should insert AI columns");
 assert.ok(worker.includes("ai_funnel_stage, ai_lead_temperature, ai_reply_reason"), "worker should insert AI funnel columns");
 assert.ok(worker.includes("applyAiConversationInsights"), "worker should copy AI insights to conversations");
@@ -52,8 +93,11 @@ assert.ok(migration.includes("ADD COLUMN IF NOT EXISTS ai_confidence numeric"), 
 assert.ok(funnelMigration.includes("ADD COLUMN IF NOT EXISTS ai_funnel_stage text"), "funnel migration should add message funnel stage");
 assert.ok(funnelMigration.includes("ADD COLUMN IF NOT EXISTS lead_temperature text"), "funnel migration should add conversation lead temperature");
 assert.ok(publicApp.includes("Ответ разобран ИИ"), "events UI should have Russian AI label");
+assert.ok(publicApp.includes("ИИ проверил привязку ответа"), "events UI should have Russian AI thread label");
 assert.ok(publicApp.includes("function aiReplyInsightText"), "inbox UI should show AI insight");
 assert.ok(publicApp.includes("AI_FUNNEL_LABELS"), "public UI should translate AI funnel labels");
 assert.ok(server.includes("ai_next_best_action"), "server exports should include AI next best action");
+assert.ok(server.includes("ИИ: вероятно та же цепочка"), "server should expose AI semantic link label");
+assert.ok(server.includes("ai_thread_suggested_message_id"), "server should expose AI thread suggestion fields");
 
 console.log("OK: AI reply classification stage");

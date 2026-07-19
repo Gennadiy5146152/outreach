@@ -81,6 +81,19 @@ export async function callYandexGpt({
   temperature = 0.1,
 } = {}) {
   if (env.yandexGptMock) {
+    if (String(prompt || "").includes("suggested_message_id")) {
+      const firstCandidateId = String(prompt || "").match(/"id":"([^"]+)"/)?.[1] || null;
+      return {
+        text: JSON.stringify({
+          suggested_message_id: firstCandidateId,
+          confidence: 0.91,
+          reason: "mock: ответ похож на первое исходящее письмо",
+          needs_human_review: false,
+        }),
+        model: "mock",
+        usage: null,
+      };
+    }
     return {
       text: JSON.stringify({
         classification: "positive_reply",

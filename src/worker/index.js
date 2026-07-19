@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { simpleParser } from "mailparser";
 import { env } from "../config/env.js";
 import { pool, query, withClient } from "../db/pool.js";
-import { analyzeInboundReplyWithAi } from "../services/ai-reply.js";
+import { analyzeInboundReplyWithAi, suggestThreadMatchWithAi } from "../services/ai-reply.js";
 import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
@@ -918,9 +918,18 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       const classification = aiAnalysis.classification;
       const classificationSource = aiAnalysis.source;
       const existingInbound = await findExistingInbound(mailbox.id, parsed.messageId);
-      const linked = await findLinkedOutbound(parsed, fromEmail);
+      const { linked, aiThread } = isWarmup
+        ? { linked: null, aiThread: null }
+        : await findLinkedOutboundWithAi(parsed, fromEmail, bodyText);
       headers["x-outreach-link-method"] = linked?.match_method || "not_linked";
       headers["x-outreach-link-confidence"] = linked?.match_confidence || "none";
+      if (aiThread) {
+        headers["x-outreach-ai-thread-suggested-message-id"] = aiThread.suggestedMessageId || "";
+        headers["x-outreach-ai-thread-confidence"] = aiThread.confidence == null ? "" : String(aiThread.confidence);
+        headers["x-outreach-ai-thread-reason"] = aiThread.reason || "";
+        headers["x-outreach-ai-thread-review"] = aiThread.needsHumanReview ? "true" : "false";
+        headers["x-outreach-ai-thread-error"] = aiThread.error || "";
+      }
       if (existingInbound) {
         stats.duplicates += 1;
         if (!isWarmup && linked && !existingInbound.lead_id) {
@@ -1008,6 +1017,22 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
               nextBestAction: aiAnalysis.ai.nextBestAction,
               model: aiAnalysis.ai.model,
               error: aiAnalysis.ai.error,
+            },
+          });
+        }
+        if (aiThread) {
+          await logEvent("inbound_ai_thread_match", {
+            leadId: inserted.rows[0].lead_id,
+            campaignId: inserted.rows[0].campaign_id,
+            mailboxId: mailbox.id,
+            messageId: inserted.rows[0].id,
+            payload: {
+              suggestedMessageId: aiThread.suggestedMessageId,
+              confidence: aiThread.confidence,
+              reason: aiThread.reason,
+              needsHumanReview: aiThread.needsHumanReview,
+              linked: Boolean(linked),
+              error: aiThread.error,
             },
           });
         }
@@ -1242,7 +1267,7 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
       classification,
       {
         "x-outreach-link-method": linkMethod,
-        "x-outreach-link-confidence": linkMethod === "message_id" ? "exact" : "weak",
+        "x-outreach-link-confidence": linked.match_confidence || (linkMethod === "message_id" ? "exact" : "weak"),
       },
     ],
   );
@@ -1304,6 +1329,25 @@ async function applyAiConversationInsights(message) {
   );
 }
 
+async function outboundCandidatesForEmail(fromEmail, limit = 20) {
+  if (!fromEmail) return [];
+  return (
+    await query(
+      `
+        SELECT msg.*
+        FROM messages msg
+        JOIN leads l ON l.id = msg.lead_id
+        WHERE lower(l.email) = $1
+          AND msg.direction = 'outbound'
+          AND msg.type <> 'warmup'
+        ORDER BY msg.sent_at DESC NULLS LAST, msg.created_at DESC
+        LIMIT $2
+      `,
+      [fromEmail, limit],
+    )
+  ).rows;
+}
+
 async function findLinkedOutbound(parsed, fromEmail) {
   const ids = messageIdCandidates(parsed.inReplyTo ?? parsed.in_reply_to, parsed.references ?? parsed.references_header);
   if (ids.variants.length) {
@@ -1325,26 +1369,44 @@ async function findLinkedOutbound(parsed, fromEmail) {
     if (byHeader.rowCount) return { ...byHeader.rows[0], match_method: "message_id", match_confidence: "exact" };
   }
   if (fromEmail) {
-    const candidates = await query(
-      `
-        SELECT msg.*
-        FROM messages msg
-        JOIN leads l ON l.id = msg.lead_id
-        WHERE lower(l.email) = $1
-          AND msg.direction = 'outbound'
-          AND msg.type <> 'warmup'
-        ORDER BY msg.sent_at DESC NULLS LAST, msg.created_at DESC
-        LIMIT 20
-      `,
-      [fromEmail],
-    );
+    const candidates = await outboundCandidatesForEmail(fromEmail, 20);
     const subject = normalizeReplySubject(parsed.subject);
-    const subjectMatches = candidates.rows.filter((message) => normalizeReplySubject(message.subject) === subject);
+    const subjectMatches = candidates.filter((message) => normalizeReplySubject(message.subject) === subject);
     if (subjectMatches.length === 1) return { ...subjectMatches[0], match_method: "email_subject", match_confidence: "weak" };
     if (subjectMatches.length > 1) return null;
-    if (candidates.rowCount === 1) return { ...candidates.rows[0], match_method: "single_email_thread", match_confidence: "weak" };
+    if (candidates.length === 1) return { ...candidates[0], match_method: "single_email_thread", match_confidence: "weak" };
   }
   return null;
+}
+
+async function findLinkedOutboundWithAi(parsed, fromEmail, inboundBody) {
+  const linked = await findLinkedOutbound(parsed, fromEmail);
+  if (linked?.match_confidence === "exact") return { linked, aiThread: null };
+  if (linked) return { linked, aiThread: null };
+  const candidates = await outboundCandidatesForEmail(fromEmail, 5);
+  if (!candidates.length) return { linked: null, aiThread: null };
+
+  const aiThread = await suggestThreadMatchWithAi({
+    inboundSubject: parsed.subject || "",
+    inboundBody,
+    fromEmail,
+    candidates,
+  });
+  const suggested = aiThread?.suggestedMessageId
+    ? candidates.find((candidate) => candidate.id === aiThread.suggestedMessageId)
+    : null;
+  const confidence = Number(aiThread?.confidence);
+  if (suggested && Number.isFinite(confidence) && confidence >= 0.85 && !aiThread.needsHumanReview) {
+    return {
+      linked: {
+        ...suggested,
+        match_method: "ai_semantic",
+        match_confidence: "ai_high",
+      },
+      aiThread,
+    };
+  }
+  return { linked: null, aiThread };
 }
 
 function rawHeaderValue(rawHeaders, key) {
@@ -1368,14 +1430,16 @@ function senderEmailFromMessage(message) {
 }
 
 async function findLinkedOutboundForInboundMessage(message) {
-  return findLinkedOutbound(
+  const result = await findLinkedOutboundWithAi(
     {
       in_reply_to: message.in_reply_to,
       references_header: message.references_header,
       subject: message.subject,
     },
     senderEmailFromMessage(message),
+    message.body_text || "",
   );
+  return result.linked;
 }
 
 async function repairUnlinkedInboundMessages() {
