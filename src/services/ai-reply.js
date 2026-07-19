@@ -116,7 +116,7 @@ export function buildReplyClassificationPrompt({
     "- unknown: недостаточно данных или невозможно понять.",
     "",
     "JSON формат:",
-    '{"classification":"positive_reply","confidence":0.91,"reason":"короткая причина по-русски","funnel_stage":"details_requested","lead_temperature":"warm","reply_reason":"wants_details","next_best_action":"reply_manually","summary":"краткое резюме"}',
+    '{"classification":"positive_reply","confidence":0.91,"reason":"короткая причина по-русски","funnel_stage":"details_requested","lead_temperature":"warm","reply_reason":"wants_details","next_best_action":"reply_manually","summary":"краткое резюме","reply_draft":"короткий черновик ответа пользователю","draft_goal":"цель ответа","needs_user_edit":true}',
     "",
     "Допустимые funnel_stage:",
     "new, opened_unknown, replied_neutral, interested, details_requested, price_requested, meeting_possible, delegated, follow_up_later, not_now, rejected, not_target, unsubscribed, bounced, closed.",
@@ -126,6 +126,12 @@ export function buildReplyClassificationPrompt({
     "",
     "Допустимые next_best_action:",
     "reply_manually, send_details, send_price, send_cases, suggest_call, ask_qualifying_question, follow_up_later, stop_sequence, mark_not_target, add_to_suppression, choose_thread, no_action.",
+    "",
+    "Черновик ответа:",
+    "- reply_draft должен быть коротким, человеческим и по-русски.",
+    "- Нельзя выдумывать цену, сроки, обещания или факты, которых нет в переписке.",
+    "- Если данных мало, задай уточняющий вопрос.",
+    "- Черновик не отправляется автоматически, его проверит пользователь.",
     "",
     `Предварительная классификация системы: ${fallbackClassification}`,
     `Тема: ${compactText(subject, 500)}`,
@@ -162,6 +168,9 @@ export async function analyzeInboundReplyWithAi({
     const nextBestAction = normalizeFromSet(parsed?.next_best_action, AI_NEXT_BEST_ACTIONS, "no_action");
     const replyReason = compactText(parsed?.reply_reason, 128) || "unknown";
     const summary = compactText(parsed?.summary, 1000);
+    const replyDraft = compactText(parsed?.reply_draft, 2000);
+    const draftGoal = compactText(parsed?.draft_goal, 500);
+    const needsUserEdit = parsed?.needs_user_edit !== false;
     const trusted = confidence == null || confidence >= 0.75 || aiClassification === fallbackClassification;
 
     return {
@@ -176,6 +185,9 @@ export async function analyzeInboundReplyWithAi({
         replyReason,
         nextBestAction,
         summary,
+        replyDraft,
+        draftGoal,
+        needsUserEdit,
         model: result.model,
         usage: result.usage,
         analyzedAt: new Date().toISOString(),
@@ -195,6 +207,9 @@ export async function analyzeInboundReplyWithAi({
         replyReason: "",
         nextBestAction: "",
         summary: "",
+        replyDraft: "",
+        draftGoal: "",
+        needsUserEdit: true,
         model: "",
         usage: null,
         analyzedAt: new Date().toISOString(),

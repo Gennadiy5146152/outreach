@@ -2513,6 +2513,14 @@ async function loadInbox() {
               <summary>Показать полный текст</summary>
               <pre class="inbox-message">${esc(item.body_text || "Текста письма нет.")}</pre>
             </details>
+            ${item.ai_reply_draft ? `
+              <details class="inbox-full">
+                <summary>Черновик ответа от ИИ</summary>
+                ${item.ai_draft_goal ? `<p class="muted">Цель: ${esc(item.ai_draft_goal)}</p>` : ""}
+                <pre class="inbox-message">${esc(item.ai_reply_draft)}</pre>
+                <p class="muted">${item.ai_draft_needs_user_edit === false ? "Можно использовать как основу, но перед отправкой всё равно проверь текст." : "Нужно проверить и отредактировать перед отправкой."}</p>
+              </details>
+            ` : ""}
           </div>
         </article>
       `,

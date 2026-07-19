@@ -948,9 +948,10 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
             message_id_header, in_reply_to, references_header, threading_mode, parent_message_id, raw_headers, received_at,
             reply_classification, reply_classification_source,
             ai_classification, ai_confidence, ai_reason, ai_model, ai_usage, ai_analyzed_at, ai_error,
-            ai_funnel_stage, ai_lead_temperature, ai_reply_reason, ai_next_best_action, ai_summary
+            ai_funnel_stage, ai_lead_temperature, ai_reply_reason, ai_next_best_action, ai_summary,
+            ai_reply_draft, ai_draft_goal, ai_draft_needs_user_edit
           )
-          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
           RETURNING *
         `,
         [
@@ -984,6 +985,9 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           aiAnalysis.ai?.replyReason || null,
           aiAnalysis.ai?.nextBestAction || null,
           aiAnalysis.ai?.summary || null,
+          aiAnalysis.ai?.replyDraft || null,
+          aiAnalysis.ai?.draftGoal || null,
+          aiAnalysis.ai?.needsUserEdit ?? null,
         ],
       );
       stats.inserted += 1;
@@ -1015,6 +1019,8 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
               leadTemperature: aiAnalysis.ai.leadTemperature,
               replyReason: aiAnalysis.ai.replyReason,
               nextBestAction: aiAnalysis.ai.nextBestAction,
+              draftGoal: aiAnalysis.ai.draftGoal,
+              hasReplyDraft: Boolean(aiAnalysis.ai.replyDraft),
               model: aiAnalysis.ai.model,
               error: aiAnalysis.ai.error,
             },
@@ -1295,6 +1301,8 @@ async function applyAiConversationInsights(message) {
     !message.ai_reply_reason &&
     !message.ai_next_best_action &&
     !message.ai_summary &&
+    !message.ai_reply_draft &&
+    !message.ai_draft_goal &&
     !message.ai_reason &&
     message.ai_confidence == null
   ) {
@@ -1312,6 +1320,9 @@ async function applyAiConversationInsights(message) {
           ai_reason = COALESCE($7, ai_reason),
           ai_confidence = COALESCE($8, ai_confidence),
           ai_updated_at = COALESCE($9, ai_updated_at),
+          ai_reply_draft = COALESCE($10, ai_reply_draft),
+          ai_draft_goal = COALESCE($11, ai_draft_goal),
+          ai_draft_needs_user_edit = COALESCE($12, ai_draft_needs_user_edit),
           updated_at = now()
       WHERE lead_id = $1
     `,
@@ -1325,6 +1336,9 @@ async function applyAiConversationInsights(message) {
       message.ai_reason || null,
       message.ai_confidence ?? null,
       message.ai_analyzed_at || null,
+      message.ai_reply_draft || null,
+      message.ai_draft_goal || null,
+      message.ai_draft_needs_user_edit ?? null,
     ],
   );
 }

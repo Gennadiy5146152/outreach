@@ -40,6 +40,9 @@ assert.equal(result.ai.leadTemperature, "warm", "AI should return lead temperatu
 assert.equal(result.ai.replyReason, "wants_details", "AI should return reply reason");
 assert.equal(result.ai.nextBestAction, "reply_manually", "AI should return next best action");
 assert.ok(result.ai.summary.includes("подробности"), "AI should return short summary");
+assert.ok(result.ai.replyDraft.includes("Спасибо за интерес"), "AI should return manual reply draft");
+assert.ok(result.ai.draftGoal.includes("продолжить диалог"), "AI should return draft goal");
+assert.equal(result.ai.needsUserEdit, true, "AI draft should require user review");
 
 const threadPrompt = buildThreadMatchPrompt({
   inboundSubject: "Re: Оплата",
@@ -76,6 +79,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const worker = fs.readFileSync(path.join(root, "src/worker/index.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "db/migrations/006_ai_reply_analysis.sql"), "utf8");
 const funnelMigration = fs.readFileSync(path.join(root, "db/migrations/007_ai_funnel_insights.sql"), "utf8");
+const draftMigration = fs.readFileSync(path.join(root, "db/migrations/008_ai_reply_drafts.sql"), "utf8");
 const publicApp = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "src/server.js"), "utf8");
 
@@ -87,14 +91,18 @@ assert.ok(worker.includes("inbound_ai_classified"), "worker should log AI classi
 assert.ok(worker.includes("inbound_ai_thread_match"), "worker should log AI thread match event");
 assert.ok(worker.includes("ai_classification, ai_confidence, ai_reason"), "worker should insert AI columns");
 assert.ok(worker.includes("ai_funnel_stage, ai_lead_temperature, ai_reply_reason"), "worker should insert AI funnel columns");
+assert.ok(worker.includes("ai_reply_draft, ai_draft_goal, ai_draft_needs_user_edit"), "worker should insert AI draft columns");
 assert.ok(worker.includes("applyAiConversationInsights"), "worker should copy AI insights to conversations");
 assert.ok(migration.includes("ADD COLUMN IF NOT EXISTS ai_classification text"), "migration should add ai_classification");
 assert.ok(migration.includes("ADD COLUMN IF NOT EXISTS ai_confidence numeric"), "migration should add ai_confidence");
 assert.ok(funnelMigration.includes("ADD COLUMN IF NOT EXISTS ai_funnel_stage text"), "funnel migration should add message funnel stage");
 assert.ok(funnelMigration.includes("ADD COLUMN IF NOT EXISTS lead_temperature text"), "funnel migration should add conversation lead temperature");
+assert.ok(draftMigration.includes("ADD COLUMN IF NOT EXISTS ai_reply_draft text"), "draft migration should add reply draft");
+assert.ok(draftMigration.includes("ADD COLUMN IF NOT EXISTS ai_draft_goal text"), "draft migration should add draft goal");
 assert.ok(publicApp.includes("Ответ разобран ИИ"), "events UI should have Russian AI label");
 assert.ok(publicApp.includes("ИИ проверил привязку ответа"), "events UI should have Russian AI thread label");
 assert.ok(publicApp.includes("function aiReplyInsightText"), "inbox UI should show AI insight");
+assert.ok(publicApp.includes("Черновик ответа от ИИ"), "inbox UI should show AI reply draft");
 assert.ok(publicApp.includes("AI_FUNNEL_LABELS"), "public UI should translate AI funnel labels");
 assert.ok(server.includes("ai_next_best_action"), "server exports should include AI next best action");
 assert.ok(server.includes("ИИ: вероятно та же цепочка"), "server should expose AI semantic link label");
