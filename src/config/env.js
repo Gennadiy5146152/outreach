@@ -25,6 +25,11 @@ export const env = {
   workerPollMs: Number(process.env.WORKER_POLL_MS || 5000),
   inboxSyncIntervalMinutes: Number(process.env.INBOX_SYNC_INTERVAL_MINUTES || 1),
   validationBatchSize: Number(process.env.VALIDATION_BATCH_SIZE || 100),
+  yandexFolderId: process.env.YANDEX_FOLDER_ID || "",
+  yandexIamToken: process.env.YANDEX_IAM_TOKEN || "",
+  yandexPassportAuthToken: process.env.YANDEX_PASSPORT_AUTH_TOKEN || "",
+  yandexGptModel: process.env.YANDEX_GPT_MODEL || "yandexgpt-lite",
+  yandexGptMock: String(process.env.YANDEX_GPT_MOCK || "false").toLowerCase() === "true" || process.env.YANDEX_GPT_MOCK === "1",
 };
 
 export function secret(name) {

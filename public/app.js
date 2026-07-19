@@ -528,6 +528,7 @@ const EVENT_LABELS = {
   inbound_repair_completed: "Входящие перепривязаны к цепочкам",
   inbound_relinked: "Входящее письмо привязано к цепочке",
   inbound_unlinked: "Входящее письмо не привязано",
+  inbound_ai_classified: "Ответ разобран ИИ",
   reply_classified: "Ответ классифицирован",
   email_replied: "Получен ответ",
   email_bounced: "Получена недоставка",
@@ -2286,6 +2287,16 @@ function inboxDecisionText(item) {
   return "Классификация проставлена.";
 }
 
+function aiReplyInsightText(item) {
+  if (!item.ai_classification && !item.ai_error) return "";
+  if (item.ai_error) return `ИИ-анализ не выполнен: ${item.ai_error}`;
+  const parts = [`ИИ: ${statusLabel(item.ai_classification)}`];
+  const confidence = Number(item.ai_confidence);
+  if (Number.isFinite(confidence)) parts.push(`уверенность ${Math.round(confidence * 100)}%`);
+  if (item.ai_reason) parts.push(item.ai_reason);
+  return parts.join(" · ");
+}
+
 function replyLinkText(item) {
   if (!item || item.direction && item.direction !== "inbound") return "";
   return item.reply_link_label || (item.lead_email ? "привязано к лиду" : "не привязано к рассылке");
@@ -2445,6 +2456,7 @@ async function loadInbox() {
             <span>Привязка: <strong>${esc(replyLinkText(item))}</strong></span>
           </div>
           ${item.reply_link_warning ? `<p class="inbox-warning">${esc(item.reply_link_warning)}</p>` : ""}
+          ${aiReplyInsightText(item) ? `<p class="inbox-warning">${esc(aiReplyInsightText(item))}</p>` : ""}
           <p class="inbox-preview">${esc(inboxPreviewText(item))}</p>
           <div class="inbox-next">
             <strong>${esc(inboxDecisionText(item))}</strong>

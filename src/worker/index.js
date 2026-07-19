@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { simpleParser } from "mailparser";
 import { env } from "../config/env.js";
 import { pool, query, withClient } from "../db/pool.js";
+import { analyzeInboundReplyWithAi } from "../services/ai-reply.js";
 import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
@@ -906,7 +907,16 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       headers["x-outreach-imap-uid"] = String(msg.uid);
       const warmupPeer = await findWarmupPeer(fromEmail);
       const isWarmup = Boolean(warmupPeer) && (headers["x-outreach-warmup"] === "true" || /рабочая заметка|warmup|проверка связи|проверка маршрута|тест входящей/i.test(subject));
-      const classification = classifyInbound({ subject, body: bodyText, headers });
+      const fallbackClassification = classifyInbound({ subject, body: bodyText, headers });
+      const aiAnalysis = isWarmup
+        ? { classification: fallbackClassification, source: "auto", ai: null }
+        : await analyzeInboundReplyWithAi({
+            subject,
+            body: bodyText,
+            fallbackClassification,
+          });
+      const classification = aiAnalysis.classification;
+      const classificationSource = aiAnalysis.source;
       const existingInbound = await findExistingInbound(mailbox.id, parsed.messageId);
       const linked = await findLinkedOutbound(parsed, fromEmail);
       headers["x-outreach-link-method"] = linked?.match_method || "not_linked";
@@ -927,9 +937,10 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           INSERT INTO messages(
             lead_id, campaign_id, mailbox_id, outreach_draft_id, outreach_step_id, direction, type, status, subject, body_text, body_html,
             message_id_header, in_reply_to, references_header, threading_mode, parent_message_id, raw_headers, received_at,
-            reply_classification, reply_classification_source
+            reply_classification, reply_classification_source,
+            ai_classification, ai_confidence, ai_reason, ai_model, ai_usage, ai_analyzed_at, ai_error
           )
-          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'auto')
+          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
           RETURNING *
         `,
         [
@@ -950,6 +961,14 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           headers,
           parsed.date || new Date(),
           classification,
+          classificationSource,
+          aiAnalysis.ai?.classification || null,
+          aiAnalysis.ai?.confidence ?? null,
+          aiAnalysis.ai?.reason || null,
+          aiAnalysis.ai?.model || null,
+          aiAnalysis.ai?.usage || null,
+          aiAnalysis.ai?.analyzedAt || null,
+          aiAnalysis.ai?.error || null,
         ],
       );
       stats.inserted += 1;
@@ -965,6 +984,21 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
             mailboxId: mailbox.id,
             messageId: inserted.rows[0].id,
             payload: { from: fromEmail, subject, reason: "no_matching_outbound" },
+          });
+        }
+        if (aiAnalysis.ai) {
+          await logEvent("inbound_ai_classified", {
+            leadId: inserted.rows[0].lead_id,
+            campaignId: inserted.rows[0].campaign_id,
+            mailboxId: mailbox.id,
+            messageId: inserted.rows[0].id,
+            payload: {
+              classification: aiAnalysis.ai.classification,
+              confidence: aiAnalysis.ai.confidence,
+              reason: aiAnalysis.ai.reason,
+              model: aiAnalysis.ai.model,
+              error: aiAnalysis.ai.error,
+            },
           });
         }
       }
