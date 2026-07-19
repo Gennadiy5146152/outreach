@@ -14,6 +14,7 @@ import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { cancelOutreachForScope } from "./services/outreach-stop.js";
+import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText } from "./services/template.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
@@ -2009,6 +2010,61 @@ app.get("/api/outreach/conversations/export.json", asyncHandler(async (req, res)
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=\"outreach-conversations.json\"");
   res.send(JSON.stringify(rows, null, 2));
+}));
+
+app.post("/api/outreach/conversations/analyze-ai", asyncHandler(async (req, res) => {
+  const queryLikeRequest = { query: req.body || {} };
+  const rows = await outreachConversationExportRows(queryLikeRequest);
+  const analysis = await analyzeCampaignResultsWithAi({ rows });
+
+  if (analysis.ok) {
+    const payload = [
+      analysis.campaign_summary || null,
+      JSON.stringify(analysis.best_segments || []),
+      JSON.stringify(analysis.top_objections || []),
+      JSON.stringify(analysis.recommended_changes || []),
+      analysis.analyzed_at || new Date().toISOString(),
+    ];
+    if (isUuid(req.body?.campaign_id)) {
+      await query(
+        `
+          UPDATE campaigns
+          SET ai_campaign_summary = $2,
+              ai_best_segments = $3::jsonb,
+              ai_top_objections = $4::jsonb,
+              ai_recommended_changes = $5::jsonb,
+              ai_analyzed_at = $6,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [req.body.campaign_id, ...payload],
+      );
+    }
+    if (isUuid(req.body?.import_id)) {
+      await query(
+        `
+          UPDATE outreach_imports
+          SET ai_campaign_summary = $2,
+              ai_best_segments = $3::jsonb,
+              ai_top_objections = $4::jsonb,
+              ai_recommended_changes = $5::jsonb,
+              ai_analyzed_at = $6
+          WHERE id = $1
+        `,
+        [req.body.import_id, ...payload],
+      );
+    }
+    await logEvent("outreach_ai_campaign_analyzed", {
+      payload: {
+        conversations: rows.length,
+        campaignId: req.body?.campaign_id || null,
+        importId: req.body?.import_id || null,
+        model: analysis.model,
+      },
+    });
+  }
+
+  res.status(analysis.ok ? 200 : 400).json(analysis);
 }));
 
 app.get("/api/outreach/conversations/export.csv", asyncHandler(async (req, res) => {

@@ -81,6 +81,22 @@ export async function callYandexGpt({
   temperature = 0.1,
 } = {}) {
   if (env.yandexGptMock) {
+    if (String(prompt || "").includes("campaign_summary")) {
+      return {
+        text: JSON.stringify({
+          campaign_summary: "mock: лучше всего отвечают теплые лиды, которым нужны подробности.",
+          best_segments: ["B2B услуги"],
+          weak_points: ["В части ответов нет конкретного следующего шага"],
+          top_objections: ["не актуально"],
+          recommended_changes: ["Добавить короткий конкретный вопрос в ручной ответ"],
+          priority_leads: [
+            { email: "client@example.com", reason: "есть интерес и запрос подробностей" },
+          ],
+        }),
+        model: "mock",
+        usage: null,
+      };
+    }
     if (String(prompt || "").includes("suggested_message_id")) {
       const firstCandidateId = String(prompt || "").match(/"id":"([^"]+)"/)?.[1] || null;
       return {

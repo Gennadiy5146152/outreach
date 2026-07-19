@@ -297,3 +297,101 @@ export async function suggestThreadMatchWithAi({
     };
   }
 }
+
+function normalizeStringArray(value, limit = 8) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => compactText(item, 500)).filter(Boolean).slice(0, limit);
+}
+
+function normalizePriorityLeads(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      email: compactText(item?.email, 200),
+      company: compactText(item?.company, 200),
+      reason: compactText(item?.reason, 500),
+    }))
+    .filter((item) => item.email || item.company || item.reason)
+    .slice(0, 12);
+}
+
+export function buildCampaignAnalysisPrompt({ rows = [] } = {}) {
+  const compactRows = rows.slice(0, 80).map((row) => ({
+    lead: {
+      email: row.lead?.email,
+      company: row.lead?.company,
+      contact: row.lead?.contact,
+      segment: row.lead?.segment,
+    },
+    conversation: {
+      status: row.conversation?.status,
+      classification: row.conversation?.classification,
+      funnel_stage: row.conversation?.funnel_stage,
+      lead_temperature: row.conversation?.lead_temperature,
+      reply_reason: row.conversation?.reply_reason,
+      outbound_total: row.conversation?.outbound_total,
+      inbound_total: row.conversation?.inbound_total,
+      first_reply_at: row.conversation?.first_reply_at,
+      ai_summary: compactText(row.conversation?.ai_summary, 800),
+    },
+    messages: (row.messages || []).slice(-6).map((message) => ({
+      direction: message.direction,
+      subject: compactText(message.subject, 300),
+      body: compactText(message.body, 1000),
+      classification: message.classification,
+      ai_summary: compactText(message.ai_summary, 600),
+    })),
+  }));
+
+  return [
+    "Ты анализируешь результаты персонального B2B-аутрича.",
+    "Нужно дать краткий отчет по выбранным диалогам: что сработало, где слабые места и что делать дальше.",
+    "Не выдумывай факты. Если данных мало, так и напиши.",
+    "",
+    "Верни только JSON одной строкой, без Markdown и пояснений вокруг.",
+    "",
+    "JSON формат:",
+    '{"campaign_summary":"короткое резюме","best_segments":["сегмент"],"weak_points":["слабое место"],"top_objections":["возражение"],"recommended_changes":["рекомендация"],"priority_leads":[{"email":"client@example.com","company":"Компания","reason":"почему важен"}]}',
+    "",
+    "Диалоги:",
+    JSON.stringify(compactRows),
+  ].join("\n");
+}
+
+export async function analyzeCampaignResultsWithAi({ rows = [] } = {}) {
+  if (!isYandexGptConfigured()) {
+    return {
+      ok: false,
+      error: "ИИ-анализ не настроен. Укажите YANDEX_FOLDER_ID и токен Yandex GPT.",
+    };
+  }
+
+  try {
+    const result = await callYandexGpt({
+      prompt: buildCampaignAnalysisPrompt({ rows }),
+      maxTokens: 900,
+      temperature: 0.15,
+    });
+    const parsed = safeParseJsonFromAi(result.text);
+    return {
+      ok: true,
+      campaign_summary: compactText(parsed?.campaign_summary, 2000),
+      best_segments: normalizeStringArray(parsed?.best_segments),
+      weak_points: normalizeStringArray(parsed?.weak_points),
+      top_objections: normalizeStringArray(parsed?.top_objections),
+      recommended_changes: normalizeStringArray(parsed?.recommended_changes),
+      priority_leads: normalizePriorityLeads(parsed?.priority_leads),
+      model: result.model,
+      usage: result.usage,
+      analyzed_at: new Date().toISOString(),
+      input_conversations: rows.length,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: compactText(error?.message || error, 1000),
+      analyzed_at: new Date().toISOString(),
+      input_conversations: rows.length,
+    };
+  }
+}

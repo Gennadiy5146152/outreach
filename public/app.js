@@ -556,6 +556,7 @@ const EVENT_LABELS = {
   inbound_unlinked: "Входящее письмо не привязано",
   inbound_ai_classified: "Ответ разобран ИИ",
   inbound_ai_thread_match: "ИИ проверил привязку ответа",
+  outreach_ai_campaign_analyzed: "ИИ проанализировал диалоги",
   reply_classified: "Ответ классифицирован",
   email_replied: "Получен ответ",
   email_bounced: "Получена недоставка",
@@ -2648,6 +2649,46 @@ function updateAiExportLinks() {
     : `<span>Фильтры не выбраны: выгрузятся все outreach-диалоги без прогрева.</span>`;
 }
 
+function renderAiAnalysisResult(result) {
+  if (!result) {
+    $("#aiAnalysisResult").innerHTML = "";
+    return;
+  }
+  if (!result.ok) {
+    $("#aiAnalysisResult").innerHTML = `
+      <article class="card">
+        <h3>ИИ-анализ не выполнен</h3>
+        <p class="muted">${esc(result.error || "Неизвестная ошибка")}</p>
+      </article>
+    `;
+    return;
+  }
+  const list = (title, items) => items?.length
+    ? `<div><strong>${esc(title)}</strong><ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>`
+    : "";
+  $("#aiAnalysisResult").innerHTML = `
+    <article class="card">
+      <div class="panel-head">
+        <div>
+          <h3>AI-анализ выбранных диалогов</h3>
+          <p class="muted">Проанализировано диалогов: ${Number(result.input_conversations || 0)}${result.model ? ` · модель: ${esc(result.model)}` : ""}</p>
+        </div>
+      </div>
+      <p>${esc(result.campaign_summary || "ИИ не нашел достаточно данных для общего вывода.")}</p>
+      ${list("Лучшие сегменты", result.best_segments)}
+      ${list("Слабые места", result.weak_points)}
+      ${list("Частые возражения", result.top_objections)}
+      ${list("Что улучшить", result.recommended_changes)}
+      ${result.priority_leads?.length ? `
+        <div>
+          <strong>Кого обработать в первую очередь</strong>
+          <ul>${result.priority_leads.map((lead) => `<li>${esc([lead.company, lead.email].filter(Boolean).join(" · ") || "Лид")} — ${esc(lead.reason || "есть повод обработать")}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+    </article>
+  `;
+}
+
 function classificationSelect(conversation) {
   return `
     <label class="field compact-field">
@@ -3753,6 +3794,26 @@ $("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewCon
 ].forEach((id) => {
   document.getElementById(id)?.addEventListener("change", updateAiExportLinks);
 });
+
+$("#aiAnalyzeBtn")?.addEventListener("click", (event) => runAction({
+  title: "AI-анализ диалогов",
+  pending: "Отправляю выбранные диалоги на анализ...",
+  button: event.currentTarget,
+}, async () => {
+  const filters = Object.fromEntries(new URLSearchParams(aiExportQuery()).entries());
+  const result = await api("/api/outreach/conversations/analyze-ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(filters),
+  });
+  renderAiAnalysisResult(result);
+  setActionResult({
+    status: "success",
+    title: "AI-анализ диалогов",
+    message: `Готово. Проанализировано диалогов: ${result.input_conversations || 0}.`,
+    details: result,
+  });
+}));
 
 document.body.addEventListener("click", (event) => {
   const openId = event.target.dataset.openConversation;
