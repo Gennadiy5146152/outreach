@@ -13,6 +13,7 @@ const state = {
   outreachConversations: [],
   reviewConversations: [],
   conversationPreset: "all",
+  reviewFilter: "all",
   campaignLeads: [],
   campaignAvailableLeads: [],
   selectedCampaignLeadIds: new Set(),
@@ -2577,6 +2578,105 @@ function updateReviewExportLink() {
   $("#reviewExportLink").setAttribute("href", `/api/outreach/conversations/export.jsonl?${query}`);
 }
 
+function conversationAiField(item, field) {
+  return item[`latest_ai_${field}`] || item[`ai_${field}`] || "";
+}
+
+function conversationAiInsightText(item) {
+  const error = conversationAiField(item, "error");
+  if (error) return `ИИ-анализ не выполнен: ${error}`;
+  const classification = conversationAiField(item, "classification") || item.latest_reply_classification || item.classification;
+  const confidenceRaw = conversationAiField(item, "confidence");
+  const confidence = Number(confidenceRaw);
+  const summary = conversationAiField(item, "summary");
+  const funnel = conversationAiField(item, "funnel_stage");
+  const temperature = conversationAiField(item, "lead_temperature");
+  const nextAction = conversationAiField(item, "next_best_action");
+  const reason = conversationAiField(item, "reason");
+  const parts = [];
+  if (classification && classification !== "unknown") parts.push(`ИИ: ${statusLabel(classification)}`);
+  if (confidenceRaw !== "" && Number.isFinite(confidence)) parts.push(`уверенность ${Math.round(confidence * 100)}%`);
+  if (funnel) parts.push(`этап: ${AI_FUNNEL_LABELS[funnel] || funnel}`);
+  if (temperature) parts.push(`лид: ${AI_TEMPERATURE_LABELS[temperature] || temperature}`);
+  if (nextAction) parts.push(`действие: ${nextActionLabel(nextAction)}`);
+  if (summary) parts.push(summary);
+  if (reason && !summary) parts.push(reason);
+  return parts.join(" · ");
+}
+
+function conversationReviewReason(item) {
+  if (item.reply_link_warning) return item.reply_link_warning;
+  if (!item.classification || item.classification === "unknown") return "Ответ еще не разобран вручную: выбери класс ответа и дальнейшее действие.";
+  if (Number(item.approval_total || 0) > 0) return "Есть follow-up в очереди, но после ответа получателя он ждет твоего разрешения.";
+  if (conversationAiField(item, "reply_draft")) return "ИИ подготовил черновик ручного ответа. Открой диалог, проверь текст и отправь сам.";
+  return conversationStatusExplanation(item);
+}
+
+function reviewFilterLabel(value) {
+  return {
+    all: "Все",
+    hot: "Теплые",
+    needsReply: "Нужен ответ",
+    followup: "Follow-up ждет",
+    weakLink: "Проверить привязку",
+    unknown: "Не разобрано",
+  }[value] || "Все";
+}
+
+function reviewConversationMatchesFilter(item) {
+  const classification = item.classification || item.latest_reply_classification || conversationAiField(item, "classification") || "";
+  const funnel = conversationAiField(item, "funnel_stage");
+  const temperature = conversationAiField(item, "lead_temperature");
+  const nextAction = conversationAiField(item, "next_best_action") || item.next_action;
+  const warmStages = new Set(["interested", "details_requested", "price_requested", "meeting_possible", "delegated"]);
+  const replyActions = new Set(["reply_manually", "send_details", "send_price", "send_cases", "suggest_call", "ask_qualifying_question", "reply_manually_or_stop"]);
+  const weakMethods = new Set(["email_subject", "single_email_thread", "ai_semantic", "legacy_linked", "not_linked"]);
+  if (state.reviewFilter === "hot") {
+    return classification === "positive_reply" || ["hot", "warm"].includes(temperature) || warmStages.has(funnel);
+  }
+  if (state.reviewFilter === "needsReply") {
+    return replyActions.has(nextAction) || Boolean(conversationAiField(item, "reply_draft"));
+  }
+  if (state.reviewFilter === "followup") return Number(item.approval_total || 0) > 0;
+  if (state.reviewFilter === "weakLink") return Boolean(item.reply_link_warning) || weakMethods.has(item.reply_link_method);
+  if (state.reviewFilter === "unknown") {
+    return !classification || classification === "unknown" || Boolean(conversationAiField(item, "error"));
+  }
+  return true;
+}
+
+function reviewVisibleConversations() {
+  return state.reviewConversations.filter(reviewConversationMatchesFilter);
+}
+
+function renderReviewWorkbench() {
+  const visible = reviewVisibleConversations();
+  const approvalCount = state.reviewConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
+  const unknownCount = state.reviewConversations.filter((item) => !item.classification || item.classification === "unknown").length;
+  const hotCount = state.reviewConversations.filter((item) => {
+    const classification = item.classification || item.latest_reply_classification || conversationAiField(item, "classification");
+    return classification === "positive_reply" || ["hot", "warm"].includes(conversationAiField(item, "lead_temperature"));
+  }).length;
+  const weakLinkCount = state.reviewConversations.filter((item) => item.reply_link_warning).length;
+  $("#reviewSummary").innerHTML = `
+    <span>На экране: <strong>${visible.length}</strong></span>
+    <span>Всего ждут решения: <strong>${state.reviewConversations.length}</strong></span>
+    <span>Теплые: <strong>${hotCount}</strong></span>
+    <span>Без классификации: <strong>${unknownCount}</strong></span>
+    <span>Проверить привязку: <strong>${weakLinkCount}</strong></span>
+    <span>Follow-up ждут разрешения: <strong>${approvalCount}</strong></span>
+  `;
+  $("#reviewList").innerHTML = renderReviewConversationCards(
+    visible,
+    state.reviewConversations.length
+      ? `По фильтру “${reviewFilterLabel(state.reviewFilter)}” диалогов нет.`
+      : "Сейчас нет диалогов, которые требуют решения. Когда придет ответ, он появится здесь.",
+  );
+  $$("[data-review-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.reviewFilter === state.reviewFilter);
+  });
+}
+
 function aiExportQuery() {
   const params = new URLSearchParams();
   const status = $("#aiExportStatus")?.value || "";
@@ -2787,6 +2887,58 @@ function renderConversationCards(items, emptyText) {
     : `<p class="muted">${esc(emptyText)}</p>`;
 }
 
+function renderReviewConversationCards(items, emptyText) {
+  return items.length
+    ? items.map((item) => {
+      const aiInsight = conversationAiInsightText(item);
+      const canContinue = Number(item.approval_total || 0) > 0;
+      const canStop = ["waiting_reply_review", "manual_reply_needed", "active_sequence"].includes(item.status);
+      const temperature = conversationAiField(item, "lead_temperature");
+      return `
+        <article class="card review-card">
+          <div class="review-card-head">
+            <label class="review-person">
+              <span>${esc(item.company || item.email)}</span>
+              <strong>${esc(item.contact_name || "Контакт без имени")} · ${esc(item.email)}</strong>
+              <small>${esc(item.segment || "сегмент не указан")} · последнее ${esc(conversationLastDirection(item))}: ${fmtDate(conversationLastDate(item))}</small>
+            </label>
+            <div class="conversation-badges">
+              ${pill(item.status)}
+              ${item.classification ? pill(item.classification) : ""}
+              ${temperature ? `<span class="pill">${esc(AI_TEMPERATURE_LABELS[temperature] || temperature)}</span>` : ""}
+            </div>
+          </div>
+          <div class="review-grid">
+            <div class="review-message">
+              <span>${esc(item.latest_subject || "Без темы")}</span>
+              <p>${esc(conversationPreviewText(item))}</p>
+            </div>
+            <div class="review-decision">
+              <strong>${esc(conversationReviewReason(item))}</strong>
+              ${aiInsight ? `<p>${esc(aiInsight)}</p>` : `<p>ИИ-подсказки пока нет. Можно разобрать вручную.</p>`}
+              ${item.reply_link_label ? `<p>Привязка ответа: ${esc(item.reply_link_label)}.</p>` : ""}
+            </div>
+          </div>
+          <div class="review-facts">
+            <span>Писем в цепочке <strong>${Number(item.messages_total || 0)}</strong></span>
+            <span>Ответов <strong>${Number(item.inbound_total || 0)}</strong></span>
+            <span>Follow-up ждут <strong>${Number(item.approval_total || 0)}</strong></span>
+            <span>В очереди <strong>${Number(item.pending_total || 0)}</strong></span>
+          </div>
+          <div class="review-actions">
+            ${classificationSelect(item)}
+            <div class="card-actions">
+              <button class="small-button" data-open-conversation="${item.id}">Разобрать диалог</button>
+              ${canContinue ? `<button class="small-button" data-continue-conversation="${item.id}">Разрешить follow-up</button>` : ""}
+              ${canStop ? `<button class="small-button danger-light" data-stop-conversation="${item.id}">Остановить цепочку</button>` : ""}
+            </div>
+          </div>
+        </article>
+      `;
+    }).join("")
+    : `<p class="muted">${esc(emptyText)}</p>`;
+}
+
 function renderConversationEvents(events = []) {
   const decisionEvents = events.filter((event) => [
     "email_replied",
@@ -2840,17 +2992,7 @@ async function loadReviewConversations() {
   const query = reviewQuery();
   updateReviewExportLink();
   state.reviewConversations = await api(`/api/outreach/conversations?${query}`);
-  const approvalCount = state.reviewConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
-  const unknownCount = state.reviewConversations.filter((item) => !item.classification || item.classification === "unknown").length;
-  $("#reviewSummary").innerHTML = `
-    <span>Ждут решения: <strong>${state.reviewConversations.length}</strong></span>
-    <span>Без классификации: <strong>${unknownCount}</strong></span>
-    <span>Follow-up ждут разрешения: <strong>${approvalCount}</strong></span>
-  `;
-  $("#reviewList").innerHTML = renderConversationCards(
-    state.reviewConversations,
-    "Сейчас нет диалогов, которые требуют решения. Когда придет ответ, он появится здесь.",
-  );
+  renderReviewWorkbench();
 }
 
 async function openConversation(conversationId) {
@@ -3779,6 +3921,11 @@ $$("[data-conversation-preset]").forEach((button) => button.addEventListener("cl
 }));
 
 $("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewConversations());
+
+$$("[data-review-filter]").forEach((button) => button.addEventListener("click", () => {
+  state.reviewFilter = button.dataset.reviewFilter || "all";
+  renderReviewWorkbench();
+}));
 
 [
   "aiExportStatus",

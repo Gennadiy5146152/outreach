@@ -77,6 +77,15 @@ function publicMessageRow(row) {
   return publicRow;
 }
 
+function publicConversationRow(row) {
+  if (!row || typeof row !== "object") return row;
+  const { latest_raw_headers: latestRawHeaders, ...publicRow } = row;
+  const linkInfo = row.latest_direction === "inbound"
+    ? replyLinkInfo({ direction: "inbound", raw_headers: latestRawHeaders || {}, lead_id: row.lead_id })
+    : {};
+  return { ...publicRow, ...linkInfo };
+}
+
 function replyLinkInfo(row) {
   if (!row || row.direction !== "inbound") return {};
   const headers = row.raw_headers || {};
@@ -1806,6 +1815,17 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
              latest.sent_at AS latest_sent_at,
              latest.direction AS latest_direction,
              latest.reply_classification AS latest_reply_classification,
+             latest.ai_classification AS latest_ai_classification,
+             latest.ai_confidence AS latest_ai_confidence,
+             latest.ai_reason AS latest_ai_reason,
+             latest.ai_summary AS latest_ai_summary,
+             latest.ai_funnel_stage AS latest_ai_funnel_stage,
+             latest.ai_lead_temperature AS latest_ai_lead_temperature,
+             latest.ai_next_best_action AS latest_ai_next_best_action,
+             latest.ai_error AS latest_ai_error,
+             latest.ai_reply_draft AS latest_ai_reply_draft,
+             latest.ai_draft_goal AS latest_ai_draft_goal,
+             latest.raw_headers AS latest_raw_headers,
              COALESCE(stats.messages_total, 0)::int AS messages_total,
              COALESCE(stats.outbound_total, 0)::int AS outbound_total,
              COALESCE(stats.inbound_total, 0)::int AS inbound_total,
@@ -1846,7 +1866,7 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
     `,
     [status, classification, onlyReview],
   );
-  res.json(result.rows);
+  res.json(result.rows.map(publicConversationRow));
 }));
 
 async function outreachConversationExportRows(req) {

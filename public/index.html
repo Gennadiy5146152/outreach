@@ -623,6 +623,14 @@
               <a id="reviewExportLink" class="button" href="/api/outreach/conversations/export.jsonl?review=true">JSONL для ИИ</a>
             </div>
           </div>
+          <div class="quick-filters review-quick-filters" aria-label="Быстрые фильтры требующих решения">
+            <button class="small-button active" data-review-filter="all">Все</button>
+            <button class="small-button" data-review-filter="hot">Теплые</button>
+            <button class="small-button" data-review-filter="needsReply">Нужен ответ</button>
+            <button class="small-button" data-review-filter="followup">Follow-up ждёт</button>
+            <button class="small-button" data-review-filter="weakLink">Проверить привязку</button>
+            <button class="small-button" data-review-filter="unknown">Не разобрано</button>
+          </div>
           <div id="reviewSummary" class="summary-line"></div>
           <div id="reviewList" class="cards"></div>
         </section>

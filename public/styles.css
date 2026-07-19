@@ -538,6 +538,136 @@ h2 {
   width: min(920px, 100%);
 }
 
+.review-quick-filters {
+  margin: 10px 0 6px;
+}
+
+.review-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.review-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.review-person {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-person span,
+.review-person strong,
+.review-person small {
+  overflow-wrap: anywhere;
+}
+
+.review-person span {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.review-person strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.review-person small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.review-message,
+.review-decision {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.review-message span,
+.review-decision strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.review-message p,
+.review-decision p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.review-decision {
+  border-left: 3px solid var(--accent);
+  background: #f4fbf8;
+}
+
+.review-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.review-facts span {
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-facts strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.review-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-actions .field {
+  max-width: 320px;
+}
+
+.review-actions .card-actions {
+  flex: 1;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.review-actions .small-button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
 .danger-light {
   border-color: #f4b9b2;
   color: var(--danger);
@@ -2480,6 +2610,7 @@ dialog::backdrop {
   .field-grid.two,
   .lead-filters,
   .conversation-overview,
+  .review-grid,
   .inbox-actions,
   .setup-list,
   .setup-step,
@@ -2510,6 +2641,24 @@ dialog::backdrop {
 
   .conversation-card-head {
     flex-direction: column;
+  }
+
+  .review-card-head,
+  .review-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .review-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-actions .field {
+    max-width: none;
+  }
+
+  .review-actions .card-actions {
+    justify-content: flex-start;
   }
 
   .conversation-badges {
