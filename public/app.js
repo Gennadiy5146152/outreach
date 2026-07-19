@@ -514,6 +514,32 @@ const REPLY_CLASS_LABELS = {
 
 const REPLY_CLASS_OPTIONS = Object.entries(REPLY_CLASS_LABELS);
 
+const AI_FUNNEL_LABELS = {
+  new: "Нет ответа",
+  opened_unknown: "Есть технический сигнал",
+  replied_neutral: "Нейтральный ответ",
+  interested: "Есть интерес",
+  details_requested: "Просит подробности",
+  price_requested: "Спрашивает цену",
+  meeting_possible: "Можно вести к встрече",
+  delegated: "Передал другому",
+  follow_up_later: "Написать позже",
+  not_now: "Не сейчас",
+  rejected: "Отказ",
+  not_target: "Не целевой",
+  unsubscribed: "Не писать",
+  bounced: "Недоставка",
+  closed: "Закрыто",
+};
+
+const AI_TEMPERATURE_LABELS = {
+  hot: "горячий",
+  warm: "теплый",
+  cold: "холодный",
+  bad_fit: "не подходит",
+  unknown: "непонятно",
+};
+
 const EVENT_LABELS = {
   lead_created: "Лид добавлен",
   email_validated: "Email проверен",
@@ -595,6 +621,18 @@ function nextActionLabel(value) {
     sequence_stopped_after_unsubscribe: "цепочка остановлена после отписки",
     sequence_stopped_not_target: "цепочка остановлена: контакт не целевой",
     sequence_stopped_after_bounce: "цепочка остановлена после недоставки",
+    reply_manually: "ответить вручную",
+    send_details: "отправить подробности",
+    send_price: "отправить цену/условия",
+    send_cases: "отправить кейсы",
+    suggest_call: "предложить созвон",
+    ask_qualifying_question: "задать уточняющий вопрос",
+    follow_up_later: "вернуться позже",
+    stop_sequence: "остановить цепочку",
+    mark_not_target: "отметить как нецелевого",
+    add_to_suppression: "добавить в стоп-лист",
+    choose_thread: "выбрать правильную цепочку",
+    no_action: "действий не требуется",
   }[value] || value || "не задано";
 }
 
@@ -2293,6 +2331,9 @@ function aiReplyInsightText(item) {
   const parts = [`ИИ: ${statusLabel(item.ai_classification)}`];
   const confidence = Number(item.ai_confidence);
   if (Number.isFinite(confidence)) parts.push(`уверенность ${Math.round(confidence * 100)}%`);
+  if (item.ai_funnel_stage) parts.push(`этап: ${AI_FUNNEL_LABELS[item.ai_funnel_stage] || item.ai_funnel_stage}`);
+  if (item.ai_lead_temperature) parts.push(`лид: ${AI_TEMPERATURE_LABELS[item.ai_lead_temperature] || item.ai_lead_temperature}`);
+  if (item.ai_next_best_action) parts.push(`действие: ${nextActionLabel(item.ai_next_best_action)}`);
   if (item.ai_reason) parts.push(item.ai_reason);
   return parts.join(" · ");
 }

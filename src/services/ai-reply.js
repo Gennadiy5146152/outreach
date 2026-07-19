@@ -11,6 +11,41 @@ export const AI_REPLY_CLASSIFICATIONS = new Set([
   "unknown",
 ]);
 
+export const AI_FUNNEL_STAGES = new Set([
+  "new",
+  "opened_unknown",
+  "replied_neutral",
+  "interested",
+  "details_requested",
+  "price_requested",
+  "meeting_possible",
+  "delegated",
+  "follow_up_later",
+  "not_now",
+  "rejected",
+  "not_target",
+  "unsubscribed",
+  "bounced",
+  "closed",
+]);
+
+export const AI_LEAD_TEMPERATURES = new Set(["hot", "warm", "cold", "bad_fit", "unknown"]);
+
+export const AI_NEXT_BEST_ACTIONS = new Set([
+  "reply_manually",
+  "send_details",
+  "send_price",
+  "send_cases",
+  "suggest_call",
+  "ask_qualifying_question",
+  "follow_up_later",
+  "stop_sequence",
+  "mark_not_target",
+  "add_to_suppression",
+  "choose_thread",
+  "no_action",
+]);
+
 function stripMarkdownFences(text) {
   return String(text || "")
     .trim()
@@ -38,6 +73,11 @@ export function safeParseJsonFromAi(text) {
 function normalizeClassification(value, fallback = "unknown") {
   const normalized = String(value || "").trim().toLowerCase();
   return AI_REPLY_CLASSIFICATIONS.has(normalized) ? normalized : fallback;
+}
+
+function normalizeFromSet(value, allowed, fallback = "unknown") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return allowed.has(normalized) ? normalized : fallback;
 }
 
 function normalizeConfidence(value) {
@@ -76,7 +116,16 @@ export function buildReplyClassificationPrompt({
     "- unknown: недостаточно данных или невозможно понять.",
     "",
     "JSON формат:",
-    '{"classification":"positive_reply","confidence":0.91,"reason":"короткая причина по-русски"}',
+    '{"classification":"positive_reply","confidence":0.91,"reason":"короткая причина по-русски","funnel_stage":"details_requested","lead_temperature":"warm","reply_reason":"wants_details","next_best_action":"reply_manually","summary":"краткое резюме"}',
+    "",
+    "Допустимые funnel_stage:",
+    "new, opened_unknown, replied_neutral, interested, details_requested, price_requested, meeting_possible, delegated, follow_up_later, not_now, rejected, not_target, unsubscribed, bounced, closed.",
+    "",
+    "Допустимые lead_temperature:",
+    "hot, warm, cold, bad_fit, unknown.",
+    "",
+    "Допустимые next_best_action:",
+    "reply_manually, send_details, send_price, send_cases, suggest_call, ask_qualifying_question, follow_up_later, stop_sequence, mark_not_target, add_to_suppression, choose_thread, no_action.",
     "",
     `Предварительная классификация системы: ${fallbackClassification}`,
     `Тема: ${compactText(subject, 500)}`,
@@ -108,6 +157,11 @@ export async function analyzeInboundReplyWithAi({
     const aiClassification = normalizeClassification(parsed?.classification, fallbackClassification);
     const confidence = normalizeConfidence(parsed?.confidence);
     const reason = compactText(parsed?.reason, 1000);
+    const funnelStage = normalizeFromSet(parsed?.funnel_stage, AI_FUNNEL_STAGES);
+    const leadTemperature = normalizeFromSet(parsed?.lead_temperature, AI_LEAD_TEMPERATURES);
+    const nextBestAction = normalizeFromSet(parsed?.next_best_action, AI_NEXT_BEST_ACTIONS, "no_action");
+    const replyReason = compactText(parsed?.reply_reason, 128) || "unknown";
+    const summary = compactText(parsed?.summary, 1000);
     const trusted = confidence == null || confidence >= 0.75 || aiClassification === fallbackClassification;
 
     return {
@@ -117,6 +171,11 @@ export async function analyzeInboundReplyWithAi({
         classification: aiClassification,
         confidence,
         reason,
+        funnelStage,
+        leadTemperature,
+        replyReason,
+        nextBestAction,
+        summary,
         model: result.model,
         usage: result.usage,
         analyzedAt: new Date().toISOString(),
@@ -131,6 +190,11 @@ export async function analyzeInboundReplyWithAi({
         classification: null,
         confidence: null,
         reason: "",
+        funnelStage: null,
+        leadTemperature: null,
+        replyReason: "",
+        nextBestAction: "",
+        summary: "",
         model: "",
         usage: null,
         analyzedAt: new Date().toISOString(),

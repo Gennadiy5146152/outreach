@@ -938,9 +938,10 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
             lead_id, campaign_id, mailbox_id, outreach_draft_id, outreach_step_id, direction, type, status, subject, body_text, body_html,
             message_id_header, in_reply_to, references_header, threading_mode, parent_message_id, raw_headers, received_at,
             reply_classification, reply_classification_source,
-            ai_classification, ai_confidence, ai_reason, ai_model, ai_usage, ai_analyzed_at, ai_error
+            ai_classification, ai_confidence, ai_reason, ai_model, ai_usage, ai_analyzed_at, ai_error,
+            ai_funnel_stage, ai_lead_temperature, ai_reply_reason, ai_next_best_action, ai_summary
           )
-          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
           RETURNING *
         `,
         [
@@ -969,6 +970,11 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           aiAnalysis.ai?.usage || null,
           aiAnalysis.ai?.analyzedAt || null,
           aiAnalysis.ai?.error || null,
+          aiAnalysis.ai?.funnelStage || null,
+          aiAnalysis.ai?.leadTemperature || null,
+          aiAnalysis.ai?.replyReason || null,
+          aiAnalysis.ai?.nextBestAction || null,
+          aiAnalysis.ai?.summary || null,
         ],
       );
       stats.inserted += 1;
@@ -996,6 +1002,10 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
               classification: aiAnalysis.ai.classification,
               confidence: aiAnalysis.ai.confidence,
               reason: aiAnalysis.ai.reason,
+              funnelStage: aiAnalysis.ai.funnelStage,
+              leadTemperature: aiAnalysis.ai.leadTemperature,
+              replyReason: aiAnalysis.ai.replyReason,
+              nextBestAction: aiAnalysis.ai.nextBestAction,
               model: aiAnalysis.ai.model,
               error: aiAnalysis.ai.error,
             },
@@ -1252,6 +1262,48 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
   return updated.rows[0];
 }
 
+async function applyAiConversationInsights(message) {
+  if (!message?.lead_id) return;
+  if (
+    !message.ai_funnel_stage &&
+    !message.ai_lead_temperature &&
+    !message.ai_reply_reason &&
+    !message.ai_next_best_action &&
+    !message.ai_summary &&
+    !message.ai_reason &&
+    message.ai_confidence == null
+  ) {
+    return;
+  }
+
+  await query(
+    `
+      UPDATE outreach_conversations
+      SET funnel_stage = COALESCE($2, funnel_stage),
+          lead_temperature = COALESCE($3, lead_temperature),
+          reply_reason = COALESCE($4, reply_reason),
+          ai_next_best_action = COALESCE($5, ai_next_best_action),
+          ai_summary = COALESCE($6, ai_summary),
+          ai_reason = COALESCE($7, ai_reason),
+          ai_confidence = COALESCE($8, ai_confidence),
+          ai_updated_at = COALESCE($9, ai_updated_at),
+          updated_at = now()
+      WHERE lead_id = $1
+    `,
+    [
+      message.lead_id,
+      message.ai_funnel_stage || null,
+      message.ai_lead_temperature || null,
+      message.ai_reply_reason || null,
+      message.ai_next_best_action || null,
+      message.ai_summary || null,
+      message.ai_reason || null,
+      message.ai_confidence ?? null,
+      message.ai_analyzed_at || null,
+    ],
+  );
+}
+
 async function findLinkedOutbound(parsed, fromEmail) {
   const ids = messageIdCandidates(parsed.inReplyTo ?? parsed.in_reply_to, parsed.references ?? parsed.references_header);
   if (ids.variants.length) {
@@ -1490,6 +1542,8 @@ async function applyInboundEffects(message, classification) {
     message.held_queue = scoped.heldQueue;
     message.affected_leads = scoped.affectedLeads;
   }
+
+  await applyAiConversationInsights(message);
 
   await logEvent(eventType, {
     leadId: message.lead_id,
