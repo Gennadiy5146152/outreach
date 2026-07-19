@@ -708,6 +708,48 @@ h2 {
   min-height: 150px;
 }
 
+.thread-assign-form {
+  margin: 10px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.thread-candidate-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.thread-candidate {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.thread-candidate.active {
+  border-color: var(--accent);
+  background: #f4fbf8;
+}
+
+.thread-candidate strong,
+.thread-candidate span,
+.thread-candidate p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.thread-candidate span,
+.thread-candidate p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .mailbox-status span {
   padding: 5px 8px;
   border: 1px solid var(--line);
@@ -2611,6 +2653,7 @@ dialog::backdrop {
   .lead-filters,
   .conversation-overview,
   .review-grid,
+  .thread-candidate-list,
   .inbox-actions,
   .setup-list,
   .setup-step,

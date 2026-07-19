@@ -558,6 +558,7 @@ const EVENT_LABELS = {
   inbound_ai_classified: "Ответ разобран ИИ",
   inbound_ai_thread_match: "ИИ проверил привязку ответа",
   outreach_ai_campaign_analyzed: "ИИ проанализировал диалоги",
+  reply_thread_assigned: "Ответ привязан к цепочке вручную",
   reply_classified: "Ответ классифицирован",
   email_replied: "Получен ответ",
   email_bounced: "Получена недоставка",
@@ -602,6 +603,7 @@ const EVENT_REASON_LABELS = {
   manual_reply_continue_sequence: "ручной ответ, follow-up разрешен",
   reply_review_closed: "закрыто без действия",
   reply_review_suppression: "добавлено в стоп-лист из ответа",
+  manual_thread_assignment: "цепочка выбрана вручную",
   worker_startup: "перезапуск worker",
   stale_running: "зависшая задача в running",
   adaptive_throttle: "автоматическое замедление из-за ошибок SMTP",
@@ -2651,8 +2653,30 @@ function reviewConversationMatchesFilter(item) {
   return true;
 }
 
+function reviewConversationPriority(item) {
+  const classification = item.classification || item.latest_reply_classification || conversationAiField(item, "classification") || "";
+  const funnel = conversationAiField(item, "funnel_stage");
+  const temperature = conversationAiField(item, "lead_temperature");
+  const isInbound = item.latest_direction === "inbound";
+  const weakLink = Boolean(item.reply_link_warning) || ["email_subject", "single_email_thread", "ai_semantic", "legacy_linked", "not_linked"].includes(item.reply_link_method);
+  const positive = classification === "positive_reply" || ["hot", "warm"].includes(temperature) || ["interested", "details_requested", "price_requested", "meeting_possible"].includes(funnel);
+  if (isInbound && weakLink) return 10;
+  if (isInbound && positive) return 20;
+  if (isInbound && classification && classification !== "auto_reply") return 30;
+  if (weakLink) return 40;
+  if (positive) return 50;
+  if (classification === "auto_reply") return 80;
+  return 60;
+}
+
 function reviewVisibleConversations() {
-  return state.reviewConversations.filter(reviewConversationMatchesFilter);
+  return state.reviewConversations
+    .filter(reviewConversationMatchesFilter)
+    .sort((left, right) => {
+      const priorityDiff = reviewConversationPriority(left) - reviewConversationPriority(right);
+      if (priorityDiff) return priorityDiff;
+      return new Date(conversationLastDate(right) || 0) - new Date(conversationLastDate(left) || 0);
+    });
 }
 
 function renderReviewWorkbench() {
@@ -2902,6 +2926,7 @@ function renderReviewConversationCards(items, emptyText) {
       const canContinue = Number(item.approval_total || 0) > 0;
       const canStop = ["waiting_reply_review", "manual_reply_needed", "active_sequence"].includes(item.status);
       const temperature = conversationAiField(item, "lead_temperature");
+      const canChooseThread = Boolean(item.reply_link_warning) || ["email_subject", "single_email_thread", "ai_semantic", "legacy_linked", "not_linked"].includes(item.reply_link_method);
       return `
         <article class="card review-card">
           <div class="review-card-head">
@@ -2937,6 +2962,7 @@ function renderReviewConversationCards(items, emptyText) {
             ${classificationSelect(item)}
             <div class="card-actions">
               <button class="small-button" data-open-conversation="${item.id}">Разобрать диалог</button>
+              ${canChooseThread ? `<button class="small-button" data-open-conversation="${item.id}">Выбрать цепочку</button>` : ""}
               ${canContinue ? `<button class="small-button" data-continue-conversation="${item.id}">Разрешить follow-up</button>` : ""}
               ${canStop ? `<button class="small-button danger-light" data-stop-conversation="${item.id}">Остановить цепочку</button>` : ""}
               <button class="small-button danger-light" data-suppress-conversation="${item.id}" data-suppress-scope="email">В стоп-лист email</button>
@@ -2962,6 +2988,7 @@ function renderConversationEvents(events = []) {
     "unsubscribe_detected",
     "not_target_received",
     "reply_classified",
+    "reply_thread_assigned",
     "outreach_conversation_stopped",
     "outreach_conversation_continued",
     "outreach_followup_delayed",
@@ -2978,6 +3005,55 @@ function renderConversationEvents(events = []) {
       </article>
     `).join("")
     : `<p class="muted">Решений по этому диалогу пока нет.</p>`;
+}
+
+function threadCandidateTitle(candidate) {
+  return candidate.campaign_name || candidate.import_file_name || candidate.draft_subject || "Цепочка без названия";
+}
+
+function threadCandidateSubtitle(candidate) {
+  const parts = [];
+  if (candidate.mailbox_email) parts.push(`отправитель: ${candidate.mailbox_email}`);
+  if (candidate.last_outbound_sent_at) parts.push(`последнее исходящее: ${fmtDate(candidate.last_outbound_sent_at)}`);
+  if (candidate.status) parts.push(`статус: ${statusLabel(candidate.status)}`);
+  return parts.join(" · ") || "Данных по отправке пока мало";
+}
+
+function renderThreadAssignment(detail, threadCandidates) {
+  const candidates = threadCandidates?.candidates || [];
+  const latestInbound = threadCandidates?.latest_inbound || detail.messages.filter((message) => message.direction === "inbound").at(-1);
+  if (!latestInbound || candidates.length < 2) return "";
+  return `
+    <h3>Выбрать правильную цепочку</h3>
+    <form class="form compact-form thread-assign-form" data-thread-assign-form="${detail.conversation.id}">
+      <input type="hidden" name="message_id" value="${esc(latestInbound.id)}" />
+      <label>
+        <span>Входящий ответ</span>
+        <input value="${esc(latestInbound.subject || "Без темы")} · ${fmtDate(latestInbound.received_at || latestInbound.created_at)}" disabled />
+      </label>
+      <label>
+        <span>К какой рассылке относится ответ</span>
+        <select name="target_conversation_id" required>
+          ${candidates.map((candidate) => `
+            <option value="${candidate.conversation_id}" ${candidate.conversation_id === detail.conversation.id ? "selected" : ""}>
+              ${esc(threadCandidateTitle(candidate))} — ${esc(candidate.draft_subject || candidate.last_outbound_subject || "без темы")}
+            </option>
+          `).join("")}
+        </select>
+      </label>
+      <div class="thread-candidate-list">
+        ${candidates.map((candidate) => `
+          <article class="thread-candidate ${candidate.conversation_id === detail.conversation.id ? "active" : ""}">
+            <strong>${esc(threadCandidateTitle(candidate))}</strong>
+            <span>${esc(candidate.draft_subject || candidate.last_outbound_subject || "Без темы")}</span>
+            <p>${esc(threadCandidateSubtitle(candidate))}</p>
+          </article>
+        `).join("")}
+      </div>
+      <p class="muted">После выбора входящий ответ будет помечен как вручную привязанный к этой цепочке. История письма не удаляется.</p>
+      <button>Привязать к выбранной цепочке</button>
+    </form>
+  `;
 }
 
 async function loadConversations() {
@@ -3012,7 +3088,10 @@ async function openConversation(conversationId) {
   if (!state.mailboxes.length) {
     state.mailboxes = await api("/api/mailboxes");
   }
-  const detail = await api(`/api/outreach/conversations/${conversationId}`);
+  const [detail, threadCandidates] = await Promise.all([
+    api(`/api/outreach/conversations/${conversationId}`),
+    api(`/api/outreach/conversations/${conversationId}/thread-candidates`).catch(() => null),
+  ]);
   const lastMessage = detail.messages.at(-1);
   const lastOutbound = [...detail.messages].reverse().find((message) => message.direction === "outbound" && message.mailbox_id);
   const pendingFollowups = detail.queue.filter((item) => Number(item.outreach_step_position || 0) > 1 && ["pending", "retrying"].includes(item.status));
@@ -3054,6 +3133,7 @@ async function openConversation(conversationId) {
         `).join("")
         : `<p class="muted">Писем в диалоге пока нет.</p>`}
     </div>
+    ${renderThreadAssignment(detail, threadCandidates)}
     <h3>Ручной ответ</h3>
     <form class="form manual-reply-form" data-conversation-reply-form="${detail.conversation.id}">
       <select name="mailbox_id" required>
@@ -3855,6 +3935,31 @@ document.body.addEventListener("submit", (event) => {
       message: result.delayed_queue
         ? `Follow-up перенесен. Писем в очереди: ${result.delayed_queue}. Следующая отправка: ${fmtDate(result.next_scheduled_at)}.`
         : "Активных follow-up для переноса не найдено.",
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("submit", (event) => {
+  const conversationId = event.target.dataset.threadAssignForm;
+  if (!conversationId) return;
+  event.preventDefault();
+  runAction({
+    title: "Выбор цепочки для ответа",
+    button: event.submitter,
+  }, async () => {
+    const payload = formJson(event.target);
+    const result = await api(`/api/outreach/conversations/${conversationId}/assign-thread`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await Promise.all([loadConversations(), loadReviewConversations(), loadQueue(), loadOutreachDrafts()]);
+    await openConversation(result.conversation?.id || conversationId);
+    setActionResult({
+      status: "success",
+      title: "Ответ привязан к цепочке",
+      message: "Входящий ответ теперь относится к выбранной рассылке. Событие сохранено в истории.",
       details: result,
     });
   });

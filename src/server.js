@@ -99,6 +99,7 @@ function replyLinkInfo(row) {
     email_subject: "примерно: email и тема совпали",
     single_email_thread: "примерно: у email была одна цепочка",
     ai_semantic: "ИИ: вероятно та же цепочка",
+    manual_thread: "выбрано вручную",
     legacy_linked: "привязано без отметки метода",
     not_linked: "не привязано к рассылке",
   };
@@ -2202,6 +2203,7 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
               'not_target_received',
               'email_bounced',
               'reply_classified',
+              'reply_thread_assigned',
               'outreach_conversation_stopped',
               'outreach_conversation_continued',
               'manual_reply_sent',
@@ -2620,6 +2622,229 @@ app.post("/api/outreach/conversations/:id/suppress", asyncHandler(async (req, re
     },
   });
   res.status(201).json(result);
+}));
+
+app.get("/api/outreach/conversations/:id/thread-candidates", asyncHandler(async (req, res) => {
+  const conversation = (await query(
+    `
+      SELECT oc.*, l.company, l.contact_name, l.segment
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      WHERE oc.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const latestInbound = (await query(
+    `
+      SELECT *
+      FROM messages
+      WHERE direction = 'inbound'
+        AND type <> 'warmup'
+        AND lead_id = $1
+      ORDER BY COALESCE(received_at, created_at) DESC
+      LIMIT 1
+    `,
+    [conversation.lead_id],
+  )).rows[0] || null;
+  const candidates = (await query(
+    `
+      SELECT oc.id AS conversation_id,
+             oc.status,
+             oc.classification,
+             oc.import_id,
+             oc.campaign_id,
+             c.name AS campaign_name,
+             oi.file_name AS import_file_name,
+             d.id AS draft_id,
+             d.subject AS draft_subject,
+             d.body_text AS draft_body_text,
+             d.created_at AS draft_created_at,
+             m.email AS mailbox_email,
+             last_outbound.id AS last_outbound_message_id,
+             last_outbound.subject AS last_outbound_subject,
+             last_outbound.sent_at AS last_outbound_sent_at,
+             last_outbound.outreach_step_id AS last_outbound_step_id
+      FROM outreach_conversations oc
+      LEFT JOIN campaigns c ON c.id = oc.campaign_id
+      LEFT JOIN outreach_imports oi ON oi.id = oc.import_id
+      LEFT JOIN outreach_drafts d ON d.conversation_id = oc.id
+      LEFT JOIN mailboxes m ON m.id = d.mailbox_id
+      LEFT JOIN LATERAL (
+        SELECT msg.*
+        FROM messages msg
+        WHERE msg.outreach_draft_id = d.id
+          AND msg.direction = 'outbound'
+          AND msg.type <> 'warmup'
+        ORDER BY COALESCE(msg.sent_at, msg.created_at) DESC
+        LIMIT 1
+      ) last_outbound ON true
+      WHERE lower(oc.email) = lower($1)
+         OR (oc.lead_id IS NOT NULL AND oc.lead_id = $2)
+      ORDER BY COALESCE(last_outbound.sent_at, d.created_at, oc.created_at) DESC
+      LIMIT 20
+    `,
+    [conversation.email, conversation.lead_id],
+  )).rows;
+  res.json({
+    conversation: publicConversationRow(conversation),
+    latest_inbound: latestInbound ? publicMessageRow(latestInbound) : null,
+    candidates,
+  });
+}));
+
+app.post("/api/outreach/conversations/:id/assign-thread", asyncHandler(async (req, res) => {
+  const targetConversationId = cleanText(req.body.target_conversation_id);
+  const messageId = cleanText(req.body.message_id);
+  if (!isUuid(targetConversationId)) return res.status(400).json({ error: "target_conversation_required" });
+  if (messageId && !isUuid(messageId)) return res.status(400).json({ error: "message_invalid" });
+  const messageUuid = messageId && isUuid(messageId) ? messageId : null;
+
+  const sourceConversation = (await query("SELECT * FROM outreach_conversations WHERE id = $1", [req.params.id])).rows[0];
+  if (!sourceConversation) return res.status(404).json({ error: "not_found" });
+  const targetConversation = (await query(
+    `
+      SELECT *
+      FROM outreach_conversations
+      WHERE id = $1
+        AND (
+          lower(email) = lower($2)
+          OR (lead_id IS NOT NULL AND lead_id = $3)
+        )
+    `,
+    [targetConversationId, sourceConversation.email, sourceConversation.lead_id],
+  )).rows[0];
+  if (!targetConversation) return res.status(400).json({ error: "target_conversation_invalid" });
+
+  const inbound = (await query(
+    `
+      SELECT *
+      FROM messages
+      WHERE direction = 'inbound'
+        AND type <> 'warmup'
+        AND ($2::uuid IS NULL OR id = $2::uuid)
+        AND (
+          lead_id = $1
+          OR lower(COALESCE(raw_headers->>'x-outreach-parsed-from', '')) = lower($3)
+        )
+      ORDER BY COALESCE(received_at, created_at) DESC
+      LIMIT 1
+    `,
+    [sourceConversation.lead_id, messageUuid, sourceConversation.email],
+  )).rows[0];
+  if (!inbound) return res.status(404).json({ error: "inbound_message_not_found" });
+
+  const targetDraft = (await query(
+    `
+      SELECT d.id AS draft_id,
+             d.mailbox_id,
+             last_outbound.id AS parent_message_id,
+             last_outbound.campaign_id,
+             last_outbound.outreach_step_id,
+             last_outbound.message_id_header,
+             last_outbound.references_header
+      FROM outreach_drafts d
+      LEFT JOIN LATERAL (
+        SELECT msg.*
+        FROM messages msg
+        WHERE msg.outreach_draft_id = d.id
+          AND msg.direction = 'outbound'
+          AND msg.type <> 'warmup'
+        ORDER BY COALESCE(msg.sent_at, msg.created_at) DESC
+        LIMIT 1
+      ) last_outbound ON true
+      WHERE d.conversation_id = $1
+      ORDER BY COALESCE(last_outbound.sent_at, d.created_at) DESC
+      LIMIT 1
+    `,
+    [targetConversation.id],
+  )).rows[0] || null;
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const updatedMessage = await client.query(
+        `
+          UPDATE messages
+          SET lead_id = $2,
+              campaign_id = COALESCE($3, campaign_id),
+              mailbox_id = COALESCE($4, mailbox_id),
+              outreach_draft_id = COALESCE($5, outreach_draft_id),
+              outreach_step_id = COALESCE($6, outreach_step_id),
+              threading_mode = 'reply_to_previous',
+              parent_message_id = COALESCE($7, parent_message_id),
+              in_reply_to = COALESCE(NULLIF(in_reply_to, ''), $8),
+              references_header = COALESCE(NULLIF(references_header, ''), $9),
+              raw_headers = COALESCE(raw_headers, '{}'::jsonb) || $10::jsonb
+          WHERE id = $1
+          RETURNING *
+        `,
+        [
+          inbound.id,
+          targetConversation.lead_id,
+          targetDraft?.campaign_id || targetConversation.campaign_id,
+          targetDraft?.mailbox_id || null,
+          targetDraft?.draft_id || null,
+          targetDraft?.outreach_step_id || null,
+          targetDraft?.parent_message_id || null,
+          targetDraft?.message_id_header || null,
+          [targetDraft?.references_header, targetDraft?.message_id_header].filter(Boolean).join(" ") || null,
+          {
+            "x-outreach-link-method": "manual_thread",
+            "x-outreach-link-confidence": "manual",
+            "x-outreach-manual-thread-conversation-id": targetConversation.id,
+          },
+        ],
+      );
+      const updatedConversation = await client.query(
+        `
+          UPDATE outreach_conversations
+          SET status = 'waiting_reply_review',
+              classification = COALESCE(NULLIF($2, ''), classification, 'unknown'),
+              next_action = 'approve_or_pause_followup',
+              last_message_at = COALESCE($3, now()),
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [targetConversation.id, inbound.reply_classification, inbound.received_at || inbound.created_at],
+      );
+      if (sourceConversation.id !== targetConversation.id) {
+        await client.query(
+          `
+            UPDATE outreach_conversations
+            SET updated_at = now()
+            WHERE id = $1
+          `,
+          [sourceConversation.id],
+        );
+      }
+      await client.query("COMMIT");
+      return { message: updatedMessage.rows[0], conversation: updatedConversation.rows[0] };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("reply_thread_assigned", {
+    leadId: targetConversation.lead_id,
+    campaignId: targetConversation.campaign_id,
+    mailboxId: result.message.mailbox_id,
+    messageId: result.message.id,
+    payload: {
+      sourceConversationId: sourceConversation.id,
+      conversationId: targetConversation.id,
+      targetConversationId: targetConversation.id,
+      outreachDraftId: result.message.outreach_draft_id,
+      outreachStepId: result.message.outreach_step_id,
+      previousStatus: sourceConversation.status,
+      nextStatus: result.conversation.status,
+      nextAction: result.conversation.next_action,
+      reason: "manual_thread_assignment",
+    },
+  });
+  res.json({ conversation: result.conversation, message: publicMessageRow(result.message) });
 }));
 
 app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) => {
