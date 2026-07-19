@@ -572,6 +572,8 @@ const EVENT_LABELS = {
   outreach_conversation_continued: "Follow-up продолжен",
   outreach_followup_delayed: "Follow-up отложен",
   manual_reply_sent: "Ручной ответ отправлен",
+  suppression_added_from_reply: "Добавлено в стоп-лист из ответа",
+  reply_review_closed: "Диалог закрыт без действия",
   warmup_sent: "Прогрев: письмо отправлено",
   warmup_reply_received: "Прогрев: получен ответ",
   warmup_sync_queued: "Прогрев: синхронизация входящих поставлена в очередь",
@@ -598,6 +600,8 @@ const EVENT_REASON_LABELS = {
   manual_classification: "ручная классификация",
   manual_reply_stop_sequence: "ручной ответ, цепочка остановлена",
   manual_reply_continue_sequence: "ручной ответ, follow-up разрешен",
+  reply_review_closed: "закрыто без действия",
+  reply_review_suppression: "добавлено в стоп-лист из ответа",
   worker_startup: "перезапуск worker",
   stale_running: "зависшая задача в running",
   adaptive_throttle: "автоматическое замедление из-за ошибок SMTP",
@@ -964,6 +968,8 @@ function eventSummary(event) {
   const payload = event.payload || {};
   const parts = [];
   if (payload.email) parts.push(payload.email);
+  if (payload.domain && !payload.email) parts.push(`домен: ${payload.domain}`);
+  if (payload.scope) parts.push(`что добавили: ${payload.scope === "domain" ? "домен" : "email"}`);
   if (payload.to) parts.push(`кому: ${payload.to}`);
   if (payload.from) parts.push(`от: ${payload.from}`);
   if (payload.subject) parts.push(`тема: ${payload.subject}`);
@@ -2842,6 +2848,8 @@ function conversationActionButtons(item) {
     <button class="small-button" data-open-conversation="${item.id}">Открыть</button>
     ${canContinue ? `<button class="small-button" data-continue-conversation="${item.id}">Продолжить follow-up</button>` : ""}
     ${canStop ? `<button class="small-button danger-light" data-stop-conversation="${item.id}">Остановить цепочку</button>` : ""}
+    ${needsDecision ? `<button class="small-button danger-light" data-suppress-conversation="${item.id}" data-suppress-scope="email">В стоп-лист email</button>` : ""}
+    ${needsDecision ? `<button class="small-button" data-close-review="${item.id}">Закрыть без действия</button>` : ""}
   `;
 }
 
@@ -2931,6 +2939,9 @@ function renderReviewConversationCards(items, emptyText) {
               <button class="small-button" data-open-conversation="${item.id}">Разобрать диалог</button>
               ${canContinue ? `<button class="small-button" data-continue-conversation="${item.id}">Разрешить follow-up</button>` : ""}
               ${canStop ? `<button class="small-button danger-light" data-stop-conversation="${item.id}">Остановить цепочку</button>` : ""}
+              <button class="small-button danger-light" data-suppress-conversation="${item.id}" data-suppress-scope="email">В стоп-лист email</button>
+              <button class="small-button danger-light" data-suppress-conversation="${item.id}" data-suppress-scope="domain">В стоп-лист домен</button>
+              <button class="small-button" data-close-review="${item.id}">Закрыть без действия</button>
             </div>
           </div>
         </article>
@@ -2955,6 +2966,8 @@ function renderConversationEvents(events = []) {
     "outreach_conversation_continued",
     "outreach_followup_delayed",
     "manual_reply_sent",
+    "suppression_added_from_reply",
+    "reply_review_closed",
   ].includes(event.event_type));
   return decisionEvents.length
     ? decisionEvents.map((event) => `
@@ -3031,7 +3044,12 @@ async function openConversation(conversationId) {
             <strong>${message.direction === "outbound" ? "Исходящее" : "Входящее"} · ${esc(message.subject)}</strong>
             ${pill(message.type)} ${message.threading_mode ? pill(message.threading_mode) : ""} ${message.reply_classification ? pill(message.reply_classification) : ""}
             <p>${esc(message.mailbox_email || "")} · ${fmtDate(message.received_at || message.sent_at || message.created_at)}</p>
-            <pre>${esc(message.body_text || "")}</pre>
+            ${message.direction === "inbound" ? `<p class="muted">Привязка ответа: ${esc(replyLinkText(message))}</p>` : ""}
+            ${message.reply_link_warning ? `<p class="inbox-warning">${esc(message.reply_link_warning)}</p>` : ""}
+            <details class="inbox-full" open>
+              <summary>${message.direction === "inbound" ? "Очищенный текст ответа" : "Текст письма"}</summary>
+              <pre>${esc(message.body_text || "")}</pre>
+            </details>
           </article>
         `).join("")
         : `<p class="muted">Писем в диалоге пока нет.</p>`}
@@ -3966,6 +3984,8 @@ document.body.addEventListener("click", (event) => {
   const openId = event.target.dataset.openConversation;
   const stopId = event.target.dataset.stopConversation;
   const continueId = event.target.dataset.continueConversation;
+  const suppressId = event.target.dataset.suppressConversation;
+  const closeReviewId = event.target.dataset.closeReview;
   if (openId) {
     runAction({ title: "Открытие диалога", button: event.target }, async () => {
       await openConversation(openId);
@@ -3994,6 +4014,45 @@ document.body.addEventListener("click", (event) => {
         status: "success",
         title: "Продолжение follow-up",
         message: `Разрешено писем в очереди: ${result.approved_queue}.`,
+        details: result,
+      });
+    });
+    return;
+  }
+  if (suppressId) {
+    const scope = event.target.dataset.suppressScope || "email";
+    const scopeText = scope === "domain" ? "домен" : "email";
+    if (scope === "domain" && !window.confirm("Добавить весь домен в стоп-лист? Новые письма на этот домен больше не будут отправляться.")) return;
+    runAction({ title: `Добавление в стоп-лист: ${scopeText}`, button: event.target }, async () => {
+      const result = await api(`/api/outreach/conversations/${suppressId}/suppress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, reason: "reply_review_suppression" }),
+      });
+      await Promise.all([loadConversations(), loadReviewConversations(), loadQueue(), loadOutreachDrafts(), loadSuppressions(), loadDashboard()]);
+      setActionResult({
+        status: "success",
+        title: "Стоп-лист",
+        message: scope === "domain"
+          ? `Домен добавлен в стоп-лист. Затронуто лидов: ${result.affected_leads || 0}.`
+          : `Email добавлен в стоп-лист. Затронуто лидов: ${result.affected_leads || 0}.`,
+        details: result,
+      });
+    });
+    return;
+  }
+  if (closeReviewId) {
+    runAction({ title: "Закрытие диалога", button: event.target }, async () => {
+      const result = await api(`/api/outreach/conversations/${closeReviewId}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Закрыто без действия пользователем" }),
+      });
+      await Promise.all([loadConversations(), loadReviewConversations(), loadDashboard()]);
+      setActionResult({
+        status: "success",
+        title: "Диалог закрыт",
+        message: "Диалог убран из “Требуют решения”, история сохранена.",
         details: result,
       });
     });

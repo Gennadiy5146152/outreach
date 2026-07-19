@@ -2204,7 +2204,9 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
               'reply_classified',
               'outreach_conversation_stopped',
               'outreach_conversation_continued',
-              'manual_reply_sent'
+              'manual_reply_sent',
+              'suppression_added_from_reply',
+              'reply_review_closed'
             )
           )
         ORDER BY created_at DESC
@@ -2214,7 +2216,7 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
     ),
   ]);
 
-  res.json({ conversation, messages: messages.rows, drafts: drafts.rows, queue: queue.rows, events: events.rows });
+  res.json({ conversation, messages: messages.rows.map(publicMessageRow), drafts: drafts.rows, queue: queue.rows, events: events.rows });
 }));
 
 app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (req, res) => {
@@ -2498,6 +2500,126 @@ app.post("/api/outreach/conversations/:id/delay", asyncHandler(async (req, res) 
     },
   });
   res.json(result.rows[0]);
+}));
+
+app.post("/api/outreach/conversations/:id/close", asyncHandler(async (req, res) => {
+  const reason = cleanText(req.body.reason) || "Закрыто без действия";
+  const conversation = (await query("SELECT * FROM outreach_conversations WHERE id = $1", [req.params.id])).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const result = await query(
+    `
+      UPDATE outreach_conversations
+      SET status = 'closed',
+          next_action = 'no_action',
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [conversation.id],
+  );
+  await logEvent("reply_review_closed", {
+    leadId: conversation.lead_id,
+    campaignId: conversation.campaign_id,
+    payload: {
+      conversationId: conversation.id,
+      previousStatus: conversation.status,
+      nextStatus: "closed",
+      nextAction: "no_action",
+      reason,
+    },
+  });
+  res.json({ conversation: result.rows[0], reason });
+}));
+
+app.post("/api/outreach/conversations/:id/suppress", asyncHandler(async (req, res) => {
+  const scope = cleanText(req.body.scope) || "email";
+  if (!["email", "domain"].includes(scope)) return res.status(400).json({ error: "scope_invalid" });
+  const reason = cleanText(req.body.reason) || "reply_review";
+  const conversation = (await query(
+    `
+      SELECT oc.*, l.email AS lead_email, l.domain AS lead_domain
+      FROM outreach_conversations oc
+      LEFT JOIN leads l ON l.id = oc.lead_id
+      WHERE oc.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const email = String(conversation.email || conversation.lead_email || "").trim().toLowerCase();
+  const parsed = email ? parseEmail(email) : null;
+  const domain = String(conversation.lead_domain || parsed?.domain || "").trim().toLowerCase();
+  if (scope === "email" && !parsed?.syntaxValid) return res.status(400).json({ error: "email_invalid" });
+  if (scope === "domain" && !domain) return res.status(400).json({ error: "domain_missing" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const suppression = await client.query(
+        `
+          INSERT INTO suppressions(email, domain, reason, source)
+          VALUES ($1,$2,$3,'reply_review')
+          ON CONFLICT DO NOTHING
+          RETURNING *
+        `,
+        [scope === "email" ? parsed.normalized : null, scope === "domain" ? domain : null, reason],
+      );
+      const leads = scope === "email"
+        ? await client.query(
+          "UPDATE leads SET status = 'suppressed', suppressed_at = now(), suppression_reason = $2 WHERE lower(email) = $1 RETURNING id",
+          [parsed.normalized, reason],
+        )
+        : await client.query(
+          "UPDATE leads SET status = 'suppressed', suppressed_at = now(), suppression_reason = $2 WHERE lower(domain) = $1 RETURNING id",
+          [domain, reason],
+        );
+      const conversationUpdate = await client.query(
+        `
+          UPDATE outreach_conversations
+          SET status = 'unsubscribed',
+              classification = 'unsubscribe',
+              next_action = 'add_to_suppression',
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [conversation.id],
+      );
+      await client.query("COMMIT");
+      return {
+        suppression: suppression.rows[0] || {
+          email: scope === "email" ? parsed.normalized : null,
+          domain: scope === "domain" ? domain : null,
+          reason,
+          source: "reply_review",
+        },
+        conversation: conversationUpdate.rows[0],
+        affected_leads: leads.rowCount,
+        scope,
+        email: scope === "email" ? parsed.normalized : null,
+        domain: scope === "domain" ? domain : null,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("suppression_added_from_reply", {
+    leadId: conversation.lead_id,
+    campaignId: conversation.campaign_id,
+    payload: {
+      conversationId: conversation.id,
+      scope,
+      email: scope === "email" ? parsed.normalized : null,
+      domain,
+      reason,
+      previousStatus: conversation.status,
+      nextStatus: "unsubscribed",
+      nextAction: "add_to_suppression",
+      affectedLeads: result.affected_leads,
+    },
+  });
+  res.status(201).json(result);
 }));
 
 app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) => {
