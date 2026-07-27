@@ -2365,6 +2365,21 @@ th {
   background: #fbfcfb;
 }
 
+.run-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 560px;
+}
+
+.run-bulk-actions .small-button {
+  min-height: 34px;
+  max-width: 180px;
+  padding: 6px 9px;
+  white-space: normal;
+}
+
 .run-tab {
   display: grid;
   gap: 4px;

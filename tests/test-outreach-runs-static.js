@@ -15,6 +15,7 @@ for (const expected of [
   "Остановить выбранные follow-up",
   "Продолжить выбранные follow-up",
   "В стоп-лист выбранные",
+  "run-bulk-actions",
   "Выбрать все строки по фильтру",
 ]) {
   if (!index.includes(expected)) {
@@ -85,6 +86,7 @@ for (const expected of [
 for (const expected of [
   ".run-list",
   ".run-bulkbar",
+  ".run-bulk-actions",
   ".run-row.needs-decision",
   ".run-timeline",
 ]) {
