@@ -3873,6 +3873,121 @@ app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
+app.post("/api/sending/:id/cancel", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_queue_item" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const item = (await client.query("SELECT * FROM sending_queue WHERE id = $1 FOR UPDATE", [req.params.id])).rows[0];
+      if (!item) {
+        await client.query("COMMIT");
+        return null;
+      }
+      if (!["pending", "retrying", "running"].includes(item.status)) {
+        await client.query("COMMIT");
+        return { blocked: true, status: item.status };
+      }
+
+      const cancelled = await client.query(
+        `
+          UPDATE sending_queue
+          SET status = 'cancelled',
+              last_error = 'Отменено пользователем',
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [item.id],
+      );
+      let cancelledQueue = cancelled.rowCount;
+      let cancelledSteps = 0;
+      let pausedEnrollment = 0;
+      let cancelledDraft = 0;
+
+      if (item.enrollment_id) {
+        pausedEnrollment = (await client.query(
+          `
+            UPDATE enrollments
+            SET status = 'paused',
+                stopped_at = now(),
+                stop_reason = 'queue_cancelled_by_user'
+            WHERE id = $1
+              AND status = 'active'
+          `,
+          [item.enrollment_id],
+        )).rowCount;
+      }
+
+      if (item.outreach_draft_id) {
+        const rest = await client.query(
+          `
+            UPDATE sending_queue
+            SET status = 'cancelled',
+                last_error = 'Цепочка остановлена пользователем',
+                updated_at = now()
+            WHERE outreach_draft_id = $1
+              AND id <> $2
+              AND status IN ('pending','retrying','running')
+          `,
+          [item.outreach_draft_id, item.id],
+        );
+        cancelledQueue += rest.rowCount;
+        cancelledDraft = (await client.query(
+          `
+            UPDATE outreach_drafts
+            SET status = 'cancelled',
+                error_reason = 'Отменено пользователем',
+                updated_at = now()
+            WHERE id = $1
+              AND status <> 'completed'
+          `,
+          [item.outreach_draft_id],
+        )).rowCount;
+        cancelledSteps = (await client.query(
+          `
+            UPDATE outreach_draft_steps
+            SET status = 'cancelled',
+                updated_at = now()
+            WHERE draft_id = $1
+              AND status <> 'sent'
+          `,
+          [item.outreach_draft_id],
+        )).rowCount;
+      }
+
+      await client.query("COMMIT");
+      return {
+        queue: cancelled.rows[0],
+        cancelled_queue: cancelledQueue,
+        cancelled_steps: cancelledSteps,
+        paused_enrollment: pausedEnrollment,
+        cancelled_draft: cancelledDraft,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  if (!result) return res.status(404).json({ error: "not_found" });
+  if (result.blocked) return res.status(409).json({ error: "queue_item_not_cancellable", status: result.status });
+
+  await logEvent("sending_queue_cancelled", {
+    leadId: result.queue.lead_id,
+    campaignId: result.queue.campaign_id,
+    mailboxId: result.queue.mailbox_id,
+    payload: {
+      queueId: result.queue.id,
+      cancelledQueue: result.cancelled_queue,
+      cancelledSteps: result.cancelled_steps,
+      pausedEnrollment: result.paused_enrollment,
+      cancelledDraft: result.cancelled_draft,
+    },
+  });
+  res.json(result);
+}));
+
 app.post("/api/campaigns/:id/approve-pending", asyncHandler(async (req, res) => {
   const result = await query(
     `

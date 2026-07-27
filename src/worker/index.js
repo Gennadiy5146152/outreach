@@ -37,6 +37,11 @@ function throttleDelayMinutes(errorCount) {
   return 0;
 }
 
+async function queueItemCancelled(queueId) {
+  const row = (await query("SELECT status FROM sending_queue WHERE id = $1", [queueId])).rows[0];
+  return row?.status === "cancelled";
+}
+
 function warmupDraft(from, to) {
   const today = new Date().toLocaleDateString("ru-RU");
   const drafts = [
@@ -494,6 +499,7 @@ async function processSend(item) {
     );
     return;
   }
+  if (await queueItemCancelled(item.id)) return;
 
   const mailbox = {
     id: item.mailbox_id,
@@ -598,6 +604,11 @@ async function processSend(item) {
   const attachments = (
     await query("SELECT * FROM attachments WHERE campaign_step_id = $1 ORDER BY created_at", [item.campaign_step_id])
   ).rows;
+
+  if (await queueItemCancelled(item.id)) {
+    await query("UPDATE messages SET status = 'cancelled' WHERE id = $1", [message.id]);
+    return;
+  }
 
   const info = await sendMail(mailbox, {
     to,

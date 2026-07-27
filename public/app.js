@@ -744,18 +744,28 @@ function queueStateLabel(item) {
   return statusLabel(item.status) || "Неизвестно";
 }
 
+function queueCanCancel(item) {
+  return ["pending", "retrying", "running"].includes(item.status);
+}
+
+function queueCancelButton(item) {
+  if (!queueCanCancel(item)) return "";
+  return ` <button class="small-button" data-cancel-send="${item.id}">Отменить</button>`;
+}
+
 function queueNextAction(item) {
   if (item.requires_approval && !item.approved_at) {
     return {
-      html: `<button class="small-button" data-approve="${item.id}">Подтвердить</button>`,
-      text: "Проверь письмо и разреши отправку.",
+      html: `<button class="small-button" data-approve="${item.id}">Подтвердить</button>${queueCancelButton(item)}`,
+      text: "Проверь письмо: можно разрешить отправку или снять его с очереди.",
     };
   }
   if (item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")) {
-    return { html: `<span class="muted">Ждет автоматически</span>`, text: "Ничего нажимать не нужно: отправится в ближайшее разрешенное окно." };
+    return { html: `<span class="muted">Ждет автоматически</span>${queueCancelButton(item)}`, text: "Можно отменить, если письмо уже не должно уходить." };
   }
-  if (item.status === "pending") return { html: `<span class="muted">Ждет автоматически</span>`, text: "Ничего нажимать не нужно." };
-  if (item.status === "retrying") return { html: `<span class="muted">Ждет повтор</span>`, text: "Сервис попробует отправить еще раз." };
+  if (item.status === "pending") return { html: `<span class="muted">Ждет автоматически</span>${queueCancelButton(item)}`, text: "Можно отменить, если письмо уже не должно уходить." };
+  if (item.status === "retrying") return { html: `<span class="muted">Ждет повтор</span>${queueCancelButton(item)}`, text: "Можно отменить до повторной отправки." };
+  if (item.status === "running") return { html: `<span class="muted">В работе</span>${queueCancelButton(item)}`, text: "Отмена сработает, если письмо еще не передано SMTP." };
   if (item.status === "failed") return { html: `<span class="muted">Смотри ошибку</span>`, text: "Проверь почту отправителя или текст ошибки." };
   return { html: `<span class="muted">Действий нет</span>`, text: "" };
 }
@@ -4416,6 +4426,7 @@ document.body.addEventListener("click", async (event) => {
   const syncMailboxId = event.target.dataset.syncMailbox;
   const toggleWarmupId = event.target.dataset.toggleWarmup;
   const approveId = event.target.dataset.approve;
+  const cancelSendId = event.target.dataset.cancelSend;
   const deleteAttachmentId = event.target.dataset.deleteAttachment;
   const deleteSuppressionId = event.target.dataset.deleteSuppression;
   const warmupPage = event.target.dataset.warmupPage;
@@ -4463,6 +4474,22 @@ document.body.addEventListener("click", async (event) => {
       const result = await api(`/api/sending/${approveId}/approve`, { method: "POST" });
       await refresh();
       setActionResult({ status: "success", title: "Подтверждение письма", message: "Письмо подтверждено для отправки.", details: result });
+    });
+    return;
+  }
+  if (cancelSendId) {
+    await runAction({
+      title: "Отмена письма",
+      button: event.target,
+    }, async () => {
+      const result = await api(`/api/sending/${cancelSendId}/cancel`, { method: "POST" });
+      await refresh();
+      setActionResult({
+        status: "success",
+        title: "Отмена письма",
+        message: `Письмо снято с очереди. Всего отменено: ${result.cancelled_queue}.`,
+        details: result,
+      });
     });
     return;
   }
