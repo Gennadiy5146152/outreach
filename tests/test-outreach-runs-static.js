@@ -63,6 +63,8 @@ for (const expected of [
   "app.post(\"/api/outreach/runs/:id/stop-followups\"",
   "app.post(\"/api/outreach/runs/:id/continue-followups\"",
   "app.post(\"/api/outreach/runs/:id/suppress\"",
+  "COALESCE(msg.received_at, msg.created_at) >= r.created_at",
+  "COALESCE(msg.received_at, msg.created_at) >= $2::timestamptz",
   "q.requires_approval = true",
   "approved_at = now()",
   "approved_queue",

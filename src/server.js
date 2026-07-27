@@ -1862,7 +1862,25 @@ app.get("/api/outreach/runs", asyncHandler(async (_req, res) => {
     SELECT r.*,
       (SELECT count(DISTINCT q.lead_id)::int FROM sending_queue q WHERE q.run_id = r.id AND q.lead_id IS NOT NULL) AS recipients,
       (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'sent') AS sent_messages,
-      (SELECT count(DISTINCT msg.lead_id)::int FROM messages msg WHERE msg.run_id = r.id AND msg.direction = 'inbound' AND msg.lead_id IS NOT NULL) AS replies,
+      (
+        SELECT count(DISTINCT msg.lead_id)::int
+        FROM messages msg
+        WHERE msg.direction = 'inbound'
+          AND msg.type <> 'warmup'
+          AND msg.lead_id IS NOT NULL
+          AND (
+            msg.run_id = r.id
+            OR (
+              COALESCE(msg.received_at, msg.created_at) >= r.created_at
+              AND EXISTS (
+                SELECT 1
+                FROM sending_queue q
+                WHERE q.run_id = r.id
+                  AND q.lead_id = msg.lead_id
+              )
+            )
+          )
+      ) AS replies,
       (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status IN ('pending','retrying','running')) AS active_queue,
       (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'cancelled') AS cancelled_queue,
       (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'failed') AS failed_queue
@@ -1970,11 +1988,19 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
         FROM messages msg
         LEFT JOIN campaign_steps cs_msg ON cs_msg.id = msg.campaign_step_id
         LEFT JOIN outreach_draft_steps ods_msg ON ods_msg.id = msg.outreach_step_id
-        WHERE msg.run_id = $1 AND msg.lead_id = l.id AND msg.type <> 'warmup'
+        WHERE msg.lead_id = l.id
+          AND msg.type <> 'warmup'
+          AND (
+            msg.run_id = $1
+            OR (
+              msg.direction = 'inbound'
+              AND COALESCE(msg.received_at, msg.created_at) >= $2::timestamptz
+            )
+          )
       ) history ON true
       ORDER BY l.company NULLS LAST, l.email
     `,
-    [req.params.id],
+    [req.params.id, run.created_at],
   );
 
   res.json({ run, rows: rows.rows });
