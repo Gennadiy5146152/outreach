@@ -80,10 +80,13 @@ function publicMessageRow(row) {
 function publicConversationRow(row) {
   if (!row || typeof row !== "object") return row;
   const { latest_raw_headers: latestRawHeaders, ...publicRow } = row;
+  const latestBodyText = row.latest_direction === "inbound" && row.latest_body_text
+    ? cleanReplyText(row.latest_body_text)
+    : row.latest_body_text;
   const linkInfo = row.latest_direction === "inbound"
     ? replyLinkInfo({ direction: "inbound", raw_headers: latestRawHeaders || {}, lead_id: row.lead_id })
     : {};
-  return { ...publicRow, ...linkInfo };
+  return { ...publicRow, latest_body_text: latestBodyText, ...linkInfo };
 }
 
 function replyLinkInfo(row) {

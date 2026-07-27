@@ -2613,10 +2613,10 @@ function conversationAiInsightText(item) {
 }
 
 function conversationReviewReason(item) {
-  if (item.reply_link_warning) return item.reply_link_warning;
-  if (!item.classification || item.classification === "unknown") return "Ответ еще не разобран вручную: выбери класс ответа и дальнейшее действие.";
-  if (Number(item.approval_total || 0) > 0) return "Есть follow-up в очереди, но после ответа получателя он ждет твоего разрешения.";
-  if (conversationAiField(item, "reply_draft")) return "ИИ подготовил черновик ручного ответа. Открой диалог, проверь текст и отправь сам.";
+  if (item.reply_link_warning) return "Нужно проверить, к какой цепочке относится ответ.";
+  if (Number(item.approval_total || 0) > 0) return "Follow-up остановлен и ждет разрешения.";
+  if (conversationAiField(item, "reply_draft")) return "Есть черновик ответа. Открой диалог и проверь текст.";
+  if (!item.classification || item.classification === "unknown") return "Ответ нужно быстро разобрать.";
   return conversationStatusExplanation(item);
 }
 
@@ -2682,19 +2682,14 @@ function reviewVisibleConversations() {
 function renderReviewWorkbench() {
   const visible = reviewVisibleConversations();
   const approvalCount = state.reviewConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
-  const unknownCount = state.reviewConversations.filter((item) => !item.classification || item.classification === "unknown").length;
   const hotCount = state.reviewConversations.filter((item) => {
     const classification = item.classification || item.latest_reply_classification || conversationAiField(item, "classification");
     return classification === "positive_reply" || ["hot", "warm"].includes(conversationAiField(item, "lead_temperature"));
   }).length;
-  const weakLinkCount = state.reviewConversations.filter((item) => item.reply_link_warning).length;
   $("#reviewSummary").innerHTML = `
     <span>На экране: <strong>${visible.length}</strong></span>
-    <span>Всего ждут решения: <strong>${state.reviewConversations.length}</strong></span>
     <span>Теплые: <strong>${hotCount}</strong></span>
-    <span>Без классификации: <strong>${unknownCount}</strong></span>
-    <span>Проверить привязку: <strong>${weakLinkCount}</strong></span>
-    <span>Follow-up ждут разрешения: <strong>${approvalCount}</strong></span>
+    <span>Follow-up ждут: <strong>${approvalCount}</strong></span>
   `;
   $("#reviewList").innerHTML = renderReviewConversationCards(
     visible,
@@ -2927,6 +2922,7 @@ function renderReviewConversationCards(items, emptyText) {
       const canStop = ["waiting_reply_review", "manual_reply_needed", "active_sequence"].includes(item.status);
       const temperature = conversationAiField(item, "lead_temperature");
       const canChooseThread = Boolean(item.reply_link_warning) || ["email_subject", "single_email_thread", "ai_semantic", "legacy_linked", "not_linked"].includes(item.reply_link_method);
+      const openLabel = canChooseThread ? "Проверить цепочку" : conversationAiField(item, "reply_draft") ? "Ответить" : "Открыть диалог";
       return `
         <article class="card review-card">
           <div class="review-card-head">
@@ -2948,26 +2944,14 @@ function renderReviewConversationCards(items, emptyText) {
             </div>
             <div class="review-decision">
               <strong>${esc(conversationReviewReason(item))}</strong>
-              ${aiInsight ? `<p>${esc(aiInsight)}</p>` : `<p>ИИ-подсказки пока нет. Можно разобрать вручную.</p>`}
-              ${item.reply_link_label ? `<p>Привязка ответа: ${esc(item.reply_link_label)}.</p>` : ""}
+              ${aiInsight ? `<p>${esc(aiInsight)}</p>` : ""}
             </div>
           </div>
-          <div class="review-facts">
-            <span>Писем в цепочке <strong>${Number(item.messages_total || 0)}</strong></span>
-            <span>Ответов <strong>${Number(item.inbound_total || 0)}</strong></span>
-            <span>Follow-up ждут <strong>${Number(item.approval_total || 0)}</strong></span>
-            <span>В очереди <strong>${Number(item.pending_total || 0)}</strong></span>
-          </div>
           <div class="review-actions">
-            ${classificationSelect(item)}
             <div class="card-actions">
-              <button class="small-button" data-open-conversation="${item.id}">Разобрать диалог</button>
-              ${canChooseThread ? `<button class="small-button" data-open-conversation="${item.id}">Выбрать цепочку</button>` : ""}
               ${canContinue ? `<button class="small-button" data-continue-conversation="${item.id}">Разрешить follow-up</button>` : ""}
+              <button class="small-button review-primary" data-open-conversation="${item.id}">${openLabel}</button>
               ${canStop ? `<button class="small-button danger-light" data-stop-conversation="${item.id}">Остановить цепочку</button>` : ""}
-              <button class="small-button danger-light" data-suppress-conversation="${item.id}" data-suppress-scope="email">В стоп-лист email</button>
-              <button class="small-button danger-light" data-suppress-conversation="${item.id}" data-suppress-scope="domain">В стоп-лист домен</button>
-              <button class="small-button" data-close-review="${item.id}">Закрыть без действия</button>
             </div>
           </div>
         </article>

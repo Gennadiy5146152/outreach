@@ -588,9 +588,8 @@ h2 {
 
 .review-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
-  gap: 12px;
-  align-items: stretch;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .review-message,
@@ -598,10 +597,10 @@ h2 {
   display: grid;
   gap: 5px;
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
+  padding: 0;
+  border: 0;
   border-radius: 8px;
-  background: var(--surface);
+  background: transparent;
 }
 
 .review-message span,
@@ -620,6 +619,7 @@ h2 {
 }
 
 .review-decision {
+  padding: 9px 10px;
   border-left: 3px solid var(--accent);
   background: #f4fbf8;
 }
@@ -647,8 +647,8 @@ h2 {
 
 .review-actions {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -658,7 +658,7 @@ h2 {
 
 .review-actions .card-actions {
   flex: 1;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
 }
 
@@ -666,6 +666,11 @@ h2 {
   min-height: 30px;
   padding: 5px 9px;
   font-size: 13px;
+}
+
+.review-primary {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .danger-light {
