@@ -66,6 +66,8 @@ for (const expected of [
   "app.post(\"/api/outreach/runs/:id/suppress\"",
   "COALESCE(msg.received_at, msg.created_at) >= r.created_at",
   "COALESCE(msg.received_at, msg.created_at) >= $2::timestamptz",
+  "msg.raw_headers->>'x-outreach-parsed-from'",
+  "msg.raw_headers->>'from'",
   "q.requires_approval = true",
   "approved_at = now()",
   "approved_queue",
