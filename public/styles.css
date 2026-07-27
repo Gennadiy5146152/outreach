@@ -1255,9 +1255,23 @@ h2 {
 .draft-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: stretch;
   justify-content: flex-end;
   gap: 6px;
   width: min(760px, 100%);
+}
+
+.draft-daily-limit {
+  display: grid;
+  gap: 2px;
+  min-width: 132px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.draft-daily-limit input {
+  min-height: 32px;
+  padding: 5px 8px;
 }
 
 .draft-quick-filters {

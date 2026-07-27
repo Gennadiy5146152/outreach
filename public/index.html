@@ -224,6 +224,10 @@
                 <button data-outreach-draft-filter="all">Все</button>
               </div>
               <button id="preflightSelectedDraftsBtn" title="Проверить выбранные">Проверить</button>
+              <label class="draft-daily-limit">
+                <span>Первых писем в день</span>
+                <input id="draftDailyFirstLimit" type="number" min="1" step="1" placeholder="без лимита" />
+              </label>
               <button id="startSelectedDraftsBtn" title="Запустить выбранные">Запустить</button>
               <button id="deleteSelectedDraftsBtn" class="danger-button" title="Удалить выбранные">Удалить</button>
               <button data-go="outreachImport" title="Загрузить еще файл">Импорт</button>
@@ -237,6 +241,7 @@
             <div>
               <h2>Проверка перед запуском</h2>
               <p class="muted">Перед массовой отправкой проверь, какие письма попадут в очередь, через какой mailbox и что может заблокировать запуск.</p>
+              <p class="muted">Лимит первых писем в день распределяет выбранные компании по дням: например 100 строк и лимит 10 дадут 10 партий по датам внутри одного запуска.</p>
             </div>
           </div>
           <div id="outreachDraftLaunchSummary" class="summary-line"></div>

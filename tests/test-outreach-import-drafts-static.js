@@ -73,7 +73,8 @@ for (const expected of [
   "INSERT INTO job_queue(job_type, payload, run_at)",
   "j.payload->>'mailboxId' = mailbox_id::text",
   "проверенным SMTP или успешной историей отправки",
-  "draft.send_after ? new Date(draft.send_after) : new Date()",
+  "const requestedDate = draft.send_after ? new Date(draft.send_after) : null",
+  "const scheduledAt = requestedDate && requestedDate > batchDate ? requestedDate : batchDate",
   "first_step_body_text",
   "items: rows.map",
   "app.post(\"/api/outreach/imports\"",
@@ -166,6 +167,8 @@ for (const expected of [
   "Готовы к старту",
   "В процессе",
   "startSelectedDraftsBtn",
+  "draftDailyFirstLimit",
+  "Первых писем в день",
   "preflightSelectedDraftsBtn",
   "deleteSelectedDraftsBtn",
   "outreachDraftLaunchReview",
@@ -211,6 +214,9 @@ for (const expected of [
   "function outreachDraftFilterLabel",
   "function visibleOutreachDrafts",
   "selectedReadyOutreachDraftIds",
+  "function draftDailyFirstLimit",
+  "daily_first_limit",
+  "dailyFirstLimit",
   "selectedDeletableOutreachDraftIds",
   "selectedReadyWarningMessage",
   "CSV ошибок",
@@ -273,6 +279,7 @@ for (const expected of [
   ".danger-button",
   ".add-followup-card",
   ".draft-toolbar",
+  ".draft-daily-limit",
   ".draft-recipient",
   ".draft-message",
   ".draft-status",
@@ -350,6 +357,16 @@ for (const expected of [
 ]) {
   if (!worker.includes(expected)) {
     throw new Error(`worker should support outreach draft sequences: ${expected}`);
+  }
+}
+
+for (const expected of [
+  "optionalPositiveInteger(req.body.daily_first_limit",
+  "Math.floor(queued.length / dailyFirstLimit)",
+  "dailyFirstLimit",
+]) {
+  if (!server.includes(expected)) {
+    throw new Error(`server should schedule first emails by daily limit: ${expected}`);
   }
 }
 

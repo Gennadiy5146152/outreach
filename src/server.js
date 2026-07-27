@@ -1710,6 +1710,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
 app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
   const mode = req.body.mode === "manual" ? "manual" : "auto";
+  const dailyFirstLimit = optionalPositiveInteger(req.body.daily_first_limit, "daily_first_limit");
   if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
 
   const summary = await withClient(async (client) => {
@@ -1790,7 +1791,11 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
           [draft.company || draft.to_email, draft.to_email, draft.contact_name, parseEmail(draft.to_email).domain, draft.segment],
         );
         const leadId = draft.lead_id || lead.rows[0].id;
-        const scheduledAt = draft.send_after ? new Date(draft.send_after) : new Date();
+        const batchDay = dailyFirstLimit ? Math.floor(queued.length / dailyFirstLimit) : 0;
+        const batchDate = new Date();
+        batchDate.setDate(batchDate.getDate() + batchDay);
+        const requestedDate = draft.send_after ? new Date(draft.send_after) : null;
+        const scheduledAt = requestedDate && requestedDate > batchDate ? requestedDate : batchDate;
         const queue = await client.query(
           `
             INSERT INTO sending_queue(
@@ -1826,7 +1831,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
         }
         await client.query("UPDATE outreach_drafts SET lead_id = $2, mailbox_id = $3, status = 'queued', updated_at = now() WHERE id = $1", [draft.id, leadId, mailboxId]);
         await client.query("UPDATE outreach_draft_steps SET status = 'queued', queue_id = $2, updated_at = now() WHERE id = $1", [draft.step_id, queue.rows[0].id]);
-        queued.push({ id: draft.id, email: draft.to_email, queueId: queue.rows[0].id });
+        queued.push({ id: draft.id, email: draft.to_email, queueId: queue.rows[0].id, scheduledAt });
       }
 
       await client.query(
@@ -1841,8 +1846,8 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
       );
 
       await client.query("COMMIT");
-      await logEvent("outreach_drafts_queued", { payload: { mode, queued: queued.length, errors: errors.length, runId: run.id } });
-      return { queued: queued.length, errors, items: queued, mode, runId: run.id };
+      await logEvent("outreach_drafts_queued", { payload: { mode, queued: queued.length, errors: errors.length, runId: run.id, dailyFirstLimit } });
+      return { queued: queued.length, errors, items: queued, mode, runId: run.id, dailyFirstLimit };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

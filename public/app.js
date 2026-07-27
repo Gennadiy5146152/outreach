@@ -1789,6 +1789,11 @@ function selectedReadyOutreachDraftIds() {
   return outreachDraftSelectionStats().readyDrafts.map((draft) => draft.id);
 }
 
+function draftDailyFirstLimit() {
+  const value = Number($("#draftDailyFirstLimit")?.value || 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+}
+
 function selectedDeletableOutreachDraftIds() {
   return outreachDraftSelectionStats().deletableDrafts.map((draft) => draft.id);
 }
@@ -1816,6 +1821,7 @@ function renderOutreachDraftLaunchReview() {
   $("#outreachDraftLaunchSummary").innerHTML = `
     <span>Выбрано: <strong>${review.stats.selected}</strong></span>
     <span>Можно запускать: <strong>${review.ok ? "да" : "нет"}</strong></span>
+    ${review.dailyFirstLimit ? `<span>Первых писем в день: <strong>${Number(review.dailyFirstLimit)}</strong></span>` : ""}
     <span>Ошибок: <strong>${review.errors.length}</strong></span>
     <span>Предупреждений: <strong>${review.warnings.length}</strong></span>
     ${(review.imapUncheckedMailboxes || []).length ? `<span>Ответы: <strong>IMAP-проверка запущена автоматически</strong></span>` : ""}
@@ -3998,6 +4004,7 @@ async function reviewOutreachDrafts(draftIds) {
   const result = await preflightOutreachDrafts(draftIds);
   state.outreachDraftLaunchReview = {
     ...result,
+    dailyFirstLimit: draftDailyFirstLimit(),
     signature: selectedOutreachDraftSignature(draftIds),
   };
   renderOutreachDraftLaunchReview();
@@ -4006,8 +4013,10 @@ async function reviewOutreachDrafts(draftIds) {
 
 async function startOutreachDrafts(draftIds) {
   const preflight = await preflightOutreachDrafts(draftIds);
+  const dailyFirstLimit = draftDailyFirstLimit();
   state.outreachDraftLaunchReview = {
     ...preflight,
+    dailyFirstLimit,
     signature: selectedOutreachDraftSignature(draftIds),
   };
   renderOutreachDraftLaunchReview();
@@ -4023,7 +4032,7 @@ async function startOutreachDrafts(draftIds) {
   const result = await api("/api/outreach/drafts/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ draft_ids: draftIds, mode: "auto" }),
+    body: JSON.stringify({ draft_ids: draftIds, mode: "auto", daily_first_limit: dailyFirstLimit }),
   });
   state.selectedOutreachDraftIds.clear();
   clearOutreachDraftLaunchReview();
@@ -4033,7 +4042,7 @@ async function startOutreachDrafts(draftIds) {
   setActionResult({
     status: result.errors?.length ? "warn" : "success",
     title: "Запуск персональных писем",
-    message: `В очередь поставлено: ${result.queued}. Ошибок: ${result.errors?.length || 0}.`,
+    message: `В очередь поставлено: ${result.queued}. Ошибок: ${result.errors?.length || 0}.${result.dailyFirstLimit ? ` Первых писем в день: ${result.dailyFirstLimit}.` : ""}`,
     details: result,
   });
 }
