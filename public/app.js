@@ -1871,8 +1871,8 @@ function outreachDraftStepForm(draft, position, { isNew = false } = {}) {
       </label>
       <label class="field">
         <span>Текст follow-up</span>
-        <textarea name="body_text" placeholder="Напиши короткое продолжение диалога. Если оставить пустым, этот шаг удалится.">${esc(step.body_text || "")}</textarea>
-        <small class="field-help">Если лид ответит, следующие письма цепочки остановятся и уйдут на ручное решение.</small>
+        <textarea name="body_text" placeholder="Напиши продолжение. Можно Markdown: **жирный**, *курсив*, [ссылка](https://...).">${esc(step.body_text || "")}</textarea>
+        <small class="field-help">Если лид ответит, следующие письма цепочки остановятся. Markdown применится при отправке.</small>
       </label>
       <label class="field">
         <span>Через сколько дней отправить</span>
@@ -1949,8 +1949,8 @@ function renderOutreachDraftDrawer(draft) {
         </label>
         <label class="field">
           <span>Текст письма</span>
-          <textarea name="body_text" placeholder="Вставь персональное письмо из Excel. Можно использовать обычный текст без HTML." required>${esc(draft.body_text)}</textarea>
-          <small class="field-help">Это первое письмо цепочки. Ответы по нему будут собираться в историю диалога.</small>
+          <textarea name="body_text" placeholder="Вставь письмо из Excel. Markdown поддерживается: **жирный**, *курсив*, [ссылка](https://...)." required>${esc(draft.body_text)}</textarea>
+          <small class="field-help">Это первое письмо цепочки. Markdown превратится в оформление при отправке.</small>
         </label>
         <label class="field">
           <span>Отправить не раньше</span>

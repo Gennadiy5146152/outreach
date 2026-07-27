@@ -15,7 +15,7 @@ import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { cancelOutreachForScope } from "./services/outreach-stop.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
-import { cleanReplyText } from "./services/template.js";
+import { cleanReplyText, markdownToHtml } from "./services/template.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
@@ -1094,10 +1094,10 @@ app.get("/api/outreach/imports/template.csv", asyncHandler(async (_req, res) => 
     "ИТ",
     "team@example.com",
     "Короткий вопрос по вашей CRM",
-    "Иван, здравствуйте. Увидел, что Компания клиента развивает продажи. Хотел коротко обсудить, можем ли быть полезны.",
+    "Иван, здравствуйте. Увидел, что Компания клиента развивает продажи. Можем помочь с **теплыми заявками** — коротко обсудим?",
     "",
     "Re: короткий вопрос по вашей CRM",
-    "Иван, добрый день. Подниму письмо выше: если тема актуальна, готов предложить короткий созвон.",
+    "Иван, добрый день. Подниму письмо выше: если тема актуальна, готов предложить [короткий созвон](https://example.com).",
     "3",
     "Re: короткий вопрос по вашей CRM",
     "Иван, последний раз напишу по этой теме. Если сейчас не актуально, вернусь позже.",
@@ -1349,7 +1349,7 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
             WHERE outreach_step_id = $1
               AND status IN ('pending','retrying')
           `,
-          [step.rows[0].id, subject || draft.subject, bodyText, bodyText.replace(/\n/g, "<br>")],
+          [step.rows[0].id, subject || draft.subject, bodyText, markdownToHtml(bodyText)],
         );
       }
       await client.query("COMMIT");
@@ -1821,7 +1821,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
             draft.step_id,
             draft.step_subject,
             draft.step_body_text,
-            draft.step_body_text.replace(/\n/g, "<br>"),
+            markdownToHtml(draft.step_body_text),
             run.id,
           ],
         );
@@ -3403,7 +3403,7 @@ app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) 
     previous?.message_id_header,
   ].filter(Boolean).join(" ");
   const runtime = await getRuntimeSettings();
-  const html = bodyText.replace(/\n/g, "<br>");
+  const html = markdownToHtml(bodyText);
   const info = await sendMail(mailbox, {
     to: parsed.normalized,
     subject,

@@ -52,8 +52,22 @@ export function escapeHtml(value = "") {
     .replaceAll("'", "&#039;");
 }
 
-export function renderTemplate(template, lead, mailbox, settings = {}) {
-  const values = {
+function markdownInlineToHtml(value = "") {
+  return value
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]\n]+)]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
+    .replace(/(^|[^\*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+}
+
+export function markdownToHtml(markdown = "") {
+  const escaped = escapeHtml(String(markdown || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n"));
+  return markdownInlineToHtml(escaped).replace(/\n/g, "<br>");
+}
+
+function templateValues(lead, mailbox, settings = {}) {
+  return {
     company: lead.company || "",
     contact: lead.contact_name || "Добрый день!",
     position: lead.position || "",
@@ -66,8 +80,17 @@ export function renderTemplate(template, lead, mailbox, settings = {}) {
     sender: mailbox?.from_name || mailbox?.name || "",
     sender_email: mailbox?.email || "",
   };
+}
+
+export function renderTemplate(template, lead, mailbox, settings = {}) {
+  const values = templateValues(lead, mailbox, settings);
 
   return String(template || "").replace(/\{\{(\w+)}}/g, (_, key) => values[key] ?? "");
+}
+
+export function renderTemplateHtml(template, lead, mailbox, settings = {}) {
+  const values = templateValues(lead, mailbox, settings);
+  return String(template || "").replace(/\{\{(\w+)}}/g, (_, key) => escapeHtml(values[key] ?? ""));
 }
 
 export function findMissingRequiredVariables(template, lead) {

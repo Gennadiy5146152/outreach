@@ -8,7 +8,7 @@ import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
-import { cleanReplyText, htmlToText, renderTemplate } from "../services/template.js";
+import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
 import { persistValidation, validateEmail } from "../services/validation.js";
 
 function sleep(ms) {
@@ -536,7 +536,7 @@ async function processSend(item) {
   const settings = (await query("SELECT value FROM settings WHERE key = 'sender'")).rows[0]?.value || {};
   const subjectTemplate = item.subject_override || item.subject_template || "";
   const textTemplate = item.body_text_override || item.body_template_text || htmlToText(item.body_template_html) || "";
-  const htmlTemplate = item.body_html_override || item.body_template_html || textTemplate.replace(/\n/g, "<br>");
+  const htmlTemplate = item.body_html_override || item.body_template_html || markdownToHtml(textTemplate);
   const subject = renderTemplate(subjectTemplate, lead, mailbox, settings);
   const text = renderTemplate(textTemplate, lead, mailbox, settings);
   const trackingId = crypto.randomUUID();
@@ -544,7 +544,7 @@ async function processSend(item) {
     item.tracking_enabled && runtime.publicTrackingUrl
       ? `<img src="${runtime.publicTrackingUrl.replace(/\/$/, "")}/t/open/${trackingId}.gif" width="1" height="1" alt="" style="display:none" />`
       : "";
-  const html = `${renderTemplate(htmlTemplate, lead, mailbox, settings)}${pixel}`;
+  const html = `${renderTemplateHtml(htmlTemplate, lead, mailbox, settings)}${pixel}`;
   const to = item.mode === "test" ? item.mailbox_email : item.lead_email;
   let threadingMode = "new_thread";
   let parentMessage = null;
@@ -705,7 +705,7 @@ async function processSend(item) {
           nextOutreachStep.id,
           nextOutreachStep.subject,
           nextOutreachStep.body_text,
-          nextOutreachStep.body_text.replace(/\n/g, "<br>"),
+          markdownToHtml(nextOutreachStep.body_text),
           item.run_id || null,
         ],
       );
