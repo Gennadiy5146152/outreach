@@ -460,6 +460,17 @@ function optionalPositiveInteger(value, fieldName) {
   return parsed;
 }
 
+function optionalNonNegativeInteger(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    const error = new Error(`${fieldName}_must_be_non_negative_integer`);
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
 function optionalSendDays(value) {
   if (value === undefined) return null;
   const days = parseArray(value)
@@ -3212,8 +3223,8 @@ app.patch("/api/mailboxes/:id", asyncHandler(async (req, res) => {
   if (!current) return res.status(404).json({ error: "not_found" });
   const dailyWarmupLimit = optionalPositiveInteger(req.body.daily_warmup_limit, "daily_warmup_limit");
   const dailySendLimit = optionalPositiveInteger(req.body.daily_send_limit, "daily_send_limit");
-  const minDelayMinutes = optionalPositiveInteger(req.body.min_delay_minutes, "min_delay_minutes");
-  const maxDelayMinutes = optionalPositiveInteger(req.body.max_delay_minutes, "max_delay_minutes");
+  const minDelayMinutes = optionalNonNegativeInteger(req.body.min_delay_minutes, "min_delay_minutes");
+  const maxDelayMinutes = optionalNonNegativeInteger(req.body.max_delay_minutes, "max_delay_minutes");
   const sendDays = optionalSendDays(req.body.send_days);
   if (minDelayMinutes !== null && maxDelayMinutes !== null && minDelayMinutes > maxDelayMinutes) {
     return res.status(400).json({ error: "min_delay_must_be_less_or_equal_max_delay" });
@@ -3314,8 +3325,8 @@ app.post("/api/mailboxes", asyncHandler(async (req, res) => {
       req.body.from_name || req.body.name,
       req.body.daily_send_limit ? Number(req.body.daily_send_limit) : null,
       Number(req.body.daily_warmup_limit || 5),
-      Number(req.body.min_delay_minutes || 7),
-      Number(req.body.max_delay_minutes || 18),
+      req.body.min_delay_minutes === undefined || req.body.min_delay_minutes === "" ? 7 : Number(req.body.min_delay_minutes),
+      req.body.max_delay_minutes === undefined || req.body.max_delay_minutes === "" ? 18 : Number(req.body.max_delay_minutes),
       req.body.send_window_start || "09:00",
       req.body.send_window_end || "18:00",
       parseArray(req.body.send_days).map(Number).filter(Boolean).length
@@ -3826,9 +3837,14 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
     `
       INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at)
       SELECT e.id, e.lead_id, e.campaign_id, s.id, e.mailbox_id, $2, $3,
-             now() + ((row_number() OVER (ORDER BY e.started_at) - 1) * interval '7 minutes')
+             now() + (
+               (row_number() OVER (ORDER BY e.started_at) - 1)
+               * (GREATEST(0, COALESCE(m.min_delay_minutes, c.min_delay_minutes, 7)) || ' minutes')::interval
+             )
       FROM enrollments e
+      JOIN campaigns c ON c.id = e.campaign_id
       JOIN campaign_steps s ON s.campaign_id = e.campaign_id AND s.position = e.current_step
+      JOIN mailboxes m ON m.id = e.mailbox_id
       WHERE e.campaign_id = $1 AND e.status = 'active'
       ON CONFLICT DO NOTHING
       RETURNING id
@@ -3841,7 +3857,14 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
 
 app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {
   const result = await query(
-    "UPDATE sending_queue SET approved_at = now(), updated_at = now() WHERE id = $1 RETURNING *",
+    `
+      UPDATE sending_queue
+      SET approved_at = now(),
+          scheduled_at = CASE WHEN scheduled_at <= now() THEN now() ELSE scheduled_at END,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `,
     [req.params.id],
   );
   if (result.rows[0]?.outreach_step_id) {
@@ -3852,7 +3875,14 @@ app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {
 
 app.post("/api/campaigns/:id/approve-pending", asyncHandler(async (req, res) => {
   const result = await query(
-    "UPDATE sending_queue SET approved_at = now(), updated_at = now() WHERE campaign_id = $1 AND status = 'pending' RETURNING id",
+    `
+      UPDATE sending_queue
+      SET approved_at = now(),
+          scheduled_at = CASE WHEN scheduled_at <= now() THEN now() ELSE scheduled_at END,
+          updated_at = now()
+      WHERE campaign_id = $1 AND status = 'pending'
+      RETURNING id
+    `,
     [req.params.id],
   );
   res.json({ approved: result.rowCount });
@@ -3958,20 +3988,22 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
 
 app.get("/api/sending/progress", asyncHandler(async (_req, res) => {
   const result = await query(`
-    SELECT
-      count(*)::int AS total,
-      count(*) FILTER (WHERE status = 'sent')::int AS sent,
-      count(*) FILTER (WHERE status = 'failed')::int AS failed,
-      count(*) FILTER (WHERE status IN ('pending','retrying','running'))::int AS active,
-      min(scheduled_at) FILTER (WHERE status IN ('pending','retrying')) AS next_scheduled_at,
-      avg(EXTRACT(EPOCH FROM (scheduled_at - lag_scheduled_at)) / 60.0) FILTER (WHERE lag_scheduled_at IS NOT NULL) AS avg_gap_minutes
-    FROM (
+    WITH deliverable AS (
       SELECT q.*, lag(scheduled_at) OVER (ORDER BY scheduled_at) AS lag_scheduled_at
       FROM sending_queue q
-    ) q
+      WHERE status IN ('pending','retrying','running')
+        AND (requires_approval = false OR approved_at IS NOT NULL)
+    )
+    SELECT
+      (SELECT count(*)::int FROM sending_queue) AS total,
+      (SELECT count(*)::int FROM sending_queue WHERE status = 'sent') AS sent,
+      (SELECT count(*)::int FROM sending_queue WHERE status = 'failed') AS failed,
+      (SELECT count(*)::int FROM deliverable) AS active,
+      (SELECT min(scheduled_at) FROM deliverable WHERE status IN ('pending','retrying')) AS next_scheduled_at,
+      (SELECT avg(EXTRACT(EPOCH FROM (scheduled_at - lag_scheduled_at)) / 60.0) FROM deliverable WHERE lag_scheduled_at IS NOT NULL) AS avg_gap_minutes
   `);
   const row = result.rows[0];
-  const avgGap = Math.max(Number(row.avg_gap_minutes || 12), 7);
+  const avgGap = Number.isFinite(Number(row.avg_gap_minutes)) ? Math.max(Number(row.avg_gap_minutes), 0) : 0;
   res.json({
     ...row,
     percent: row.total ? Math.round((row.sent / row.total) * 100) : 0,

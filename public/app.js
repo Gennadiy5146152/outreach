@@ -2091,8 +2091,8 @@ async function loadMailboxes() {
               <legend>Расписание</legend>
               <label><span>Лимит рассылки в день</span><input name="daily_send_limit" type="number" min="1" step="1" value="${mailbox.daily_send_limit || ""}" placeholder="Без лимита" /></label>
               <label><span>Лимит прогрева в день</span><input name="daily_warmup_limit" type="number" min="1" step="1" value="${mailbox.daily_warmup_limit}" /></label>
-              <label><span>Пауза мин.</span><input name="min_delay_minutes" type="number" min="1" step="1" value="${mailbox.min_delay_minutes}" /></label>
-              <label><span>Пауза макс.</span><input name="max_delay_minutes" type="number" min="1" step="1" value="${mailbox.max_delay_minutes}" /></label>
+              <label><span>Пауза мин.</span><input name="min_delay_minutes" type="number" min="0" step="1" value="${mailbox.min_delay_minutes}" /></label>
+              <label><span>Пауза макс.</span><input name="max_delay_minutes" type="number" min="0" step="1" value="${mailbox.max_delay_minutes}" /></label>
               <label><span>Окно с</span><input name="send_window_start" type="time" value="${String(mailbox.send_window_start || "09:00").slice(0, 5)}" /></label>
               <label><span>Окно до</span><input name="send_window_end" type="time" value="${String(mailbox.send_window_end || "18:00").slice(0, 5)}" /></label>
               <div class="mailbox-edit-days">
@@ -2387,12 +2387,13 @@ async function loadQueue() {
   });
   const total = state.queue.length;
   const next = state.queue.find((item) => ["pending", "retrying"].includes(item.status) && !(item.requires_approval && !item.approved_at));
+  const nextCountdown = next && new Date(next.scheduled_at).getTime() <= Date.now() ? "сейчас" : `через ${fmtCountdown(next?.scheduled_at)}`;
   $("#sendProgress").innerHTML = `
     <div class="progress">
       <div class="bar"><span style="width:${progress.percent}%"></span></div>
       <div>
         <strong>Отправка:</strong> ${progress.sent} из ${progress.total} · ошибок: ${progress.failed} · осталось примерно ${progress.etaMinutes} мин.
-        ${next ? `<br><span class="muted">Следующее письмо: через ${fmtCountdown(next.scheduled_at)} · ${fmtDate(next.scheduled_at)}</span>` : ""}
+        ${next ? `<br><span class="muted">Следующее письмо: ${nextCountdown} · ${fmtDate(next.scheduled_at)}</span>` : ""}
       </div>
     </div>
   `;

@@ -16,8 +16,8 @@ function sleep(ms) {
 }
 
 function randomDelayMinutes(min, max) {
-  const floor = Number(min || 7);
-  const ceil = Math.max(Number(max || 18), floor);
+  const floor = Number(min ?? 7);
+  const ceil = Math.max(Number(max ?? 18), floor);
   return floor + Math.floor(Math.random() * (ceil - floor + 1));
 }
 
@@ -436,8 +436,8 @@ async function lockNextSend() {
                COALESCE(c.send_window_start, m.send_window_start) AS send_window_start,
                COALESCE(c.send_window_end, m.send_window_end) AS send_window_end,
                COALESCE(c.send_days, m.send_days) AS send_days,
-               COALESCE(c.min_delay_minutes, m.min_delay_minutes) AS min_delay_minutes,
-               COALESCE(c.max_delay_minutes, m.max_delay_minutes) AS max_delay_minutes,
+               COALESCE(m.min_delay_minutes, c.min_delay_minutes) AS min_delay_minutes,
+               COALESCE(m.max_delay_minutes, c.max_delay_minutes) AS max_delay_minutes,
                s.name AS step_name, s.position AS step_position, s.subject_template, s.body_template_text, s.body_template_html,
                ods.position AS outreach_step_position, ods.delay_days AS outreach_delay_days,
                m.name AS mailbox_name, m.email AS mailbox_email, m.from_name,
