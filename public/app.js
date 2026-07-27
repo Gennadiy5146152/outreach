@@ -1161,7 +1161,7 @@ function renderRunRows() {
             <td>${runStepCell(row, 4)}</td>
             <td><div class="run-next"><strong>${esc(runNextActionText(row))}</strong><span>${esc(nextActionLabel(row.next_action))}</span></div></td>
             <td>
-              <div class="row-actions">
+              <div class="run-row-actions">
                 <button class="small-button" data-run-row-toggle="${row.lead_id}">${expanded ? "Скрыть" : "История"}</button>
                 <button class="small-button" data-run-stop-followups="${row.lead_id}">Остановить follow-up</button>
                 <button class="small-button" data-run-continue-followups="${row.lead_id}">Продолжить</button>

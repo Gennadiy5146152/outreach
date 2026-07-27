@@ -2409,6 +2409,21 @@ th {
   background: #fff8eb;
 }
 
+.run-row-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: 5px;
+  min-width: 210px;
+}
+
+.run-row-actions .small-button {
+  min-height: 30px;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: normal;
+}
+
 .run-recipient,
 .run-step,
 .run-reply,

@@ -33,6 +33,7 @@ for (const expected of [
   "async function loadRuns",
   "async function runActionForLeads",
   "data-run-lead-select",
+  "run-row-actions",
   "runRowsSelectAll",
   "runRowsSelectVisible",
   "runBulkSelection",
@@ -89,6 +90,7 @@ for (const expected of [
   ".run-list",
   ".run-bulkbar",
   ".run-bulk-actions",
+  ".run-row-actions",
   ".run-row.needs-decision",
   ".run-timeline",
 ]) {
