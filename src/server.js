@@ -1881,6 +1881,18 @@ app.get("/api/outreach/runs", asyncHandler(async (_req, res) => {
                     msg.lead_id = q.lead_id
                     OR lower(COALESCE(msg.raw_headers->>'x-outreach-parsed-from', '')) = lower(l.email)
                     OR lower(COALESCE(msg.raw_headers->>'from', '')) LIKE '%' || lower(l.email) || '%'
+                    OR EXISTS (
+                      SELECT 1
+                      FROM messages sent
+                      WHERE sent.run_id = r.id
+                        AND sent.lead_id = q.lead_id
+                        AND sent.direction = 'outbound'
+                        AND sent.message_id_header <> ''
+                        AND (
+                          lower(COALESCE(msg.in_reply_to, '') || ' ' || COALESCE(msg.references_header, '')) LIKE '%' || lower(sent.message_id_header) || '%'
+                          OR lower(replace(replace(COALESCE(msg.in_reply_to, '') || ' ' || COALESCE(msg.references_header, ''), '<', ''), '>', '')) LIKE '%' || lower(replace(replace(sent.message_id_header, '<', ''), '>', '')) || '%'
+                        )
+                    )
                   )
                 )
               )
@@ -2003,6 +2015,18 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
                 msg.lead_id = l.id
                 OR lower(COALESCE(msg.raw_headers->>'x-outreach-parsed-from', '')) = lower(l.email)
                 OR lower(COALESCE(msg.raw_headers->>'from', '')) LIKE '%' || lower(l.email) || '%'
+                OR EXISTS (
+                  SELECT 1
+                  FROM messages sent
+                  WHERE sent.run_id = $1
+                    AND sent.lead_id = l.id
+                    AND sent.direction = 'outbound'
+                    AND sent.message_id_header <> ''
+                    AND (
+                      lower(COALESCE(msg.in_reply_to, '') || ' ' || COALESCE(msg.references_header, '')) LIKE '%' || lower(sent.message_id_header) || '%'
+                      OR lower(replace(replace(COALESCE(msg.in_reply_to, '') || ' ' || COALESCE(msg.references_header, ''), '<', ''), '>', '')) LIKE '%' || lower(replace(replace(sent.message_id_header, '<', ''), '>', '')) || '%'
+                    )
+                )
               )
             )
           )
