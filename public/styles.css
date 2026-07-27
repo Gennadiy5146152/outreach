@@ -2334,6 +2334,105 @@ th {
   font-weight: 800;
 }
 
+.run-list {
+  display: grid;
+  gap: 8px;
+}
+
+.run-bulkbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.run-tab {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  text-align: left;
+}
+
+.run-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.run-tab span,
+.run-recipient span,
+.run-recipient em,
+.run-step span,
+.run-step em,
+.run-reply span,
+.run-reply em,
+.run-next span {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.run-row.needs-decision {
+  background: #fff8eb;
+}
+
+.run-recipient,
+.run-step,
+.run-reply,
+.run-next {
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+}
+
+.run-step strong,
+.run-reply strong,
+.run-next strong {
+  font-size: 13px;
+}
+
+.run-history-row td {
+  background: #f9fbfa;
+}
+
+.run-timeline {
+  display: grid;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.run-timeline-event {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--line);
+  background: var(--surface);
+}
+
+.run-timeline-event.message {
+  border-left-color: var(--accent);
+}
+
+.run-timeline-event span,
+.run-timeline-event em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.run-timeline-event pre {
+  max-width: 760px;
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+}
+
 .inbox-filters {
   width: fit-content;
   max-width: 100%;

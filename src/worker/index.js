@@ -408,14 +408,23 @@ async function handleJob(job) {
 async function scheduleDueEnrollments() {
   await query(
     `
-      INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at)
+      INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at, run_id)
       SELECT e.id, e.lead_id, e.campaign_id, s.id, e.mailbox_id,
              CASE WHEN c.manual_approval_required THEN 'manual' ELSE 'auto' END,
              c.manual_approval_required,
-             e.next_send_at
+             e.next_send_at,
+             latest_queue.run_id
       FROM enrollments e
       JOIN campaigns c ON c.id = e.campaign_id
       JOIN campaign_steps s ON s.campaign_id = e.campaign_id AND s.position = e.current_step
+      LEFT JOIN LATERAL (
+        SELECT run_id
+        FROM sending_queue previous_queue
+        WHERE previous_queue.enrollment_id = e.id
+          AND previous_queue.run_id IS NOT NULL
+        ORDER BY previous_queue.created_at DESC
+        LIMIT 1
+      ) latest_queue ON true
       WHERE e.status = 'active'
         AND c.status = 'active'
         AND e.next_send_at IS NOT NULL
@@ -575,10 +584,10 @@ async function processSend(item) {
   const messageInsert = await query(
     `
       INSERT INTO messages(
-        lead_id, campaign_id, campaign_step_id, mailbox_id, enrollment_id, outreach_draft_id, outreach_step_id, direction, type,
+        lead_id, campaign_id, campaign_step_id, mailbox_id, enrollment_id, outreach_draft_id, outreach_step_id, run_id, direction, type,
         status, subject, body_text, body_html, tracking_id, threading_mode, parent_message_id, in_reply_to, references_header
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,'outbound',$8,'created',$9,$10,$11,$12,$13,$14,$15,$16)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'outbound',$9,'created',$10,$11,$12,$13,$14,$15,$16,$17)
       RETURNING *
     `,
     [
@@ -589,6 +598,7 @@ async function processSend(item) {
       item.enrollment_id,
       item.outreach_draft_id,
       item.outreach_step_id,
+      item.run_id || null,
       item.mode === "test" ? "test" : "outreach",
       subject,
       text,
@@ -660,6 +670,7 @@ async function processSend(item) {
       `,
       [item.outreach_step_id, message.id],
     );
+    const draftState = (await query("SELECT status FROM outreach_drafts WHERE id = $1", [item.outreach_draft_id])).rows[0];
     const nextOutreachStep = (
       await query(
         `
@@ -673,15 +684,15 @@ async function processSend(item) {
       )
     ).rows[0];
 
-    if (nextOutreachStep && nextOutreachStep.subject && nextOutreachStep.body_text) {
+    if (!["paused", "cancelled"].includes(draftState?.status) && nextOutreachStep && nextOutreachStep.subject && nextOutreachStep.body_text) {
       const delay = randomDelayMinutes(item.min_delay_minutes, item.max_delay_minutes);
       const nextQueue = await query(
         `
           INSERT INTO sending_queue(
             lead_id, mailbox_id, mode, requires_approval, scheduled_at,
-            outreach_draft_id, outreach_step_id, subject_override, body_text_override, body_html_override
+            outreach_draft_id, outreach_step_id, subject_override, body_text_override, body_html_override, run_id
           )
-          VALUES ($1,$2,$3,false,now() + (($4 || ' days')::interval) + (($5 || ' minutes')::interval),$6,$7,$8,$9,$10)
+          VALUES ($1,$2,$3,false,now() + (($4 || ' days')::interval) + (($5 || ' minutes')::interval),$6,$7,$8,$9,$10,$11)
           RETURNING id
         `,
         [
@@ -695,6 +706,7 @@ async function processSend(item) {
           nextOutreachStep.subject,
           nextOutreachStep.body_text,
           nextOutreachStep.body_text.replace(/\n/g, "<br>"),
+          item.run_id || null,
         ],
       );
       await query(
@@ -702,7 +714,7 @@ async function processSend(item) {
         [nextOutreachStep.id, nextQueue.rows[0].id],
       );
       await query("UPDATE outreach_drafts SET status = 'active_sequence', updated_at = now() WHERE id = $1", [item.outreach_draft_id]);
-    } else {
+    } else if (!["paused", "cancelled"].includes(draftState?.status)) {
       await query("UPDATE outreach_drafts SET status = 'completed', updated_at = now() WHERE id = $1", [item.outreach_draft_id]);
     }
   }
@@ -955,14 +967,14 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
       const inserted = await query(
         `
           INSERT INTO messages(
-            lead_id, campaign_id, mailbox_id, outreach_draft_id, outreach_step_id, direction, type, status, subject, body_text, body_html,
+            lead_id, campaign_id, mailbox_id, outreach_draft_id, outreach_step_id, run_id, direction, type, status, subject, body_text, body_html,
             message_id_header, in_reply_to, references_header, threading_mode, parent_message_id, raw_headers, received_at,
             reply_classification, reply_classification_source,
             ai_classification, ai_confidence, ai_reason, ai_model, ai_usage, ai_analyzed_at, ai_error,
             ai_funnel_stage, ai_lead_temperature, ai_reply_reason, ai_next_best_action, ai_summary,
             ai_reply_draft, ai_draft_goal, ai_draft_needs_user_edit
           )
-          VALUES ($1,$2,$3,$4,$5,'inbound',$6,'received',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+          VALUES ($1,$2,$3,$4,$5,$6,'inbound',$7,'received',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
           RETURNING *
         `,
         [
@@ -971,6 +983,7 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
           mailbox.id,
           isWarmup ? null : linked?.outreach_draft_id || null,
           isWarmup ? null : linked?.outreach_step_id || null,
+          isWarmup ? null : linked?.run_id || null,
           isWarmup ? "warmup" : classification === "bounce" ? "bounce" : "reply",
           subject,
           bodyText,
@@ -1262,6 +1275,7 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
           campaign_id = COALESCE(campaign_id, $3),
           outreach_draft_id = COALESCE(outreach_draft_id, $4),
           outreach_step_id = COALESCE(outreach_step_id, $5),
+          run_id = COALESCE(run_id, $11),
           threading_mode = 'reply_to_previous',
           parent_message_id = COALESCE(parent_message_id, $6),
           in_reply_to = COALESCE(NULLIF(in_reply_to, ''), $7),
@@ -1286,6 +1300,7 @@ async function relinkInboundMessage(message, linked, classification, parsed) {
         "x-outreach-link-method": linkMethod,
         "x-outreach-link-confidence": linked.match_confidence || (linkMethod === "message_id" ? "exact" : "weak"),
       },
+      linked.run_id || null,
     ],
   );
   await logEvent("inbound_relinked", {

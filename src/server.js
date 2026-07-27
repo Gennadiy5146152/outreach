@@ -471,6 +471,18 @@ function optionalNonNegativeInteger(value, fieldName) {
   return parsed;
 }
 
+function outreachRunTitle(prefix) {
+  const timestamp = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: env.appTimeZone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date());
+  return `${prefix} · ${timestamp}`;
+}
+
 function optionalSendDays(value) {
   if (value === undefined) return null;
   const days = parseArray(value)
@@ -1733,6 +1745,20 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
       )).rows;
       const errors = [];
       const queued = [];
+      const importIds = [...new Set(drafts.map((draft) => draft.import_id).filter(Boolean))];
+      const run = (await client.query(
+        `
+          INSERT INTO outreach_runs(source_type, source_id, title, mode)
+          VALUES ($1,$2,$3,$4)
+          RETURNING *
+        `,
+        [
+          "drafts",
+          importIds.length === 1 ? importIds[0] : null,
+          outreachRunTitle(drafts.length === 1 ? "Запуск персонального письма" : `Запуск персональных писем: ${drafts.length}`),
+          mode,
+        ],
+      )).rows[0];
 
       for (const [index, draft] of drafts.entries()) {
         if (draft.status !== "ready") {
@@ -1769,9 +1795,9 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
           `
             INSERT INTO sending_queue(
               lead_id, mailbox_id, mode, requires_approval, scheduled_at,
-              outreach_draft_id, outreach_step_id, subject_override, body_text_override, body_html_override
+              outreach_draft_id, outreach_step_id, subject_override, body_text_override, body_html_override, run_id
             )
-            SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+            SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
             WHERE NOT EXISTS (
               SELECT 1 FROM sending_queue
               WHERE outreach_draft_id = $6
@@ -1791,6 +1817,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
             draft.step_subject,
             draft.step_body_text,
             draft.step_body_text.replace(/\n/g, "<br>"),
+            run.id,
           ],
         );
         if (!queue.rowCount) {
@@ -1802,9 +1829,20 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
         queued.push({ id: draft.id, email: draft.to_email, queueId: queue.rows[0].id });
       }
 
+      await client.query(
+        `
+          UPDATE outreach_runs
+          SET total_recipients = $2,
+              status = CASE WHEN $2 > 0 THEN 'active' ELSE 'empty' END,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [run.id, queued.length],
+      );
+
       await client.query("COMMIT");
-      await logEvent("outreach_drafts_queued", { payload: { mode, queued: queued.length, errors: errors.length } });
-      return { queued: queued.length, errors, items: queued, mode };
+      await logEvent("outreach_drafts_queued", { payload: { mode, queued: queued.length, errors: errors.length, runId: run.id } });
+      return { queued: queued.length, errors, items: queued, mode, runId: run.id };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -1812,6 +1850,394 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   });
 
   res.json(summary);
+}));
+
+app.get("/api/outreach/runs", asyncHandler(async (_req, res) => {
+  const result = await query(`
+    SELECT r.*,
+      (SELECT count(DISTINCT q.lead_id)::int FROM sending_queue q WHERE q.run_id = r.id AND q.lead_id IS NOT NULL) AS recipients,
+      (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'sent') AS sent_messages,
+      (SELECT count(DISTINCT msg.lead_id)::int FROM messages msg WHERE msg.run_id = r.id AND msg.direction = 'inbound' AND msg.lead_id IS NOT NULL) AS replies,
+      (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status IN ('pending','retrying','running')) AS active_queue,
+      (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'cancelled') AS cancelled_queue,
+      (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'failed') AS failed_queue
+    FROM outreach_runs r
+    ORDER BY r.created_at DESC
+    LIMIT 50
+  `);
+  res.json(result.rows);
+}));
+
+app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
+  const run = (await query("SELECT * FROM outreach_runs WHERE id = $1", [req.params.id])).rows[0];
+  if (!run) return res.status(404).json({ error: "not_found" });
+
+  const rows = await query(
+    `
+      WITH recipients AS (
+        SELECT DISTINCT lead_id
+        FROM sending_queue
+        WHERE run_id = $1 AND lead_id IS NOT NULL
+        UNION
+        SELECT DISTINCT lead_id
+        FROM messages
+        WHERE run_id = $1 AND lead_id IS NOT NULL
+      )
+      SELECT
+        l.id AS lead_id,
+        l.company,
+        l.email,
+        l.contact_name,
+        l.segment,
+        l.domain,
+        l.status AS lead_status,
+        mbox.email AS mailbox_email,
+        conv.id AS conversation_id,
+        conv.status AS conversation_status,
+        conv.classification AS conversation_classification,
+        conv.next_action,
+        COALESCE(queue.items, '[]'::json) AS queue_items,
+        COALESCE(history.messages, '[]'::json) AS messages
+      FROM recipients r
+      JOIN leads l ON l.id = r.lead_id
+      LEFT JOIN LATERAL (
+        SELECT q.mailbox_id
+        FROM sending_queue q
+        WHERE q.run_id = $1 AND q.lead_id = l.id AND q.mailbox_id IS NOT NULL
+        ORDER BY q.created_at ASC
+        LIMIT 1
+      ) first_queue ON true
+      LEFT JOIN mailboxes mbox ON mbox.id = first_queue.mailbox_id
+      LEFT JOIN LATERAL (
+        SELECT oc.*
+        FROM outreach_conversations oc
+        WHERE oc.lead_id = l.id
+        ORDER BY oc.updated_at DESC
+        LIMIT 1
+      ) conv ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'id', item.id,
+          'status', item.status,
+          'requires_approval', item.requires_approval,
+          'approved_at', item.approved_at,
+          'scheduled_at', item.scheduled_at,
+          'updated_at', item.updated_at,
+          'last_error', item.last_error,
+          'sent_at', item.sent_at,
+          'step_position', item.step_position,
+          'step_name', item.step_name,
+          'subject', item.subject,
+          'outreach_draft_id', item.outreach_draft_id,
+          'outreach_step_id', item.outreach_step_id,
+          'campaign_step_id', item.campaign_step_id
+        ) ORDER BY item.step_position ASC NULLS LAST, item.scheduled_at ASC) AS items
+        FROM (
+          SELECT q.*,
+                 sent.sent_at,
+                 COALESCE(cs.position, ods.position, 1) AS step_position,
+                 COALESCE(cs.name, 'Письмо ' || COALESCE(ods.position, 1)::text) AS step_name,
+                 COALESCE(q.subject_override, cs.subject_template, ods.subject) AS subject
+          FROM sending_queue q
+          LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
+          LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+          LEFT JOIN messages sent ON sent.id = q.sent_message_id
+          WHERE q.run_id = $1 AND q.lead_id = l.id
+        ) item
+      ) queue ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'id', msg.id,
+          'direction', msg.direction,
+          'type', msg.type,
+          'status', msg.status,
+          'subject', msg.subject,
+          'body_text', left(COALESCE(msg.body_text, ''), 600),
+          'reply_classification', msg.reply_classification,
+          'ai_classification', msg.ai_classification,
+          'sent_at', msg.sent_at,
+          'received_at', msg.received_at,
+          'created_at', msg.created_at,
+          'step_position', COALESCE(cs_msg.position, ods_msg.position, 1),
+          'step_name', COALESCE(cs_msg.name, 'Письмо ' || COALESCE(ods_msg.position, 1)::text)
+        ) ORDER BY COALESCE(msg.received_at, msg.sent_at, msg.created_at) ASC) AS messages
+        FROM messages msg
+        LEFT JOIN campaign_steps cs_msg ON cs_msg.id = msg.campaign_step_id
+        LEFT JOIN outreach_draft_steps ods_msg ON ods_msg.id = msg.outreach_step_id
+        WHERE msg.run_id = $1 AND msg.lead_id = l.id AND msg.type <> 'warmup'
+      ) history ON true
+      ORDER BY l.company NULLS LAST, l.email
+    `,
+    [req.params.id],
+  );
+
+  res.json({ run, rows: rows.rows });
+}));
+
+app.post("/api/outreach/runs/:id/stop-followups", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
+  const leadIds = parseArray(req.body.lead_ids).filter(isUuid);
+  if (!leadIds.length) return res.status(400).json({ error: "lead_ids_required" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const cancelled = await client.query(
+        `
+          WITH target_queue AS (
+            SELECT q.id
+            FROM sending_queue q
+            LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
+            LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+            WHERE q.run_id = $1
+              AND q.lead_id = ANY($2::uuid[])
+              AND q.status IN ('pending','retrying','running')
+              AND COALESCE(cs.position, ods.position, 1) > 1
+          )
+          UPDATE sending_queue q
+          SET status = 'cancelled',
+              last_error = 'Follow-up остановлен пользователем в запуске',
+              updated_at = now()
+          WHERE q.id IN (SELECT id FROM target_queue)
+          RETURNING q.outreach_step_id
+        `,
+        [req.params.id, leadIds],
+      );
+      const pausedEnrollments = await client.query(
+        `
+          UPDATE enrollments
+          SET status = 'paused',
+              stopped_at = now(),
+              stop_reason = 'run_followups_stopped_by_user'
+          WHERE id IN (
+            SELECT DISTINCT enrollment_id
+            FROM sending_queue
+            WHERE run_id = $1
+              AND lead_id = ANY($2::uuid[])
+              AND enrollment_id IS NOT NULL
+          )
+            AND status = 'active'
+        `,
+        [req.params.id, leadIds],
+      );
+      const pausedDrafts = await client.query(
+        `
+          UPDATE outreach_drafts
+          SET status = 'paused',
+              updated_at = now()
+          WHERE id IN (
+            SELECT DISTINCT outreach_draft_id
+            FROM sending_queue
+            WHERE run_id = $1
+              AND lead_id = ANY($2::uuid[])
+              AND outreach_draft_id IS NOT NULL
+          )
+            AND status IN ('queued','active_sequence')
+        `,
+        [req.params.id, leadIds],
+      );
+      const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
+      let cancelledSteps = 0;
+      if (stepIds.length) {
+        cancelledSteps = (await client.query(
+          "UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])",
+          [stepIds],
+        )).rowCount;
+      }
+      await client.query("COMMIT");
+      return {
+        stopped: leadIds.length,
+        cancelled_queue: cancelled.rowCount,
+        cancelled_steps: cancelledSteps,
+        paused_enrollments: pausedEnrollments.rowCount,
+        paused_drafts: pausedDrafts.rowCount,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("outreach_run_followups_stopped", {
+    payload: { runId: req.params.id, leadIds, ...result },
+  });
+  res.json(result);
+}));
+
+app.post("/api/outreach/runs/:id/continue-followups", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
+  const leadIds = parseArray(req.body.lead_ids).filter(isUuid);
+  if (!leadIds.length) return res.status(400).json({ error: "lead_ids_required" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const resumedEnrollments = await client.query(
+        `
+          UPDATE enrollments
+          SET status = 'active',
+              stopped_at = NULL,
+              stop_reason = NULL
+          WHERE id IN (
+            SELECT DISTINCT enrollment_id
+            FROM sending_queue
+            WHERE run_id = $1
+              AND lead_id = ANY($2::uuid[])
+              AND enrollment_id IS NOT NULL
+          )
+            AND status = 'paused'
+            AND stop_reason = 'run_followups_stopped_by_user'
+        `,
+        [req.params.id, leadIds],
+      );
+      const resumedDrafts = await client.query(
+        `
+          UPDATE outreach_drafts
+          SET status = 'active_sequence',
+              updated_at = now()
+          WHERE id IN (
+            SELECT DISTINCT outreach_draft_id
+            FROM sending_queue
+            WHERE run_id = $1
+              AND lead_id = ANY($2::uuid[])
+              AND outreach_draft_id IS NOT NULL
+          )
+            AND status = 'paused'
+        `,
+        [req.params.id, leadIds],
+      );
+      const approvedQueue = await client.query(
+        `
+          WITH target_queue AS (
+            SELECT q.id
+            FROM sending_queue q
+            LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
+            LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+            WHERE q.run_id = $1
+              AND q.lead_id = ANY($2::uuid[])
+              AND q.status IN ('pending','retrying')
+              AND q.requires_approval = true
+              AND q.approved_at IS NULL
+              AND COALESCE(cs.position, ods.position, 1) > 1
+          )
+          UPDATE sending_queue q
+          SET requires_approval = false,
+              approved_at = now(),
+              last_error = NULL,
+              updated_at = now()
+          WHERE q.id IN (SELECT id FROM target_queue)
+          RETURNING q.outreach_step_id
+        `,
+        [req.params.id, leadIds],
+      );
+      const restoredQueue = await client.query(
+        `
+          WITH target_queue AS (
+            SELECT q.id
+            FROM sending_queue q
+            LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
+            LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+            WHERE q.run_id = $1
+              AND q.lead_id = ANY($2::uuid[])
+              AND q.status = 'cancelled'
+              AND COALESCE(cs.position, ods.position, 1) > 1
+              AND q.last_error IN ('Follow-up остановлен пользователем в запуске', 'Цепочка остановлена пользователем')
+          )
+          UPDATE sending_queue q
+          SET status = 'pending',
+              scheduled_at = CASE WHEN scheduled_at <= now() THEN now() ELSE scheduled_at END,
+              last_error = NULL,
+              updated_at = now()
+          WHERE q.id IN (SELECT id FROM target_queue)
+          RETURNING q.outreach_step_id
+        `,
+        [req.params.id, leadIds],
+      );
+      const stepIds = [...approvedQueue.rows, ...restoredQueue.rows].map((row) => row.outreach_step_id).filter(Boolean);
+      let restoredSteps = 0;
+      if (stepIds.length) {
+        restoredSteps = (await client.query(
+          "UPDATE outreach_draft_steps SET status = 'queued', updated_at = now() WHERE id = ANY($1::uuid[])",
+          [stepIds],
+        )).rowCount;
+      }
+      await client.query("COMMIT");
+      return {
+        continued: leadIds.length,
+        approved_queue: approvedQueue.rowCount,
+        restored_queue: restoredQueue.rowCount,
+        restored_steps: restoredSteps,
+        resumed_enrollments: resumedEnrollments.rowCount,
+        resumed_drafts: resumedDrafts.rowCount,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("outreach_run_followups_continued", {
+    payload: { runId: req.params.id, leadIds, ...result },
+  });
+  res.json(result);
+}));
+
+app.post("/api/outreach/runs/:id/suppress", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
+  const leadIds = parseArray(req.body.lead_ids).filter(isUuid);
+  const scope = cleanText(req.body.scope) === "domain" ? "domain" : "email";
+  if (!leadIds.length) return res.status(400).json({ error: "lead_ids_required" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const leads = await client.query("SELECT id, email, domain FROM leads WHERE id = ANY($1::uuid[])", [leadIds]);
+      for (const lead of leads.rows) {
+        await client.query(
+          `
+            INSERT INTO suppressions(email, domain, reason, source)
+            VALUES ($1,$2,'run_review','run_review')
+            ON CONFLICT DO NOTHING
+          `,
+          [scope === "email" ? lead.email : null, scope === "domain" ? lead.domain : null],
+        );
+      }
+      const suppressed = await client.query(
+        `
+          UPDATE leads
+          SET status = 'suppressed',
+              suppressed_at = now(),
+              suppression_reason = 'run_review',
+              updated_at = now()
+          WHERE id = ANY($1::uuid[])
+        `,
+        [leadIds],
+      );
+      const cancelled = await client.query(
+        `
+          UPDATE sending_queue
+          SET status = 'cancelled',
+              last_error = 'Контакт добавлен в стоп-лист из запуска',
+              updated_at = now()
+          WHERE run_id = $1
+            AND lead_id = ANY($2::uuid[])
+            AND status IN ('pending','retrying','running')
+        `,
+        [req.params.id, leadIds],
+      );
+      await client.query("COMMIT");
+      return { suppressed: suppressed.rowCount, cancelled_queue: cancelled.rowCount, scope };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("outreach_run_suppressed", {
+    payload: { runId: req.params.id, leadIds, ...result },
+  });
+  res.json(result);
 }));
 
 app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
@@ -3830,29 +4256,52 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
   if (!preflight.ok && !toBool(req.body.force)) return res.status(400).json(preflight);
 
   const launchPlan = await campaignLaunchPlan(req.params.id);
-  const campaign = (await query("SELECT manual_approval_required FROM campaigns WHERE id = $1", [req.params.id])).rows[0];
+  const campaign = (await query("SELECT id, name, manual_approval_required FROM campaigns WHERE id = $1", [req.params.id])).rows[0];
   if (!campaign) return res.status(404).json({ error: "not_found" });
   const requiresApproval = mode === "manual" || (mode === "auto" && campaign.manual_approval_required);
-  const result = await query(
-    `
-      INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at)
-      SELECT e.id, e.lead_id, e.campaign_id, s.id, e.mailbox_id, $2, $3,
-             now() + (
-               (row_number() OVER (ORDER BY e.started_at) - 1)
-               * (GREATEST(0, COALESCE(m.min_delay_minutes, c.min_delay_minutes, 7)) || ' minutes')::interval
-             )
-      FROM enrollments e
-      JOIN campaigns c ON c.id = e.campaign_id
-      JOIN campaign_steps s ON s.campaign_id = e.campaign_id AND s.position = e.current_step
-      JOIN mailboxes m ON m.id = e.mailbox_id
-      WHERE e.campaign_id = $1 AND e.status = 'active'
-      ON CONFLICT DO NOTHING
-      RETURNING id
-    `,
-    [req.params.id, mode, requiresApproval],
-  );
-  await query("UPDATE campaigns SET status = 'active', test_mode = $2 WHERE id = $1", [req.params.id, mode === "test"]);
-  res.json({ queued: result.rowCount, mode, requiresApproval, launchPlan, preflight });
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const run = (await client.query(
+        `
+          INSERT INTO outreach_runs(source_type, source_id, title, mode)
+          VALUES ('campaign',$1,$2,$3)
+          RETURNING *
+        `,
+        [campaign.id, outreachRunTitle(`Кампания: ${campaign.name}`), mode],
+      )).rows[0];
+      const queue = await client.query(
+        `
+          INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at, run_id)
+          SELECT e.id, e.lead_id, e.campaign_id, s.id, e.mailbox_id, $2, $3,
+                 now() + (
+                   (row_number() OVER (ORDER BY e.started_at) - 1)
+                   * (GREATEST(0, COALESCE(m.min_delay_minutes, c.min_delay_minutes, 7)) || ' minutes')::interval
+                 ),
+                 $4
+          FROM enrollments e
+          JOIN campaigns c ON c.id = e.campaign_id
+          JOIN campaign_steps s ON s.campaign_id = e.campaign_id AND s.position = e.current_step
+          JOIN mailboxes m ON m.id = e.mailbox_id
+          WHERE e.campaign_id = $1 AND e.status = 'active'
+          ON CONFLICT DO NOTHING
+          RETURNING id
+        `,
+        [req.params.id, mode, requiresApproval, run.id],
+      );
+      await client.query(
+        "UPDATE outreach_runs SET total_recipients = $2, status = CASE WHEN $2 > 0 THEN 'active' ELSE 'empty' END, updated_at = now() WHERE id = $1",
+        [run.id, queue.rowCount],
+      );
+      await client.query("UPDATE campaigns SET status = 'active', test_mode = $2 WHERE id = $1", [req.params.id, mode === "test"]);
+      await client.query("COMMIT");
+      return { queued: queue.rowCount, runId: run.id };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+  res.json({ queued: result.queued, mode, requiresApproval, launchPlan, preflight, runId: result.runId });
 }));
 
 app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {

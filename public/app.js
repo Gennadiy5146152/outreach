@@ -21,6 +21,12 @@ const state = {
   queue: [],
   queueFilter: "waiting",
   expandedQueueGroups: new Set(),
+  runs: [],
+  runDetail: null,
+  activeRunId: null,
+  runFilter: "all",
+  selectedRunLeadIds: new Set(),
+  expandedRunRows: new Set(),
   suppressions: [],
   warmup: null,
   warmupPage: 1,
@@ -70,6 +76,7 @@ const VIEW_TITLES = {
   start: "Что делать",
   outreachImport: "Импорт Excel",
   outreachDrafts: "Черновики",
+  runs: "Запуски",
   review: "Требуют решения",
   conversations: "Диалоги",
   aiExport: "Экспорт для ИИ",
@@ -950,6 +957,263 @@ function renderQueueGroupDetails(group) {
       </td>
     </tr>
   `;
+}
+
+function runModeLabel(value) {
+  return queueModeLabel(value) || value || "";
+}
+
+function runRowQueueItems(row) {
+  return Array.isArray(row.queue_items) ? row.queue_items : [];
+}
+
+function runRowMessages(row) {
+  return Array.isArray(row.messages) ? row.messages : [];
+}
+
+function runStepItem(row, position) {
+  return runRowQueueItems(row)
+    .filter((item) => Number(item.step_position || 1) === position)
+    .sort((a, b) => new Date(a.scheduled_at || a.updated_at || 0) - new Date(b.scheduled_at || b.updated_at || 0))
+    .at(-1) || null;
+}
+
+function runOutboundMessage(row, position) {
+  return runRowMessages(row)
+    .filter((message) => message.direction === "outbound" && Number(message.step_position || 1) === position)
+    .at(-1) || null;
+}
+
+function runLatestInbound(row) {
+  return runRowMessages(row)
+    .filter((message) => message.direction === "inbound")
+    .at(-1) || null;
+}
+
+function runFollowupItems(row) {
+  return runRowQueueItems(row).filter((item) => Number(item.step_position || 1) > 1);
+}
+
+function runHasActiveFollowup(row) {
+  return runFollowupItems(row).some((item) => ["pending", "retrying", "running"].includes(item.status));
+}
+
+function runHasStoppedFollowup(row) {
+  return row.conversation_status === "waiting_reply_review"
+    || row.conversation_status === "manual_reply_needed"
+    || runFollowupItems(row).some((item) => item.status === "cancelled" || (item.requires_approval && !item.approved_at));
+}
+
+function runHasError(row) {
+  return runRowQueueItems(row).some((item) => item.status === "failed");
+}
+
+function runNeedsDecision(row) {
+  return Boolean(runLatestInbound(row)) && (runHasActiveFollowup(row) || runHasStoppedFollowup(row) || row.next_action);
+}
+
+function runStatusText(item, sentMessage) {
+  if (sentMessage) return `Отправлено · ${fmtDate(sentMessage.sent_at || sentMessage.created_at)}`;
+  if (!item) return "Нет шага";
+  if (item.requires_approval && !item.approved_at) return "Ждет подтверждения";
+  if (item.status === "pending") return `Запланировано · ${fmtDate(item.scheduled_at)}`;
+  if (item.status === "retrying") return `Повтор · ${fmtDate(item.scheduled_at)}`;
+  if (item.status === "running") return "Отправляется";
+  if (item.status === "cancelled") return "Отменено";
+  if (item.status === "failed") return item.last_error || "Ошибка";
+  return statusLabel(item.status);
+}
+
+function runStepCell(row, position) {
+  const item = runStepItem(row, position);
+  const sent = runOutboundMessage(row, position);
+  const subject = sent?.subject || item?.subject || stepName(position);
+  return `
+    <div class="run-step">
+      <strong>${esc(stepName(position))}</strong>
+      <span>${esc(runStatusText(item, sent))}</span>
+      <em>${esc(subject || "")}</em>
+    </div>
+  `;
+}
+
+function runReplyCell(row) {
+  const inbound = runLatestInbound(row);
+  if (!inbound) return `<span class="muted">Нет ответа</span>`;
+  return `
+    <div class="run-reply">
+      <strong>${esc(statusLabel(inbound.reply_classification || inbound.ai_classification || "unknown"))}</strong>
+      <span>${esc(fmtDate(inbound.received_at || inbound.created_at))}</span>
+      <em>${esc(inbound.subject || "Без темы")}</em>
+    </div>
+  `;
+}
+
+function runNextActionText(row) {
+  if (runHasError(row)) return "Проверить ошибку";
+  if (runLatestInbound(row)) return runHasStoppedFollowup(row) ? "Ответ получен, follow-up остановлен/ждет решения" : "Ответ получен, останови follow-up";
+  if (runHasActiveFollowup(row)) return "Ждем ответа или следующий follow-up";
+  if (runFollowupItems(row).some((item) => item.status === "cancelled")) return "Follow-up остановлен";
+  return statusLabel(row.conversation_status) || "В работе";
+}
+
+function runRowVisible(row) {
+  if (state.runFilter === "waiting") return !runLatestInbound(row) && !runHasError(row);
+  if (state.runFilter === "replied") return Boolean(runLatestInbound(row));
+  if (state.runFilter === "decision") return runNeedsDecision(row);
+  if (state.runFilter === "stopped") return runHasStoppedFollowup(row);
+  if (state.runFilter === "errors") return runHasError(row);
+  return true;
+}
+
+function visibleRunRows() {
+  return (state.runDetail?.rows || []).filter(runRowVisible);
+}
+
+function runRowsStats(rows) {
+  return {
+    total: rows.length,
+    replied: rows.filter(runLatestInbound).length,
+    waiting: rows.filter((row) => !runLatestInbound(row)).length,
+    decision: rows.filter(runNeedsDecision).length,
+    stopped: rows.filter(runHasStoppedFollowup).length,
+    errors: rows.filter(runHasError).length,
+  };
+}
+
+function runTimeline(row) {
+  const queueEvents = runRowQueueItems(row).map((item) => ({
+    kind: "queue",
+    date: item.sent_at || item.scheduled_at || item.updated_at,
+    html: `<strong>${esc(stepName(item.step_position))} · ${esc(statusLabel(item.status))}</strong><span>${esc(runStatusText(item, null))}</span>${item.last_error ? `<em>${esc(item.last_error)}</em>` : ""}`,
+  }));
+  const messageEvents = runRowMessages(row).map((message) => ({
+    kind: "message",
+    date: message.received_at || message.sent_at || message.created_at,
+    html: `<strong>${message.direction === "inbound" ? "Ответ" : "Исходящее"} · ${esc(statusLabel(message.reply_classification || message.status))}</strong><span>${esc(fmtDate(message.received_at || message.sent_at || message.created_at))}</span><em>${esc(message.subject || "")}</em>${message.body_text ? `<pre>${esc(message.body_text)}</pre>` : ""}`,
+  }));
+  return [...queueEvents, ...messageEvents]
+    .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
+    .map((event) => `<article class="run-timeline-event ${event.kind}">${event.html}</article>`)
+    .join("");
+}
+
+function renderRunRows() {
+  const detail = state.runDetail;
+  const rows = detail?.rows || [];
+  const visibleRows = visibleRunRows();
+  const stats = runRowsStats(rows);
+  state.selectedRunLeadIds = new Set([...state.selectedRunLeadIds].filter((id) => visibleRows.some((row) => row.lead_id === id)));
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => state.selectedRunLeadIds.has(row.lead_id));
+
+  $("#runDetailTitle").textContent = detail?.run?.title || "Таблица запуска";
+  $("#runDetailMeta").textContent = detail?.run
+    ? `${runModeLabel(detail.run.mode)} · ${fmtDate(detail.run.created_at)}`
+    : "Выбери запуск выше.";
+  $("#runRowsSummary").innerHTML = `
+    <span>Всего: <strong>${stats.total}</strong></span>
+    <span>Молчат: <strong>${stats.waiting}</strong></span>
+    <span>Ответили: <strong>${stats.replied}</strong></span>
+    <span>Нужна реакция: <strong>${stats.decision}</strong></span>
+    <span>Остановлены: <strong>${stats.stopped}</strong></span>
+    <span>Ошибки: <strong>${stats.errors}</strong></span>
+    <span>Выбрано: <strong>${state.selectedRunLeadIds.size}</strong></span>
+  `;
+  $$("[data-run-filter]").forEach((button) => button.classList.toggle("active", button.dataset.runFilter === state.runFilter));
+  $("#runRowsSelectVisible").checked = allVisibleSelected;
+  $("#runRowsSelectVisible").disabled = visibleRows.length === 0;
+  $("#runBulkSelection").textContent = `Выбрано: ${state.selectedRunLeadIds.size} из ${visibleRows.length} на экране`;
+  ["runBulkStopBtn", "runBulkContinueBtn", "runBulkSuppressBtn"].forEach((id) => {
+    const button = $(`#${id}`);
+    if (button) button.disabled = state.selectedRunLeadIds.size === 0;
+  });
+  $("#runRowsTable").innerHTML = `
+    <thead>
+      <tr>
+        <th><input id="runRowsSelectAll" class="compact-check" type="checkbox" ${allVisibleSelected ? "checked" : ""} /></th>
+        <th>Компания</th>
+        <th>Первое письмо</th>
+        <th>Ответ</th>
+        <th>Follow-up 1</th>
+        <th>Follow-up 2</th>
+        <th>Follow-up 3</th>
+        <th>Следующее действие</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${visibleRows.length ? visibleRows.map((row) => {
+        const expanded = state.expandedRunRows.has(row.lead_id);
+        return `
+          <tr class="run-row ${runNeedsDecision(row) ? "needs-decision" : ""}">
+            <td><input class="compact-check" type="checkbox" data-run-lead-select="${row.lead_id}" ${state.selectedRunLeadIds.has(row.lead_id) ? "checked" : ""} /></td>
+            <td>
+              <div class="run-recipient">
+                <strong>${esc(row.company || "Без компании")}</strong>
+                <span>${esc(row.email)}</span>
+                <em>${esc([row.contact_name, row.segment, row.mailbox_email].filter(Boolean).join(" · "))}</em>
+              </div>
+            </td>
+            <td>${runStepCell(row, 1)}</td>
+            <td>${runReplyCell(row)}</td>
+            <td>${runStepCell(row, 2)}</td>
+            <td>${runStepCell(row, 3)}</td>
+            <td>${runStepCell(row, 4)}</td>
+            <td><div class="run-next"><strong>${esc(runNextActionText(row))}</strong><span>${esc(nextActionLabel(row.next_action))}</span></div></td>
+            <td>
+              <div class="row-actions">
+                <button class="small-button" data-run-row-toggle="${row.lead_id}">${expanded ? "Скрыть" : "История"}</button>
+                <button class="small-button" data-run-stop-followups="${row.lead_id}">Остановить follow-up</button>
+                <button class="small-button" data-run-continue-followups="${row.lead_id}">Продолжить</button>
+                <button class="small-button" data-run-suppress="${row.lead_id}">В стоп-лист</button>
+                ${row.conversation_id ? `<button class="small-button" data-open-conversation="${row.conversation_id}">Диалог</button>` : ""}
+              </div>
+            </td>
+          </tr>
+          ${expanded ? `<tr class="run-history-row"><td colspan="9"><div class="run-timeline">${runTimeline(row) || "<p class=\"muted\">Истории пока нет.</p>"}</div></td></tr>` : ""}
+        `;
+      }).join("") : `<tr><td colspan="9" class="muted">По выбранному фильтру строк нет.</td></tr>`}
+    </tbody>
+  `;
+}
+
+async function loadRuns(preferredRunId = state.activeRunId) {
+  if (!$("#runsList")) return;
+  state.runs = await api("/api/outreach/runs");
+  if (preferredRunId) state.activeRunId = preferredRunId;
+  if (!state.activeRunId && state.runs.length) state.activeRunId = state.runs[0].id;
+  const activeExists = state.runs.some((run) => run.id === state.activeRunId);
+  if (!activeExists) state.activeRunId = state.runs[0]?.id || null;
+  $("#runsSummary").innerHTML = `
+    <span>Запусков: <strong>${state.runs.length}</strong></span>
+    <span>Активный: <strong>${esc(state.runs.find((run) => run.id === state.activeRunId)?.title || "не выбран")}</strong></span>
+  `;
+  $("#runsList").innerHTML = state.runs.length
+    ? state.runs.map((run) => `
+      <button class="run-tab ${run.id === state.activeRunId ? "active" : ""}" data-select-run="${run.id}">
+        <strong>${esc(run.title)}</strong>
+        <span>${esc(fmtDate(run.created_at))} · ${Number(run.recipients || run.total_recipients || 0)} получателей · ${Number(run.replies || 0)} ответов · ${Number(run.active_queue || 0)} в работе</span>
+      </button>
+    `).join("")
+    : `<p class="muted">Запусков пока нет. Запусти кампанию или выбранные черновики.</p>`;
+  if (state.activeRunId) {
+    state.runDetail = await api(`/api/outreach/runs/${state.activeRunId}`);
+  } else {
+    state.runDetail = null;
+  }
+  renderRunRows();
+}
+
+async function runActionForLeads(endpoint, leadIds, title, message) {
+  if (!state.activeRunId || !leadIds.length) return;
+  const result = await api(`/api/outreach/runs/${state.activeRunId}/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lead_ids: leadIds }),
+  });
+  state.selectedRunLeadIds = new Set();
+  await Promise.all([loadRuns(state.activeRunId), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations(), loadSuppressions()]);
+  setActionResult({ status: "success", title, message: message(result), details: result });
 }
 
 function stepName(position) {
@@ -3347,6 +3611,7 @@ async function refresh() {
     loadLeads(),
     loadOutreachImports(),
     loadOutreachDrafts(),
+    loadRuns(),
     loadMailboxes(),
     loadCampaigns(),
     loadQueue(),
@@ -3398,6 +3663,38 @@ $$("[data-queue-filter]").forEach((button) => button.addEventListener("click", (
   state.queueFilter = button.dataset.queueFilter || "waiting";
   loadQueue();
 }));
+$$("[data-run-filter]").forEach((button) => button.addEventListener("click", () => {
+  state.runFilter = button.dataset.runFilter || "all";
+  renderRunRows();
+}));
+$("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
+  title: "Обновление запусков",
+  button: event.currentTarget,
+}, async () => {
+  await loadRuns(state.activeRunId);
+  setActionResult({ status: "success", title: "Обновление запусков", message: "Таблица запусков обновлена." });
+}));
+$("#runBulkStopBtn")?.addEventListener("click", (event) => runAction({
+  title: "Остановка follow-up",
+  button: event.currentTarget,
+}, async () => {
+  const leadIds = [...state.selectedRunLeadIds];
+  await runActionForLeads("stop-followups", leadIds, "Остановка follow-up", (result) => `Остановлено строк: ${result.stopped}. Отменено писем: ${result.cancelled_queue}.`);
+}));
+$("#runBulkContinueBtn")?.addEventListener("click", (event) => runAction({
+  title: "Продолжение follow-up",
+  button: event.currentTarget,
+}, async () => {
+  const leadIds = [...state.selectedRunLeadIds];
+  await runActionForLeads("continue-followups", leadIds, "Продолжение follow-up", (result) => `Возобновлено строк: ${result.continued}. Разрешено писем: ${result.approved_queue || 0}. Восстановлено писем: ${result.restored_queue}.`);
+}));
+$("#runBulkSuppressBtn")?.addEventListener("click", (event) => runAction({
+  title: "Добавление в стоп-лист",
+  button: event.currentTarget,
+}, async () => {
+  const leadIds = [...state.selectedRunLeadIds];
+  await runActionForLeads("suppress", leadIds, "Добавление в стоп-лист", (result) => `Добавлено в стоп-лист: ${result.suppressed}. Отменено писем: ${result.cancelled_queue}.`);
+}));
 $$("[data-inbox-filter]").forEach((button) => button.addEventListener("click", () => {
   state.inboxFilter = button.dataset.inboxFilter || "all";
   loadInbox();
@@ -3442,6 +3739,23 @@ $("#campaignLeadsTable").addEventListener("change", (event) => {
       details: result,
     });
   });
+});
+
+document.body.addEventListener("change", (event) => {
+  const leadId = event.target.dataset.runLeadSelect;
+  if (leadId) {
+    if (event.target.checked) state.selectedRunLeadIds.add(leadId);
+    else state.selectedRunLeadIds.delete(leadId);
+    renderRunRows();
+    return;
+  }
+  if (["runRowsSelectAll", "runRowsSelectVisible"].includes(event.target.id)) {
+    const visibleRows = visibleRunRows();
+    state.selectedRunLeadIds = event.target.checked
+      ? new Set(visibleRows.map((row) => row.lead_id))
+      : new Set();
+    renderRunRows();
+  }
 });
 
 document.body.addEventListener("focusin", (event) => {
@@ -3713,8 +4027,9 @@ async function startOutreachDrafts(draftIds) {
   });
   state.selectedOutreachDraftIds.clear();
   clearOutreachDraftLaunchReview();
-  await Promise.all([loadOutreachDrafts(), loadQueue()]);
-  switchView("queue");
+  state.activeRunId = result.runId || state.activeRunId;
+  await Promise.all([loadOutreachDrafts(), loadQueue(), loadRuns(result.runId || state.activeRunId)]);
+  if (result.runId) switchView("runs");
   setActionResult({
     status: result.errors?.length ? "warn" : "success",
     title: "Запуск персональных писем",
@@ -4388,8 +4703,9 @@ async function startCampaign(mode) {
     body: JSON.stringify({ mode }),
   });
   $("#preflightResult").innerHTML = renderPreflightResult(result.preflight);
+  state.activeRunId = result.runId || state.activeRunId;
   await refresh();
-  if (result.queued > 0) switchView("queue");
+  if (result.queued > 0 && result.runId) switchView("runs");
   const message = result.queued === 0
     ? launchEmptyHint(result)
     : result.requiresApproval
@@ -4427,6 +4743,11 @@ document.body.addEventListener("click", async (event) => {
   const toggleWarmupId = event.target.dataset.toggleWarmup;
   const approveId = event.target.dataset.approve;
   const cancelSendId = event.target.dataset.cancelSend;
+  const selectRunId = event.target.closest("[data-select-run]")?.dataset.selectRun;
+  const runRowToggle = event.target.dataset.runRowToggle;
+  const runStopLeadId = event.target.dataset.runStopFollowups;
+  const runContinueLeadId = event.target.dataset.runContinueFollowups;
+  const runSuppressLeadId = event.target.dataset.runSuppress;
   const deleteAttachmentId = event.target.dataset.deleteAttachment;
   const deleteSuppressionId = event.target.dataset.deleteSuppression;
   const warmupPage = event.target.dataset.warmupPage;
@@ -4434,6 +4755,40 @@ document.body.addEventListener("click", async (event) => {
   if (warmupPage) {
     state.warmupPage = Number(warmupPage);
     await loadWarmup();
+    return;
+  }
+  if (selectRunId) {
+    state.activeRunId = selectRunId;
+    state.selectedRunLeadIds = new Set();
+    state.expandedRunRows = new Set();
+    await loadRuns(selectRunId);
+    return;
+  }
+  if (runRowToggle) {
+    if (state.expandedRunRows.has(runRowToggle)) state.expandedRunRows.delete(runRowToggle);
+    else state.expandedRunRows.add(runRowToggle);
+    renderRunRows();
+    return;
+  }
+  if (runStopLeadId) {
+    await runAction({
+      title: "Остановка follow-up",
+      button: event.target,
+    }, async () => runActionForLeads("stop-followups", [runStopLeadId], "Остановка follow-up", (result) => `Остановлено строк: ${result.stopped}. Отменено писем: ${result.cancelled_queue}.`));
+    return;
+  }
+  if (runContinueLeadId) {
+    await runAction({
+      title: "Продолжение follow-up",
+      button: event.target,
+    }, async () => runActionForLeads("continue-followups", [runContinueLeadId], "Продолжение follow-up", (result) => `Возобновлено строк: ${result.continued}. Разрешено писем: ${result.approved_queue || 0}. Восстановлено писем: ${result.restored_queue}.`));
+    return;
+  }
+  if (runSuppressLeadId) {
+    await runAction({
+      title: "Добавление в стоп-лист",
+      button: event.target,
+    }, async () => runActionForLeads("suppress", [runSuppressLeadId], "Добавление в стоп-лист", (result) => `Добавлено в стоп-лист: ${result.suppressed}. Отменено писем: ${result.cancelled_queue}.`));
     return;
   }
   if (queueGroupRow && !event.target.closest("button,a,input,select,textarea")) {

@@ -22,6 +22,7 @@
           <span>Аутрич</span>
           <button data-view="outreachImport">Импорт Excel</button>
           <button data-view="outreachDrafts">Черновики</button>
+          <button data-view="runs">Запуски</button>
           <button data-view="queue">Очередь</button>
         </div>
         <div class="nav-group">
@@ -577,6 +578,48 @@
           </div>
           <div id="queueSummary" class="summary-line"></div>
           <div class="table-wrap"><table id="queueTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="runsView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Запуски рассылок</h2>
+              <p class="muted">Рабочая таблица по каждому старту: кому отправлено, кто ответил и где остановлены follow-up.</p>
+            </div>
+            <button id="reloadRunsBtn">Обновить запуски</button>
+          </div>
+          <div id="runsSummary" class="summary-line"></div>
+          <div id="runsList" class="run-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="runDetailTitle">Таблица запуска</h2>
+              <p id="runDetailMeta" class="muted">Выбери запуск выше.</p>
+            </div>
+            <div class="row-actions">
+              <button id="runBulkStopBtn" class="small-button">Остановить выбранные follow-up</button>
+              <button id="runBulkContinueBtn" class="small-button">Продолжить выбранные follow-up</button>
+              <button id="runBulkSuppressBtn" class="small-button">В стоп-лист выбранные</button>
+            </div>
+          </div>
+          <div class="quick-filters" aria-label="Фильтр строк запуска">
+            <button class="small-button active" data-run-filter="all">Все</button>
+            <button class="small-button" data-run-filter="waiting">Молчат</button>
+            <button class="small-button" data-run-filter="replied">Ответили</button>
+            <button class="small-button" data-run-filter="decision">Нужна реакция</button>
+            <button class="small-button" data-run-filter="stopped">Остановлены</button>
+            <button class="small-button" data-run-filter="errors">Ошибки</button>
+          </div>
+          <div id="runRowsSummary" class="summary-line"></div>
+          <div class="run-bulkbar">
+            <label class="check"><input id="runRowsSelectVisible" type="checkbox" /> Выбрать все строки по фильтру</label>
+            <span id="runBulkSelection" class="muted">Выбрано: 0</span>
+          </div>
+          <div class="table-wrap"><table id="runRowsTable"></table></div>
         </section>
       </section>
 
