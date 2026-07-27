@@ -55,7 +55,7 @@ export function escapeHtml(value = "") {
 export function renderTemplate(template, lead, mailbox, settings = {}) {
   const values = {
     company: lead.company || "",
-    contact: lead.contact_name || "коллеги",
+    contact: lead.contact_name || "Добрый день!",
     position: lead.position || "",
     website: lead.website || "",
     domain: lead.domain || "",

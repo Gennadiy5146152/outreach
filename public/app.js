@@ -2237,7 +2237,7 @@ function resetStepForm() {
   const form = $("#stepForm");
   form.reset();
   form.elements.step_id.value = "";
-  $("#htmlEditor").innerHTML = "Здравствуйте, {{contact}}.<br><br>Хочу обсудить {{company}} и {{pain}}.";
+  $("#htmlEditor").innerHTML = "{{contact}}<br><br>Хочу обсудить {{company}} и {{pain}}.";
   $("#stepSubmitBtn").textContent = "Добавить шаг";
   $("#stepEditResetBtn").hidden = true;
 }

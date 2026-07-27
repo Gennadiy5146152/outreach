@@ -30,7 +30,7 @@ for (const expected of [
 }
 
 for (const expected of [
-  "contact: lead.contact_name || \"коллеги\"",
+  "contact: lead.contact_name || \"Добрый день!\"",
   "new Set([\"company\", \"email\"])",
 ]) {
   if (!template.includes(expected)) {
