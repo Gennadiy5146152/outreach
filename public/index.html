@@ -23,6 +23,7 @@
           <button data-view="outreachImport">Импорт Excel</button>
           <button data-view="outreachDrafts">Черновики</button>
           <button data-view="runs">Запуски</button>
+          <button data-view="participation">Участие</button>
           <button data-view="queue">Очередь</button>
         </div>
         <div class="nav-group">
@@ -625,6 +626,34 @@
             <span id="runBulkSelection" class="muted">Выбрано: 0</span>
           </div>
           <div class="table-wrap"><table id="runRowsTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="participationView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Участие почт в рассылках</h2>
+              <p class="muted">Сводка по компаниям: какая почта получателя участвовала в каком запуске и с какого нашего ящика шла отправка.</p>
+            </div>
+            <button id="reloadParticipationBtn">Обновить участие</button>
+          </div>
+          <div class="lead-filters">
+            <input id="participationSearch" type="search" placeholder="Компания, email, наша почта или запуск" />
+            <select id="participationStatus">
+              <option value="">Все статусы</option>
+              <option value="active">В работе</option>
+              <option value="replied">Ответили</option>
+              <option value="stopped">Остановлено</option>
+              <option value="sent">Отправлено</option>
+              <option value="error">Ошибки</option>
+            </select>
+            <select id="participationMailbox"></select>
+            <select id="participationRun"></select>
+            <select id="participationCampaign"></select>
+          </div>
+          <div id="participationSummary" class="summary-line"></div>
+          <div class="table-wrap"><table id="participationTable"></table></div>
         </section>
       </section>
 

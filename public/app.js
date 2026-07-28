@@ -27,6 +27,20 @@ const state = {
   runFilter: "all",
   selectedRunLeadIds: new Set(),
   expandedRunRows: new Set(),
+  participationRows: [],
+  participationSummary: null,
+  participationFilters: {
+    search: "",
+    status: "",
+    mailbox_id: "",
+    run_id: "",
+    campaign_id: "",
+  },
+  participationOptions: {
+    mailboxes: [],
+    runs: [],
+    campaigns: [],
+  },
   suppressions: [],
   warmup: null,
   warmupPage: 1,
@@ -77,6 +91,7 @@ const VIEW_TITLES = {
   outreachImport: "Импорт Excel",
   outreachDrafts: "Черновики",
   runs: "Запуски",
+  participation: "Участие",
   review: "Требуют решения",
   conversations: "Диалоги",
   aiExport: "Экспорт для ИИ",
@@ -1204,6 +1219,151 @@ async function loadRuns(preferredRunId = state.activeRunId) {
   renderRunRows();
 }
 
+function participationStatusLabel(value) {
+  return {
+    active: "в работе",
+    replied: "ответил",
+    stopped: "остановлено",
+    sent: "отправлено",
+    queued: "в очереди",
+    error: "ошибка",
+  }[value] || statusLabel(value);
+}
+
+function participationPill(value) {
+  const cls = value === "error" ? "bad" : ["active", "queued"].includes(value) ? "warn" : "";
+  return `<span class="pill ${cls}">${esc(participationStatusLabel(value))}</span>`;
+}
+
+function participationSourceLabel(value) {
+  return {
+    run: "Запуск",
+    campaign: "Рассылка",
+    draft: "Черновик",
+    direct: "Письмо",
+  }[value] || "Источник";
+}
+
+function renderParticipationSelectOptions(items, valueKey, labelKey, selected, emptyLabel) {
+  return [
+    `<option value="">${esc(emptyLabel)}</option>`,
+    ...(items || []).map((item) => (
+      `<option value="${esc(item[valueKey])}" ${item[valueKey] === selected ? "selected" : ""}>${esc(item[labelKey])}</option>`
+    )),
+  ].join("");
+}
+
+function participationQueryString() {
+  const params = new URLSearchParams();
+  Object.entries(state.participationFilters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+function renderParticipationFilters() {
+  const filters = state.participationFilters;
+  const search = $("#participationSearch");
+  if (search && search.value !== filters.search) search.value = filters.search;
+  const status = $("#participationStatus");
+  if (status && status.value !== filters.status) status.value = filters.status;
+  if ($("#participationMailbox")) {
+    $("#participationMailbox").innerHTML = renderParticipationSelectOptions(
+      state.participationOptions.mailboxes,
+      "id",
+      "email",
+      filters.mailbox_id,
+      "Все наши почты",
+    );
+  }
+  if ($("#participationRun")) {
+    $("#participationRun").innerHTML = renderParticipationSelectOptions(
+      state.participationOptions.runs,
+      "id",
+      "title",
+      filters.run_id,
+      "Все запуски",
+    );
+  }
+  if ($("#participationCampaign")) {
+    $("#participationCampaign").innerHTML = renderParticipationSelectOptions(
+      state.participationOptions.campaigns,
+      "id",
+      "name",
+      filters.campaign_id,
+      "Все рассылки",
+    );
+  }
+}
+
+function renderParticipationTable() {
+  if (!$("#participationTable")) return;
+  const summary = state.participationSummary || {};
+  $("#participationSummary").innerHTML = `
+    <span>Строк: <strong>${Number(summary.total || 0)}</strong></span>
+    <span>Ответили: <strong>${Number(summary.replied || 0)}</strong></span>
+    <span>В работе: <strong>${Number(summary.active || 0)}</strong></span>
+    <span>Остановлено: <strong>${Number(summary.stopped || 0)}</strong></span>
+    <span>Ошибки: <strong>${Number(summary.errors || 0)}</strong></span>
+  `;
+  $("#participationTable").innerHTML = `
+    <thead>
+      <tr>
+        <th>Статус</th>
+        <th>Компания</th>
+        <th>Получатель</th>
+        <th>Наша почта</th>
+        <th>Рассылка / запуск</th>
+        <th>Касания</th>
+        <th>Ответ</th>
+        <th>Follow-up</th>
+        <th>Даты</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${state.participationRows.length ? state.participationRows.map((row) => `
+        <tr>
+          <td>${participationPill(row.participation_status)}</td>
+          <td><strong>${esc(row.company || "Без компании")}</strong><br><span class="muted">${esc(row.domain || "")}</span></td>
+          <td>${esc(row.lead_email || "")}</td>
+          <td>${esc(row.mailbox_email || "не выбрана")}</td>
+          <td>
+            <strong>${esc(row.source_title || "Без названия")}</strong><br>
+            <span class="muted">${esc(participationSourceLabel(row.source_type))}${row.run_id ? ` · <button class="link-button" data-open-participation-run="${esc(row.run_id)}">открыть запуск</button>` : ""}</span>
+          </td>
+          <td>
+            <strong>${Number(row.sent_messages || 0)} отправлено</strong><br>
+            <span class="muted">${Number(row.pending_queue || 0)} ждут · ${Number(row.failed_queue || 0)} ошибок</span>
+          </td>
+          <td>
+            <strong>${Number(row.replies || 0) ? "есть" : "нет"}</strong><br>
+            <span class="muted">${row.last_reply_at ? `${esc(fmtDate(row.last_reply_at))} · ${esc(statusLabel(row.last_reply_classification))}` : "ответов пока нет"}</span>
+          </td>
+          <td>
+            <strong>${Number(row.followup_pending || 0)} активны</strong><br>
+            <span class="muted">${Number(row.followup_cancelled || 0)} остановлены</span>
+          </td>
+          <td>
+            <span>${esc(fmtDate(row.first_touch_at))}</span><br>
+            <span class="muted">${esc(fmtDate(row.last_touch_at))}</span>
+          </td>
+        </tr>
+      `).join("") : `<tr><td colspan="9" class="muted">По этим фильтрам участия пока нет.</td></tr>`}
+    </tbody>
+  `;
+}
+
+async function loadParticipation() {
+  if (!$("#participationTable")) return;
+  const data = await api(`/api/outreach/participation${participationQueryString()}`);
+  state.participationRows = data.rows || [];
+  state.participationSummary = data.summary || {};
+  state.participationOptions = data.filters || { mailboxes: [], runs: [], campaigns: [] };
+  renderParticipationFilters();
+  renderParticipationTable();
+}
+
 async function runActionForLeads(endpoint, leadIds, title, message) {
   if (!state.activeRunId || !leadIds.length) return;
   const result = await api(`/api/outreach/runs/${state.activeRunId}/${endpoint}`, {
@@ -1212,7 +1372,7 @@ async function runActionForLeads(endpoint, leadIds, title, message) {
     body: JSON.stringify({ lead_ids: leadIds }),
   });
   state.selectedRunLeadIds = new Set();
-  await Promise.all([loadRuns(state.activeRunId), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations(), loadSuppressions()]);
+  await Promise.all([loadRuns(state.activeRunId), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations(), loadSuppressions()]);
   setActionResult({ status: "success", title, message: message(result), details: result });
 }
 
@@ -3618,6 +3778,7 @@ async function refresh() {
     loadOutreachImports(),
     loadOutreachDrafts(),
     loadRuns(),
+    loadParticipation(),
     loadMailboxes(),
     loadCampaigns(),
     loadQueue(),
@@ -3679,6 +3840,13 @@ $("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
 }, async () => {
   await loadRuns(state.activeRunId);
   setActionResult({ status: "success", title: "Обновление запусков", message: "Таблица запусков обновлена." });
+}));
+$("#reloadParticipationBtn")?.addEventListener("click", (event) => runAction({
+  title: "Обновление участия",
+  button: event.currentTarget,
+}, async () => {
+  await loadParticipation();
+  setActionResult({ status: "success", title: "Обновление участия", message: "Таблица участия обновлена." });
 }));
 $("#runBulkStopBtn")?.addEventListener("click", (event) => runAction({
   title: "Остановка follow-up",
@@ -3748,6 +3916,17 @@ $("#campaignLeadsTable").addEventListener("change", (event) => {
 });
 
 document.body.addEventListener("change", (event) => {
+  if (["participationStatus", "participationMailbox", "participationRun", "participationCampaign"].includes(event.target.id)) {
+    const key = {
+      participationStatus: "status",
+      participationMailbox: "mailbox_id",
+      participationRun: "run_id",
+      participationCampaign: "campaign_id",
+    }[event.target.id];
+    state.participationFilters[key] = event.target.value;
+    loadParticipation();
+    return;
+  }
   const leadId = event.target.dataset.runLeadSelect;
   if (leadId) {
     if (event.target.checked) state.selectedRunLeadIds.add(leadId);
@@ -3769,6 +3948,12 @@ document.body.addEventListener("focusin", (event) => {
 });
 
 document.body.addEventListener("input", (event) => {
+  if (event.target.id === "participationSearch") {
+    state.participationFilters.search = event.target.value.trim();
+    clearTimeout(loadParticipation.searchTimer);
+    loadParticipation.searchTimer = setTimeout(() => loadParticipation(), 350);
+    return;
+  }
   if (event.target.matches(".segment-input")) renderSegmentPicker(event.target);
 });
 
@@ -4753,6 +4938,7 @@ document.body.addEventListener("click", async (event) => {
   const approveId = event.target.dataset.approve;
   const cancelSendId = event.target.dataset.cancelSend;
   const selectRunId = event.target.closest("[data-select-run]")?.dataset.selectRun;
+  const participationRunId = event.target.dataset.openParticipationRun;
   const runRowToggle = event.target.dataset.runRowToggle;
   const runStopLeadId = event.target.dataset.runStopFollowups;
   const runContinueLeadId = event.target.dataset.runContinueFollowups;
@@ -4771,6 +4957,12 @@ document.body.addEventListener("click", async (event) => {
     state.selectedRunLeadIds = new Set();
     state.expandedRunRows = new Set();
     await loadRuns(selectRunId);
+    return;
+  }
+  if (participationRunId) {
+    state.activeRunId = participationRunId;
+    switchView("runs");
+    await loadRuns(participationRunId);
     return;
   }
   if (runRowToggle) {

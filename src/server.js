@@ -2039,6 +2039,188 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
   res.json({ run, rows: rows.rows });
 }));
 
+app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
+  const search = cleanText(req.query.search).toLowerCase();
+  const status = cleanText(req.query.status);
+  const mailboxId = isUuid(req.query.mailbox_id) ? req.query.mailbox_id : "";
+  const runId = isUuid(req.query.run_id) ? req.query.run_id : "";
+  const campaignId = isUuid(req.query.campaign_id) ? req.query.campaign_id : "";
+
+  const result = await query(
+    `
+      WITH group_keys AS (
+        SELECT DISTINCT lead_id, mailbox_id, campaign_id, run_id, outreach_draft_id
+        FROM sending_queue
+        WHERE lead_id IS NOT NULL
+        UNION
+        SELECT DISTINCT lead_id, mailbox_id, campaign_id, run_id, outreach_draft_id
+        FROM messages
+        WHERE lead_id IS NOT NULL
+          AND direction = 'outbound'
+          AND type <> 'warmup'
+      ),
+      scoped AS (
+        SELECT
+          g.*,
+          l.company,
+          l.email AS lead_email,
+          l.domain,
+          m.email AS mailbox_email,
+          c.name AS campaign_name,
+          r.title AS run_title,
+          oi.file_name AS import_file_name,
+          stats.first_touch_at,
+          stats.last_touch_at,
+          stats.sent_messages,
+          stats.pending_queue,
+          stats.active_queue,
+          stats.cancelled_queue,
+          stats.failed_queue,
+          stats.followup_pending,
+          stats.followup_cancelled,
+          lead(stats.first_touch_at) OVER (
+            PARTITION BY g.lead_id, g.mailbox_id
+            ORDER BY stats.first_touch_at NULLS LAST, COALESCE(g.run_id, g.campaign_id, g.outreach_draft_id)
+          ) AS next_touch_at
+        FROM group_keys g
+        JOIN leads l ON l.id = g.lead_id
+        LEFT JOIN mailboxes m ON m.id = g.mailbox_id
+        LEFT JOIN campaigns c ON c.id = g.campaign_id
+        LEFT JOIN outreach_runs r ON r.id = g.run_id
+        LEFT JOIN outreach_drafts od ON od.id = g.outreach_draft_id
+        LEFT JOIN outreach_imports oi ON oi.id = od.import_id
+        LEFT JOIN LATERAL (
+          SELECT
+            min(item.touch_at) AS first_touch_at,
+            max(item.touch_at) AS last_touch_at,
+            count(*) FILTER (WHERE item.source = 'message' AND item.direction = 'outbound' AND item.status = 'sent')::int AS sent_messages,
+            count(*) FILTER (WHERE item.source = 'queue' AND item.status IN ('pending','retrying'))::int AS pending_queue,
+            count(*) FILTER (WHERE item.source = 'queue' AND item.status IN ('pending','retrying','running'))::int AS active_queue,
+            count(*) FILTER (WHERE item.source = 'queue' AND item.status = 'cancelled')::int AS cancelled_queue,
+            count(*) FILTER (WHERE item.source = 'queue' AND item.status = 'failed')::int AS failed_queue,
+            count(*) FILTER (WHERE item.source = 'queue' AND item.status IN ('pending','retrying','running') AND item.step_position > 1)::int AS followup_pending,
+            count(*) FILTER (WHERE item.source = 'queue' AND item.status = 'cancelled' AND item.step_position > 1)::int AS followup_cancelled
+          FROM (
+            SELECT
+              'queue' AS source,
+              q.status,
+              'outbound' AS direction,
+              COALESCE(q.scheduled_at, q.created_at) AS touch_at,
+              COALESCE(cs.position, ods.position, 1) AS step_position
+            FROM sending_queue q
+            LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
+            LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+            WHERE q.lead_id = g.lead_id
+              AND q.mailbox_id IS NOT DISTINCT FROM g.mailbox_id
+              AND q.campaign_id IS NOT DISTINCT FROM g.campaign_id
+              AND q.run_id IS NOT DISTINCT FROM g.run_id
+              AND q.outreach_draft_id IS NOT DISTINCT FROM g.outreach_draft_id
+            UNION ALL
+            SELECT
+              'message' AS source,
+              msg.status,
+              msg.direction,
+              COALESCE(msg.sent_at, msg.created_at) AS touch_at,
+              COALESCE(cs_msg.position, ods_msg.position, 1) AS step_position
+            FROM messages msg
+            LEFT JOIN campaign_steps cs_msg ON cs_msg.id = msg.campaign_step_id
+            LEFT JOIN outreach_draft_steps ods_msg ON ods_msg.id = msg.outreach_step_id
+            WHERE msg.lead_id = g.lead_id
+              AND msg.direction = 'outbound'
+              AND msg.type <> 'warmup'
+              AND msg.mailbox_id IS NOT DISTINCT FROM g.mailbox_id
+              AND msg.campaign_id IS NOT DISTINCT FROM g.campaign_id
+              AND msg.run_id IS NOT DISTINCT FROM g.run_id
+              AND msg.outreach_draft_id IS NOT DISTINCT FROM g.outreach_draft_id
+          ) item
+        ) stats ON true
+      ),
+      participation AS (
+        SELECT
+          s.*,
+          COALESCE(replies.reply_count, 0) AS replies,
+          replies.last_reply_at,
+          replies.last_reply_classification,
+          CASE
+            WHEN COALESCE(replies.reply_count, 0) > 0 THEN 'replied'
+            WHEN COALESCE(s.failed_queue, 0) > 0 THEN 'error'
+            WHEN COALESCE(s.followup_cancelled, 0) > 0 AND COALESCE(s.followup_pending, 0) = 0 THEN 'stopped'
+            WHEN COALESCE(s.active_queue, 0) > 0 THEN 'active'
+            WHEN COALESCE(s.sent_messages, 0) > 0 THEN 'sent'
+            ELSE 'queued'
+          END AS participation_status,
+          COALESCE(s.run_title, s.campaign_name, s.import_file_name, 'Без названия') AS source_title,
+          CASE
+            WHEN s.run_id IS NOT NULL THEN 'run'
+            WHEN s.campaign_id IS NOT NULL THEN 'campaign'
+            WHEN s.outreach_draft_id IS NOT NULL THEN 'draft'
+            ELSE 'direct'
+          END AS source_type
+        FROM scoped s
+        LEFT JOIN LATERAL (
+          SELECT
+            count(*)::int AS reply_count,
+            max(COALESCE(msg.received_at, msg.created_at)) AS last_reply_at,
+            (array_agg(COALESCE(msg.reply_classification, msg.ai_classification, msg.status) ORDER BY COALESCE(msg.received_at, msg.created_at) DESC))[1] AS last_reply_classification
+          FROM messages msg
+          WHERE msg.direction = 'inbound'
+            AND msg.type <> 'warmup'
+            AND msg.lead_id = s.lead_id
+            AND (s.mailbox_id IS NULL OR msg.mailbox_id IS NULL OR msg.mailbox_id = s.mailbox_id)
+            AND COALESCE(msg.received_at, msg.created_at) >= COALESCE(s.first_touch_at, '1970-01-01'::timestamptz)
+            AND (s.next_touch_at IS NULL OR COALESCE(msg.received_at, msg.created_at) < s.next_touch_at)
+        ) replies ON true
+      )
+      SELECT
+        *,
+        count(*) OVER()::int AS filtered_total,
+        count(*) FILTER (WHERE participation_status = 'replied') OVER()::int AS filtered_replied,
+        count(*) FILTER (WHERE participation_status = 'active') OVER()::int AS filtered_active,
+        count(*) FILTER (WHERE participation_status = 'stopped') OVER()::int AS filtered_stopped,
+        count(*) FILTER (WHERE participation_status = 'error') OVER()::int AS filtered_errors
+      FROM participation
+      WHERE ($1 = '' OR lower(COALESCE(company, '') || ' ' || COALESCE(lead_email, '') || ' ' || COALESCE(mailbox_email, '') || ' ' || COALESCE(source_title, '')) LIKE '%' || $1 || '%')
+        AND ($2 = '' OR participation_status = $2)
+        AND ($3 = '' OR mailbox_id = $3::uuid)
+        AND ($4 = '' OR run_id = $4::uuid)
+        AND ($5 = '' OR campaign_id = $5::uuid)
+      ORDER BY last_touch_at DESC NULLS LAST, first_touch_at DESC NULLS LAST
+      LIMIT 500
+    `,
+    [search, status, mailboxId, runId, campaignId],
+  );
+
+  const filters = await query(`
+    SELECT
+      COALESCE((SELECT json_agg(json_build_object('id', id, 'email', email) ORDER BY email) FROM mailboxes), '[]'::json) AS mailboxes,
+      COALESCE((SELECT json_agg(json_build_object('id', id, 'title', title) ORDER BY created_at DESC) FROM outreach_runs LIMIT 100), '[]'::json) AS runs,
+      COALESCE((SELECT json_agg(json_build_object('id', id, 'name', name) ORDER BY created_at DESC) FROM campaigns LIMIT 100), '[]'::json) AS campaigns
+  `);
+
+  const first = result.rows[0] || {};
+  res.json({
+    summary: {
+      total: Number(first.filtered_total || 0),
+      replied: Number(first.filtered_replied || 0),
+      active: Number(first.filtered_active || 0),
+      stopped: Number(first.filtered_stopped || 0),
+      errors: Number(first.filtered_errors || 0),
+    },
+    filters: filters.rows[0] || { mailboxes: [], runs: [], campaigns: [] },
+    rows: result.rows.map((row) => {
+      const {
+        filtered_total,
+        filtered_replied,
+        filtered_active,
+        filtered_stopped,
+        filtered_errors,
+        ...publicRow
+      } = row;
+      return publicRow;
+    }),
+  });
+}));
+
 app.post("/api/outreach/runs/:id/stop-followups", asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
   const leadIds = parseArray(req.body.lead_ids).filter(isUuid);
