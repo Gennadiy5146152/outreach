@@ -33,11 +33,13 @@ const state = {
     search: "",
     status: "",
     mailbox_id: "",
+    import_id: "",
     run_id: "",
     campaign_id: "",
   },
   participationOptions: {
     mailboxes: [],
+    imports: [],
     runs: [],
     campaigns: [],
   },
@@ -1237,6 +1239,7 @@ function participationPill(value) {
 
 function participationSourceLabel(value) {
   return {
+    import: "Файл импорта",
     run: "Запуск",
     campaign: "Рассылка",
     draft: "Черновик",
@@ -1277,6 +1280,15 @@ function renderParticipationFilters() {
       "Все наши почты",
     );
   }
+  if ($("#participationImport")) {
+    $("#participationImport").innerHTML = renderParticipationSelectOptions(
+      state.participationOptions.imports,
+      "id",
+      "file_name",
+      filters.import_id,
+      "Все файлы",
+    );
+  }
   if ($("#participationRun")) {
     $("#participationRun").innerHTML = renderParticipationSelectOptions(
       state.participationOptions.runs,
@@ -1314,7 +1326,7 @@ function renderParticipationTable() {
         <th>Компания</th>
         <th>Получатель</th>
         <th>Наша почта</th>
-        <th>Рассылка / запуск</th>
+        <th>Файл / запуск</th>
         <th>Касания</th>
         <th>Ответ</th>
         <th>Follow-up</th>
@@ -1330,7 +1342,7 @@ function renderParticipationTable() {
           <td>${esc(row.mailbox_email || "не выбрана")}</td>
           <td>
             <strong>${esc(row.source_title || "Без названия")}</strong><br>
-            <span class="muted">${esc(participationSourceLabel(row.source_type))}${row.run_id ? ` · <button class="link-button" data-open-participation-run="${esc(row.run_id)}">открыть запуск</button>` : ""}</span>
+            <span class="muted">${esc(participationSourceLabel(row.source_type))}${row.source_type === "import" && row.run_title ? ` · ${esc(row.run_title)}` : ""}${row.run_id ? ` · <button class="link-button" data-open-participation-run="${esc(row.run_id)}">открыть запуск</button>` : ""}</span>
           </td>
           <td>
             <strong>${Number(row.sent_messages || 0)} отправлено</strong><br>
@@ -1359,7 +1371,7 @@ async function loadParticipation() {
   const data = await api(`/api/outreach/participation${participationQueryString()}`);
   state.participationRows = data.rows || [];
   state.participationSummary = data.summary || {};
-  state.participationOptions = data.filters || { mailboxes: [], runs: [], campaigns: [] };
+  state.participationOptions = data.filters || { mailboxes: [], imports: [], runs: [], campaigns: [] };
   renderParticipationFilters();
   renderParticipationTable();
 }
@@ -3916,10 +3928,11 @@ $("#campaignLeadsTable").addEventListener("change", (event) => {
 });
 
 document.body.addEventListener("change", (event) => {
-  if (["participationStatus", "participationMailbox", "participationRun", "participationCampaign"].includes(event.target.id)) {
+  if (["participationStatus", "participationMailbox", "participationImport", "participationRun", "participationCampaign"].includes(event.target.id)) {
     const key = {
       participationStatus: "status",
       participationMailbox: "mailbox_id",
+      participationImport: "import_id",
       participationRun: "run_id",
       participationCampaign: "campaign_id",
     }[event.target.id];

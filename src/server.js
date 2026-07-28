@@ -2045,6 +2045,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
   const mailboxId = isUuid(req.query.mailbox_id) ? req.query.mailbox_id : "";
   const runId = isUuid(req.query.run_id) ? req.query.run_id : "";
   const campaignId = isUuid(req.query.campaign_id) ? req.query.campaign_id : "";
+  const importId = isUuid(req.query.import_id) ? req.query.import_id : "";
 
   const result = await query(
     `
@@ -2068,6 +2069,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
           m.email AS mailbox_email,
           c.name AS campaign_name,
           r.title AS run_title,
+          od.import_id,
           oi.file_name AS import_file_name,
           stats.first_touch_at,
           stats.last_touch_at,
@@ -2149,8 +2151,9 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
             WHEN COALESCE(s.sent_messages, 0) > 0 THEN 'sent'
             ELSE 'queued'
           END AS participation_status,
-          COALESCE(s.run_title, s.campaign_name, s.import_file_name, 'Без названия') AS source_title,
+          COALESCE(s.import_file_name, s.run_title, s.campaign_name, 'Без названия') AS source_title,
           CASE
+            WHEN s.import_id IS NOT NULL THEN 'import'
             WHEN s.run_id IS NOT NULL THEN 'run'
             WHEN s.campaign_id IS NOT NULL THEN 'campaign'
             WHEN s.outreach_draft_id IS NOT NULL THEN 'draft'
@@ -2179,20 +2182,22 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
         count(*) FILTER (WHERE participation_status = 'stopped') OVER()::int AS filtered_stopped,
         count(*) FILTER (WHERE participation_status = 'error') OVER()::int AS filtered_errors
       FROM participation
-      WHERE ($1 = '' OR lower(COALESCE(company, '') || ' ' || COALESCE(lead_email, '') || ' ' || COALESCE(mailbox_email, '') || ' ' || COALESCE(source_title, '')) LIKE '%' || $1 || '%')
+      WHERE ($1 = '' OR lower(COALESCE(company, '') || ' ' || COALESCE(lead_email, '') || ' ' || COALESCE(mailbox_email, '') || ' ' || COALESCE(source_title, '') || ' ' || COALESCE(import_file_name, '') || ' ' || COALESCE(run_title, '') || ' ' || COALESCE(campaign_name, '')) LIKE '%' || $1 || '%')
         AND ($2 = '' OR participation_status = $2)
         AND ($3 = '' OR mailbox_id = $3::uuid)
         AND ($4 = '' OR run_id = $4::uuid)
         AND ($5 = '' OR campaign_id = $5::uuid)
+        AND ($6 = '' OR import_id = $6::uuid)
       ORDER BY last_touch_at DESC NULLS LAST, first_touch_at DESC NULLS LAST
       LIMIT 500
     `,
-    [search, status, mailboxId, runId, campaignId],
+    [search, status, mailboxId, runId, campaignId, importId],
   );
 
   const filters = await query(`
     SELECT
       COALESCE((SELECT json_agg(json_build_object('id', id, 'email', email) ORDER BY email) FROM mailboxes), '[]'::json) AS mailboxes,
+      COALESCE((SELECT json_agg(json_build_object('id', id, 'file_name', file_name) ORDER BY created_at DESC) FROM outreach_imports LIMIT 100), '[]'::json) AS imports,
       COALESCE((SELECT json_agg(json_build_object('id', id, 'title', title) ORDER BY created_at DESC) FROM outreach_runs LIMIT 100), '[]'::json) AS runs,
       COALESCE((SELECT json_agg(json_build_object('id', id, 'name', name) ORDER BY created_at DESC) FROM campaigns LIMIT 100), '[]'::json) AS campaigns
   `);
@@ -2206,7 +2211,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
       stopped: Number(first.filtered_stopped || 0),
       errors: Number(first.filtered_errors || 0),
     },
-    filters: filters.rows[0] || { mailboxes: [], runs: [], campaigns: [] },
+    filters: filters.rows[0] || { mailboxes: [], imports: [], runs: [], campaigns: [] },
     rows: result.rows.map((row) => {
       const {
         filtered_total,
