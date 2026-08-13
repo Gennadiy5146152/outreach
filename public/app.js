@@ -2025,6 +2025,14 @@ function canDeleteOutreachDraft(draft) {
   return ["draft", "ready", "blocked", "cancelled"].includes(draft.status);
 }
 
+function canCancelOutreachDraft(draft) {
+  return ["queued", "active_sequence"].includes(draft.status);
+}
+
+function canSelectOutreachDraft(draft) {
+  return canDeleteOutreachDraft(draft) || canCancelOutreachDraft(draft);
+}
+
 function syncSelectedOutreachDraftIdsFromDom() {
   const checkedIds = $$("[data-outreach-draft-select]:checked").map((input) => input.dataset.outreachDraftSelect);
   if (checkedIds.length || $("#outreachDraftsTable")) {
@@ -2041,6 +2049,7 @@ function outreachDraftSelectionStats() {
     selectedCount: selectedDrafts.length,
     readyDrafts: selectedDrafts.filter((draft) => draft.status === "ready"),
     deletableDrafts: selectedDrafts.filter(canDeleteOutreachDraft),
+    cancellableDrafts: selectedDrafts.filter(canCancelOutreachDraft),
     selectedStatusLabels: [...new Set(selectedDrafts.map((draft) => statusLabel(draft.status)))],
   };
 }
@@ -2052,10 +2061,6 @@ function selectedReadyOutreachDraftIds() {
 function draftDailyFirstLimit() {
   const value = Number($("#draftDailyFirstLimit")?.value || 0);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
-}
-
-function selectedDeletableOutreachDraftIds() {
-  return outreachDraftSelectionStats().deletableDrafts.map((draft) => draft.id);
 }
 
 function selectedReadyWarningMessage(action) {
@@ -2338,10 +2343,16 @@ async function loadOutreachDrafts() {
   const ready = state.allOutreachDrafts.filter((draft) => draft.status === "ready").length;
   const active = state.allOutreachDrafts.filter((draft) => ["queued", "active_sequence"].includes(draft.status)).length;
   const blocked = state.allOutreachDrafts.filter((draft) => draft.status === "blocked").length;
-  const deletable = state.outreachDrafts.filter(canDeleteOutreachDraft).length;
-  const deletableSelected = state.outreachDrafts
-    .filter((draft) => canDeleteOutreachDraft(draft) && state.selectedOutreachDraftIds.has(draft.id))
+  const selectable = state.outreachDrafts.filter(canSelectOutreachDraft).length;
+  const selectableSelected = state.outreachDrafts
+    .filter((draft) => canSelectOutreachDraft(draft) && state.selectedOutreachDraftIds.has(draft.id))
     .length;
+  const bulkDeleteButton = $("#deleteSelectedDraftsBtn");
+  if (bulkDeleteButton) {
+    const activeMode = state.outreachDraftFilter === "active";
+    bulkDeleteButton.textContent = activeMode ? "Остановить" : "Удалить";
+    bulkDeleteButton.title = activeMode ? "Остановить выбранные черновики в процессе" : "Удалить выбранные черновики";
+  }
   $("#outreachDraftsSummary").innerHTML = `
     <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
     <span>Показано: <strong>${esc(outreachDraftFilterLabel())}</strong></span>
@@ -2362,15 +2373,16 @@ async function loadOutreachDrafts() {
       <col class="draft-col-mailbox" />
       <col class="draft-col-actions" />
     </colgroup>
-    <thead><tr><th><input id="outreachDraftSelectAll" class="compact-check" type="checkbox" ${deletable && deletableSelected === deletable ? "checked" : ""} /></th><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Отправитель</th><th>Действия</th></tr></thead>
+    <thead><tr><th><input id="outreachDraftSelectAll" class="compact-check" type="checkbox" ${selectable && selectableSelected === selectable ? "checked" : ""} /></th><th>Статус</th><th>Получатель</th><th>Письмо</th><th>Отправитель</th><th>Действия</th></tr></thead>
     <tbody>
       ${state.outreachDrafts.length
         ? state.outreachDrafts.map((draft) => {
           const canDelete = canDeleteOutreachDraft(draft);
+          const canSelect = canSelectOutreachDraft(draft);
           const followups = (draft.steps || []).filter((step) => Number(step.position) > 1);
           return `
           <tr class="draft-row">
-            <td class="draft-check"><input class="compact-check" type="checkbox" data-outreach-draft-select="${draft.id}" ${canDelete ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
+            <td class="draft-check"><input class="compact-check" type="checkbox" data-outreach-draft-select="${draft.id}" ${canSelect ? "" : "disabled"} ${state.selectedOutreachDraftIds.has(draft.id) ? "checked" : ""} /></td>
             <td class="draft-status">${pill(draft.status)}<span>строка ${draft.source_row_number}</span></td>
             <td>
               <div class="draft-recipient">
@@ -4497,23 +4509,29 @@ $("#bulkHtmlAssetsForm").addEventListener("change", renderBulkHtmlAssetsPreview)
 renderBulkHtmlAssetsPreview();
 
 $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
-  const draftIds = selectedDeletableOutreachDraftIds();
-  if (!draftIds.length) {
+  const stats = outreachDraftSelectionStats();
+  const deleteIds = stats.deletableDrafts.map((draft) => draft.id);
+  const cancelIds = stats.cancellableDrafts.map((draft) => draft.id);
+  if (!deleteIds.length && !cancelIds.length) {
     setActionResult({
       status: "warn",
-      title: "Удаление выбранных черновиков",
-      message: "Среди выбранных нет черновиков, которые можно безопасно удалить.",
+      title: "Удаление или остановка выбранных черновиков",
+      message: "Среди выбранных нет черновиков, которые можно безопасно удалить или остановить.",
     });
     return;
   }
-  if (!window.confirm(`Удалить выбранные черновики: ${draftIds.length}? Это уберет их из списка черновиков.`)) return;
+  const confirmParts = [];
+  if (deleteIds.length) confirmParts.push(`удалить: ${deleteIds.length}`);
+  if (cancelIds.length) confirmParts.push(`остановить: ${cancelIds.length}`);
+  if (!window.confirm(`Обработать выбранные черновики (${confirmParts.join(", ")})? Остановленные черновики снимутся с очереди и уйдут из раздела “В процессе”.`)) return;
   runAction({
-    title: "Удаление выбранных черновиков",
+    title: "Удаление или остановка выбранных черновиков",
     button: event.currentTarget,
   }, async () => {
     const deleted = [];
+    const cancelled = [];
     const errors = [];
-    for (const draftId of draftIds) {
+    for (const draftId of deleteIds) {
       try {
         const result = await api(`/api/outreach/drafts/${draftId}`, { method: "DELETE" });
         deleted.push(result);
@@ -4522,16 +4540,25 @@ $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
         errors.push({ draftId, error: errorMessage(error), details: error.data || error.message });
       }
     }
+    for (const draftId of cancelIds) {
+      try {
+        const result = await api(`/api/outreach/drafts/${draftId}/cancel`, { method: "POST" });
+        cancelled.push(result);
+        state.selectedOutreachDraftIds.delete(draftId);
+      } catch (error) {
+        errors.push({ draftId, error: errorMessage(error), details: error.data || error.message });
+      }
+    }
     clearOutreachDraftLaunchReview();
-    await Promise.all([loadOutreachDrafts(), loadOutreachImports(), loadDashboard()]);
+    await Promise.all([loadOutreachDrafts(), loadOutreachImports(), loadQueue(), loadDashboard()]);
     if (state.openOutreachDraftId && !state.outreachDrafts.some((draft) => draft.id === state.openOutreachDraftId)) {
       refreshOpenOutreachDraftDrawer(state.openOutreachDraftId);
     }
     setActionResult({
       status: errors.length ? "warn" : "success",
-      title: "Удаление выбранных черновиков",
-      message: `Удалено: ${deleted.length}. Ошибок: ${errors.length}.`,
-      details: { deleted, errors },
+      title: "Удаление или остановка выбранных черновиков",
+      message: `Удалено: ${deleted.length}. Остановлено: ${cancelled.length}. Ошибок: ${errors.length}.`,
+      details: { deleted, cancelled, errors },
     });
   });
 });
@@ -4539,7 +4566,7 @@ $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
 document.body.addEventListener("change", (event) => {
   if (event.target.id === "outreachDraftSelectAll") {
     state.selectedOutreachDraftIds = event.target.checked
-      ? new Set(state.outreachDrafts.filter(canDeleteOutreachDraft).map((draft) => draft.id))
+      ? new Set(state.outreachDrafts.filter(canSelectOutreachDraft).map((draft) => draft.id))
       : new Set();
     clearOutreachDraftLaunchReview();
     loadOutreachDrafts();
