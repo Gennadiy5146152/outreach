@@ -451,6 +451,7 @@ function renderBulkHtmlAssetsPreview() {
   const form = $("#bulkHtmlAssetsForm");
   const target = $("#bulkHtmlAssetsPreview");
   if (!form || !target) return;
+  updateBulkHtmlAssetFileLabels();
   const htmlFiles = HTML_CHAIN_INPUTS
     .map(([name, label]) => ({ label, file: form.elements[name]?.files?.[0] }))
     .filter((item) => item.file);
@@ -468,6 +469,22 @@ function renderBulkHtmlAssetsPreview() {
     ${imageFiles.length ? `<span>Картинки для автоподстановки: ${imageFiles.map((file) => esc(file.name)).join(", ")}</span>` : `<span>Картинки не выбраны. Внешние URL в HTML останутся как есть.</span>`}
     <span>В HTML <code>src="images/banner.png"</code> совпадет с загруженным файлом <code>banner.png</code>.</span>
   `;
+}
+
+function updateBulkHtmlAssetFileLabels() {
+  const form = $("#bulkHtmlAssetsForm");
+  if (!form) return;
+  $$("[data-file-label]").forEach((label) => {
+    const input = form.elements[label.dataset.fileLabel];
+    const files = input?.files ? [...input.files] : [];
+    const card = label.closest(".asset-upload-card");
+    card?.classList.toggle("selected", files.length > 0);
+    if (!files.length) {
+      label.textContent = label.dataset.fileLabel === "images" ? "Файлы не выбраны" : "Файл не выбран";
+      return;
+    }
+    label.textContent = files.length === 1 ? files[0].name : `${files.length} файлов`;
+  });
 }
 
 function fmtDate(value) {

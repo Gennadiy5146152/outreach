@@ -237,25 +237,35 @@
           </div>
           <div id="outreachDraftsSummary" class="summary-line"></div>
           <form id="bulkHtmlAssetsForm" class="bulk-html-assets">
-            <label>
-              <span>1. Стартовое письмо</span>
+            <label class="asset-upload-card">
               <input name="html_start" type="file" accept=".html,.htm,text/html" required />
+              <strong>1</strong>
+              <span>Стартовое письмо</span>
+              <em data-file-label="html_start">Файл не выбран</em>
             </label>
-            <label>
-              <span>2. Первый follow-up</span>
+            <label class="asset-upload-card">
               <input name="html_followup_1" type="file" accept=".html,.htm,text/html" />
+              <strong>2</strong>
+              <span>Первый follow-up</span>
+              <em data-file-label="html_followup_1">Файл не выбран</em>
             </label>
-            <label>
-              <span>3. Второй follow-up</span>
+            <label class="asset-upload-card">
               <input name="html_followup_2" type="file" accept=".html,.htm,text/html" />
+              <strong>3</strong>
+              <span>Второй follow-up</span>
+              <em data-file-label="html_followup_2">Файл не выбран</em>
             </label>
-            <label>
-              <span>4. Третий follow-up</span>
+            <label class="asset-upload-card">
               <input name="html_followup_3" type="file" accept=".html,.htm,text/html" />
+              <strong>4</strong>
+              <span>Третий follow-up</span>
+              <em data-file-label="html_followup_3">Файл не выбран</em>
             </label>
-            <label>
-              <span>Картинки</span>
+            <label class="asset-upload-card image-card">
               <input name="images" type="file" accept="image/*" multiple />
+              <strong>IMG</strong>
+              <span>Картинки</span>
+              <em data-file-label="images">Файлы не выбраны</em>
             </label>
             <button>Применить к выбранным</button>
             <div id="bulkHtmlAssetsPreview" class="bulk-html-assets-preview"></div>
