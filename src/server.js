@@ -50,6 +50,18 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function uploadOriginalName(fileOrName, fallback = "upload") {
+  const raw = typeof fileOrName === "string" ? fileOrName : fileOrName?.originalname;
+  const name = String(raw || fallback);
+  if (!/[ÃÂÐÑ][\u0080-\u00ff]?/.test(name)) return name;
+  try {
+    const decoded = Buffer.from(name, "latin1").toString("utf8");
+    return decoded && !decoded.includes("�") ? decoded : name;
+  } catch {
+    return name;
+  }
+}
+
 function normalizeOutboundBody({ bodyText = "", bodyHtml = "" } = {}) {
   const text = cleanText(bodyText) || htmlToText(bodyHtml);
   const html = cleanText(bodyHtml) || markdownToHtml(text);
@@ -63,7 +75,7 @@ function attachmentContentId(file) {
 }
 
 function htmlUploadBody(file) {
-  const name = String(file?.originalname || "").toLowerCase();
+  const name = uploadOriginalName(file, "").toLowerCase();
   const mime = String(file?.mimetype || "").toLowerCase();
   if (!name.endsWith(".html") && !name.endsWith(".htm") && !mime.includes("html")) {
     const error = new Error("html_file_required");
@@ -103,7 +115,8 @@ function rewriteHtmlImageSources(html, imagesByKey, onMatch) {
 
 async function createOutreachAttachmentFromUpload(client, stepId, file, contentId) {
   await fs.mkdir(env.attachmentDir, { recursive: true });
-  const safeName = String(file.originalname || "asset")
+  const originalName = uploadOriginalName(file, "asset");
+  const safeName = String(originalName || "asset")
     .replace(/[\\/]/g, "_")
     .replace(/[^\w.-]+/g, "_")
     .slice(0, 120) || "asset";
@@ -115,7 +128,7 @@ async function createOutreachAttachmentFromUpload(client, stepId, file, contentI
       VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING *
     `,
-    [stepId, file.originalname, file.mimetype, file.size, storagePath, contentId],
+    [stepId, originalName, file.mimetype, file.size, storagePath, contentId],
   );
   return result.rows[0];
 }
@@ -405,7 +418,7 @@ function parseOptionalDate(value) {
 }
 
 async function parseOutreachRawFile(file) {
-  const extension = path.extname(file.originalname || "").toLowerCase();
+  const extension = path.extname(uploadOriginalName(file, "")).toLowerCase();
   if (extension === ".csv") {
     return { fileType: "csv", rows: parseCsv(file.buffer.toString("utf8")) };
   }
@@ -1103,6 +1116,7 @@ app.patch("/api/leads/:id", asyncHandler(async (req, res) => {
 
 app.post("/api/leads/import", csvUpload.single("file"), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file_required" });
+  const fileName = uploadOriginalName(req.file);
   const rows = rowsToObjects(parseCsv(req.file.buffer.toString("utf8")));
   let imported = 0;
   let skipped = 0;
@@ -1131,7 +1145,7 @@ app.post("/api/leads/import", csvUpload.single("file"), asyncHandler(async (req,
         cleanText(row.segment),
         row.city,
         row.pain,
-        row.source || req.file.originalname,
+        row.source || fileName,
         row.notes,
       ],
     );
@@ -1270,6 +1284,7 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
 
 app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file_required" });
+  const fileName = uploadOriginalName(req.file);
   const { fileType, rows } = await parseOutreachRawFile(req.file);
   const [header = [], ...data] = rows;
   const manualMapping = parseMapping(req.body.mapping);
@@ -1290,7 +1305,7 @@ app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler
     };
   });
   res.json({
-    fileName: req.file.originalname,
+    fileName,
     fileType,
     columns: header.map((item, index) => ({ index, name: String(item || "").trim() || `Колонка ${index + 1}` })),
     mapping,
@@ -1616,7 +1631,7 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
   const imagesByKey = new Map();
   for (const file of imageFiles) {
     if (!String(file.mimetype || "").startsWith("image/")) return res.status(400).json({ error: "image_files_required" });
-    const key = uploadAssetKey(file.originalname);
+    const key = uploadAssetKey(uploadOriginalName(file));
     if (key) imagesByKey.set(key, file);
   }
 
@@ -1803,13 +1818,14 @@ app.post("/api/outreach/draft-steps/:id/attachments", attachmentUpload.single("f
     return res.status(400).json({ error: `attachment_too_large_max_${runtime.maxAttachmentMb}_mb` });
   }
   const contentId = attachmentContentId(req.file);
+  const fileName = uploadOriginalName(req.file);
   const result = await query(
     `
       INSERT INTO attachments(outreach_step_id, file_name, mime_type, size_bytes, storage_path, content_id)
       VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING *
     `,
-    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path), contentId],
+    [req.params.id, fileName, req.file.mimetype, req.file.size, path.resolve(req.file.path), contentId],
   );
   res.status(201).json(result.rows[0]);
 }));
@@ -4151,6 +4167,7 @@ app.post("/api/outreach/conversations/:id/reply", asyncHandler(async (req, res) 
 
 app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file_required" });
+  const fileName = uploadOriginalName(req.file);
   const mapping = parseMapping(req.body.mapping);
   const { fileType, rows } = await parseOutreachImportFile(req.file, mapping);
   const seenEmails = new Set();
@@ -4164,7 +4181,7 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
           VALUES ($1,$2,'running',$3)
           RETURNING *
         `,
-        [req.file.originalname, fileType, rows.length],
+        [fileName, fileType, rows.length],
       );
       const importRow = importResult.rows[0];
       const errors = [];
@@ -4221,7 +4238,7 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
               cleanText(row.segment),
               row.city,
               row.pain,
-              row.source || req.file.originalname,
+              row.source || fileName,
               row.notes,
             ],
           );
@@ -4304,7 +4321,7 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
       await logEvent("outreach_import_created", {
         payload: {
           importId: importRow.id,
-          fileName: req.file.originalname,
+          fileName,
           rows: rows.length,
           ready: rowsReady,
           blocked: rowsBlocked,
@@ -4707,13 +4724,14 @@ app.post("/api/steps/:id/attachments", attachmentUpload.single("file"), asyncHan
     return res.status(400).json({ error: `attachment_too_large_max_${runtime.maxAttachmentMb}_mb` });
   }
   const contentId = attachmentContentId(req.file);
+  const fileName = uploadOriginalName(req.file);
   const result = await query(
     `
       INSERT INTO attachments(campaign_step_id, file_name, mime_type, size_bytes, storage_path, content_id)
       VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING *
     `,
-    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path), contentId],
+    [req.params.id, fileName, req.file.mimetype, req.file.size, path.resolve(req.file.path), contentId],
   );
   res.status(201).json(result.rows[0]);
 }));

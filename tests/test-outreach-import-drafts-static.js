@@ -339,6 +339,8 @@ for (const expected of [
 
 for (const expected of [
   "function attachmentContentId",
+  "function uploadOriginalName",
+  "Buffer.from(name, \"latin1\").toString(\"utf8\")",
   "htmlUpload.array(\"files\", 4)",
   "function htmlUploadBody",
   "app.post(\"/api/outreach/drafts/:id/html-files\"",
