@@ -453,7 +453,7 @@ async function lockNextSend() {
                COALESCE(m.min_delay_minutes, c.min_delay_minutes) AS min_delay_minutes,
                COALESCE(m.max_delay_minutes, c.max_delay_minutes) AS max_delay_minutes,
                s.name AS step_name, s.position AS step_position, s.subject_template, s.body_template_text, s.body_template_html,
-               ods.position AS outreach_step_position, ods.delay_days AS outreach_delay_days,
+               ods.position AS outreach_step_position, ods.delay_days AS outreach_delay_days, ods.body_html AS outreach_body_html,
                m.name AS mailbox_name, m.email AS mailbox_email, m.from_name,
                m.smtp_host, m.smtp_port, m.smtp_secure, m.imap_host, m.imap_port, m.imap_secure,
                m.username, m.password_env_key, m.error_count, m.paused_until
@@ -536,7 +536,7 @@ async function processSend(item) {
   const settings = (await query("SELECT value FROM settings WHERE key = 'sender'")).rows[0]?.value || {};
   const subjectTemplate = item.subject_override || item.subject_template || "";
   const textTemplate = item.body_text_override || item.body_template_text || htmlToText(item.body_template_html) || "";
-  const htmlTemplate = item.body_html_override || item.body_template_html || markdownToHtml(textTemplate);
+  const htmlTemplate = item.body_html_override || item.body_template_html || item.outreach_body_html || markdownToHtml(textTemplate);
   const subject = renderTemplate(subjectTemplate, lead, mailbox, settings);
   const text = renderTemplate(textTemplate, lead, mailbox, settings);
   const trackingId = crypto.randomUUID();
@@ -705,7 +705,7 @@ async function processSend(item) {
           nextOutreachStep.id,
           nextOutreachStep.subject,
           nextOutreachStep.body_text,
-          markdownToHtml(nextOutreachStep.body_text),
+          nextOutreachStep.body_html || markdownToHtml(nextOutreachStep.body_text),
           item.run_id || null,
         ],
       );

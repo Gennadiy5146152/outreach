@@ -1509,6 +1509,28 @@ h2 {
   margin-top: 10px;
 }
 
+.html-body-details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.html-body-details summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.html-body-details .field {
+  margin-top: 10px;
+}
+
+.html-body-details textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 .outreach-step-edit-form {
   padding: 10px;
   border: 1px solid var(--line);

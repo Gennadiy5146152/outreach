@@ -15,7 +15,7 @@ import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { cancelOutreachForScope } from "./services/outreach-stop.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
-import { cleanReplyText, markdownToHtml } from "./services/template.js";
+import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
@@ -40,6 +40,12 @@ function authConfigured() {
 
 function cleanText(value) {
   return String(value || "").trim();
+}
+
+function normalizeOutboundBody({ bodyText = "", bodyHtml = "" } = {}) {
+  const text = cleanText(bodyText) || htmlToText(bodyHtml);
+  const html = cleanText(bodyHtml) || markdownToHtml(text);
+  return { text, html };
 }
 
 function isUuid(value) {
@@ -373,29 +379,37 @@ function outreachDelayDays(value, fallback) {
 }
 
 function outreachStepsFromRow(row) {
+  const firstBody = normalizeOutboundBody({ bodyText: row.body, bodyHtml: row.body_html });
+  const followup1Body = normalizeOutboundBody({ bodyText: row.followup_1_body, bodyHtml: row.followup_1_body_html });
+  const followup2Body = normalizeOutboundBody({ bodyText: row.followup_2_body, bodyHtml: row.followup_2_body_html });
+  const followup3Body = normalizeOutboundBody({ bodyText: row.followup_3_body, bodyHtml: row.followup_3_body_html });
   const items = [
     {
       position: 1,
       subject: row.subject || "",
-      body: row.body || "",
+      body: firstBody.text,
+      bodyHtml: firstBody.html,
       delayDays: 0,
     },
     {
       position: 2,
       subject: row.followup_1_subject || row.subject || "",
-      body: row.followup_1_body || "",
+      body: followup1Body.text,
+      bodyHtml: followup1Body.html,
       delayDays: outreachDelayDays(row.followup_1_delay_days, 3),
     },
     {
       position: 3,
       subject: row.followup_2_subject || row.subject || "",
-      body: row.followup_2_body || "",
+      body: followup2Body.text,
+      bodyHtml: followup2Body.html,
       delayDays: outreachDelayDays(row.followup_2_delay_days, 4),
     },
     {
       position: 4,
       subject: row.followup_3_subject || row.subject || "",
-      body: row.followup_3_body || "",
+      body: followup3Body.text,
+      bodyHtml: followup3Body.html,
       delayDays: outreachDelayDays(row.followup_3_delay_days, 5),
     },
   ];
@@ -406,6 +420,7 @@ function outreachStepsFromRow(row) {
       ...item,
       subject: cleanText(item.subject),
       body: cleanText(item.body),
+      bodyHtml: cleanText(item.bodyHtml),
       delayDays: Number.isFinite(item.delayDays) && item.delayDays >= 0 ? item.delayDays : 0,
     }));
 }
@@ -1078,12 +1093,15 @@ app.get("/api/outreach/imports/template.csv", asyncHandler(async (_req, res) => 
     "Почта отправителя",
     "Тема письма",
     "Текст письма",
+    "HTML письма",
     "Дата отправки",
     "Фоллоуап 1: тема",
     "Фоллоуап 1: текст",
+    "Фоллоуап 1: HTML",
     "Фоллоуап 1: задержка дней",
     "Фоллоуап 2: тема",
     "Фоллоуап 2: текст",
+    "Фоллоуап 2: HTML",
     "Фоллоуап 2: задержка дней",
     "Заметки",
   ];
@@ -1095,12 +1113,15 @@ app.get("/api/outreach/imports/template.csv", asyncHandler(async (_req, res) => 
     "team@example.com",
     "Короткий вопрос по вашей CRM",
     "Иван, здравствуйте. Увидел, что Компания клиента развивает продажи. Можем помочь с **теплыми заявками** — коротко обсудим?",
+    "<p>Иван, здравствуйте.</p><p>Можем помочь с <strong>теплыми заявками</strong> — коротко обсудим?</p>",
     "",
     "Re: короткий вопрос по вашей CRM",
     "Иван, добрый день. Подниму письмо выше: если тема актуальна, готов предложить [короткий созвон](https://example.com).",
+    "<p>Иван, добрый день. Подниму письмо выше: если тема актуальна, готов предложить <a href=\"https://example.com\">короткий созвон</a>.</p>",
     "3",
     "Re: короткий вопрос по вашей CRM",
     "Иван, последний раз напишу по этой теме. Если сейчас не актуально, вернусь позже.",
+    "",
     "7",
     "Любая заметка для себя",
   ];
@@ -1139,6 +1160,7 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
                    'position', ods.position,
                    'subject', ods.subject,
                    'body_text', ods.body_text,
+                   'body_html', ods.body_html,
                    'delay_days', ods.delay_days,
                    'status', ods.status,
                    'queue_id', ods.queue_id
@@ -1173,7 +1195,7 @@ app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler
     const check = outreachDraftStatus({
       email: row.email,
       subject: row.subject,
-      body: row.body,
+      body: normalizeOutboundBody({ bodyText: row.body, bodyHtml: row.body_html }).text,
       steps: outreachStepsFromRow(row),
     });
     return {
@@ -1200,7 +1222,10 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
   const contactName = cleanText(req.body.contact_name);
   const segment = cleanText(req.body.segment);
   const subject = cleanText(req.body.subject);
-  const bodyText = cleanText(req.body.body_text);
+  const { text: bodyText, html: bodyHtml } = normalizeOutboundBody({
+    bodyText: req.body.body_text,
+    bodyHtml: req.body.body_html,
+  });
   const mailboxId = req.body.mailbox_id && isUuid(req.body.mailbox_id) ? req.body.mailbox_id : null;
   const sendAfter = parseOptionalDate(req.body.send_after);
   const check = outreachDraftStatus({ email, subject, body: bodyText });
@@ -1221,15 +1246,16 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
               segment = $5,
               subject = $6,
               body_text = $7,
-              mailbox_id = $8,
-              send_after = $9,
-              status = $10,
-              error_reason = $11,
+              body_html = $8,
+              mailbox_id = $9,
+              send_after = $10,
+              status = $11,
+              error_reason = $12,
               updated_at = now()
           WHERE id = $1
           RETURNING *
         `,
-        [req.params.id, email, company, contactName, segment, subject, bodyText, mailboxId, sendAfter, check.status, check.errors.join("; ")],
+        [req.params.id, email, company, contactName, segment, subject, bodyText, bodyHtml, mailboxId, sendAfter, check.status, check.errors.join("; ")],
       );
       if (!updated.rowCount) {
         await client.query("ROLLBACK");
@@ -1237,15 +1263,16 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
       }
       await client.query(
         `
-          INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
-          VALUES ($1,1,$2,$3,0,$4)
+          INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, body_html, delay_days, status)
+          VALUES ($1,1,$2,$3,$4,0,$5)
           ON CONFLICT (draft_id, position) DO UPDATE SET
             subject = EXCLUDED.subject,
             body_text = EXCLUDED.body_text,
+            body_html = EXCLUDED.body_html,
             status = EXCLUDED.status,
             updated_at = now()
         `,
-        [req.params.id, subject, bodyText, check.status === "ready" ? "draft" : "blocked"],
+        [req.params.id, subject, bodyText, bodyHtml, check.status === "ready" ? "draft" : "blocked"],
       );
       await client.query("COMMIT");
       return updated.rows[0];
@@ -1265,7 +1292,12 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
     return res.status(400).json({ error: "invalid_step" });
   }
   const subject = cleanText(req.body.subject);
-  const bodyText = cleanText(req.body.body_text);
+  const bodyHtmlInput = cleanText(req.body.body_html);
+  const bodyTextInput = cleanText(req.body.body_text);
+  const { text: bodyText, html: bodyHtml } = normalizeOutboundBody({
+    bodyText: bodyTextInput,
+    bodyHtml: bodyHtmlInput,
+  });
   const delayDays = Number(req.body.delay_days || 0);
   if (!Number.isFinite(delayDays) || delayDays < 0) return res.status(400).json({ error: "invalid_delay_days" });
   const guardErrors = personalizationGuardErrors({ subject, body: bodyText }, `Follow-up ${position - 1}: `);
@@ -1289,7 +1321,7 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
         throw error;
       }
 
-      if (!bodyText) {
+      if (!bodyTextInput && !bodyHtmlInput) {
         if (existing) {
           await client.query(
             `
@@ -1310,11 +1342,12 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
 
       const step = await client.query(
         `
-          INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
-          VALUES ($1,$2,$3,$4,$5,$6)
+          INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, body_html, delay_days, status)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
           ON CONFLICT (draft_id, position) DO UPDATE SET
             subject = EXCLUDED.subject,
             body_text = EXCLUDED.body_text,
+            body_html = EXCLUDED.body_html,
             delay_days = EXCLUDED.delay_days,
             status = CASE
               WHEN EXCLUDED.status = 'blocked' THEN 'blocked'
@@ -1324,7 +1357,7 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
             updated_at = now()
           RETURNING *
         `,
-        [draft.id, position, subject || draft.subject, bodyText, delayDays, nextStepStatus],
+        [draft.id, position, subject || draft.subject, bodyText, bodyHtml, delayDays, nextStepStatus],
       );
       if (guardErrors.length) {
         await client.query(
@@ -1349,7 +1382,7 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
             WHERE outreach_step_id = $1
               AND status IN ('pending','retrying')
           `,
-          [step.rows[0].id, subject || draft.subject, bodyText, markdownToHtml(bodyText)],
+          [step.rows[0].id, subject || draft.subject, bodyText, bodyHtml],
         );
       }
       await client.query("COMMIT");
@@ -1525,7 +1558,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
   const [drafts, readyMailboxes, draftSteps] = await Promise.all([
     query(
       `
-        SELECT d.id, d.to_email, d.company, d.contact_name, d.subject, d.body_text,
+        SELECT d.id, d.to_email, d.company, d.contact_name, d.subject, d.body_text, d.body_html,
                d.send_after, d.status, d.error_reason, d.mailbox_id,
                m.email AS mailbox_email, m.is_active AS mailbox_active,
                m.smtp_verified_at, m.imap_verified_at, m.last_inbox_sync_at,
@@ -1533,6 +1566,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
                first_step.id AS first_step_id,
                first_step.subject AS first_step_subject,
                first_step.body_text AS first_step_body_text,
+               first_step.body_html AS first_step_body_html,
                COALESCE(followups.followup_count, 0)::int AS followup_count,
                EXISTS (
                  SELECT 1
@@ -1579,7 +1613,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     `),
     query(
       `
-        SELECT draft_id, position, subject, body_text, status
+        SELECT draft_id, position, subject, body_text, body_html, status
         FROM outreach_draft_steps
         WHERE draft_id = ANY($1::uuid[])
         ORDER BY draft_id, position
@@ -1685,7 +1719,7 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
         company: row.company,
         contact_name: row.contact_name,
         subject: row.first_step_subject || row.subject,
-        body_preview: String(row.first_step_body_text || row.body_text || "").slice(0, 180),
+        body_preview: String(row.first_step_body_text || row.body_text || htmlToText(row.first_step_body_html || row.body_html || "")).slice(0, 180),
         mailbox: issues.mailbox,
         scheduled_at: row.send_after || null,
         status: issues.errors.length ? "blocked" : "ready",
@@ -1718,7 +1752,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
     try {
       const drafts = (await client.query(
         `
-          SELECT d.*, s.id AS step_id, s.subject AS step_subject, s.body_text AS step_body_text
+          SELECT d.*, s.id AS step_id, s.subject AS step_subject, s.body_text AS step_body_text, s.body_html AS step_body_html
           FROM outreach_drafts d
           JOIN outreach_draft_steps s ON s.draft_id = d.id AND s.position = 1
           WHERE d.id = ANY($1::uuid[])
@@ -1821,7 +1855,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
             draft.step_id,
             draft.step_subject,
             draft.step_body_text,
-            markdownToHtml(draft.step_body_text),
+            draft.step_body_html || markdownToHtml(draft.step_body_text),
             run.id,
           ],
         );
@@ -3727,7 +3761,7 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
         const check = outreachDraftStatus({
           email: row.email,
           subject: row.subject,
-          body: row.body,
+          body: normalizeOutboundBody({ bodyText: row.body, bodyHtml: row.body_html }).text,
           steps,
         });
         const rowErrors = [...check.errors];
@@ -3800,9 +3834,9 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
           `
             INSERT INTO outreach_drafts(
               import_id, source_row_number, lead_id, conversation_id, mailbox_id, to_email,
-              company, contact_name, segment, subject, body_text, send_after, status, error_reason, raw_row
+              company, contact_name, segment, subject, body_text, body_html, send_after, status, error_reason, raw_row
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             RETURNING id
           `,
           [
@@ -3816,7 +3850,8 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
             row.contact_name,
             cleanText(row.segment),
             row.subject || "",
-            row.body || "",
+            steps[0]?.body || "",
+            steps[0]?.bodyHtml || "",
             parseOptionalDate(row.send_after),
             status,
             rowErrors.join("; "),
@@ -3826,10 +3861,10 @@ app.post("/api/outreach/imports", csvUpload.single("file"), asyncHandler(async (
         for (const step of steps) {
           await client.query(
             `
-              INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, delay_days, status)
-              VALUES ($1,$2,$3,$4,$5,$6)
+              INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, body_html, delay_days, status)
+              VALUES ($1,$2,$3,$4,$5,$6,$7)
             `,
-            [draftInsert.rows[0].id, step.position, step.subject, step.body, step.delayDays, status === "ready" ? "draft" : "blocked"],
+            [draftInsert.rows[0].id, step.position, step.subject, step.body, step.bodyHtml, step.delayDays, status === "ready" ? "draft" : "blocked"],
           );
         }
       }

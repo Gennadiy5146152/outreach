@@ -408,6 +408,19 @@ function esc(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+function htmlPreviewText(value = "") {
+  return String(value || "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/p>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function fmtDate(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("ru-RU", { timeZone: currentTimeZone() });
@@ -2044,8 +2057,16 @@ function outreachDraftStepForm(draft, position, { isNew = false } = {}) {
       <label class="field">
         <span>Текст follow-up</span>
         <textarea name="body_text" placeholder="Напиши продолжение. Можно Markdown: **жирный**, *курсив*, [ссылка](https://...).">${esc(step.body_text || "")}</textarea>
-        <small class="field-help">Если лид ответит, следующие письма цепочки остановятся. Markdown применится при отправке.</small>
+        <small class="field-help">Если лид ответит, следующие письма цепочки остановятся. Fallback для клиентов без HTML можно собрать из HTML.</small>
       </label>
+      <details class="html-body-details" ${step.body_html ? "open" : ""}>
+        <summary>HTML follow-up</summary>
+        <label class="field">
+          <span>HTML follow-up</span>
+          <textarea name="body_html" spellcheck="false" placeholder="<p>Добрый день.</p><p><strong>Коротко</strong> подниму письмо выше.</p>">${esc(step.body_html || "")}</textarea>
+          <small class="field-help">Если заполнено, уйдет как HTML-версия письма.</small>
+        </label>
+      </details>
       <label class="field">
         <span>Через сколько дней отправить</span>
         <input name="delay_days" type="number" min="0" step="1" value="${step.delay_days ?? defaultDelay}" placeholder="Например: ${defaultDelay}" />
@@ -2121,9 +2142,17 @@ function renderOutreachDraftDrawer(draft) {
         </label>
         <label class="field">
           <span>Текст письма</span>
-          <textarea name="body_text" placeholder="Вставь письмо из Excel. Markdown поддерживается: **жирный**, *курсив*, [ссылка](https://...)." required>${esc(draft.body_text)}</textarea>
-          <small class="field-help">Это первое письмо цепочки. Markdown превратится в оформление при отправке.</small>
+          <textarea name="body_text" placeholder="Вставь текстовую версию. Markdown поддерживается: **жирный**, *курсив*, [ссылка](https://...).">${esc(draft.body_text)}</textarea>
+          <small class="field-help">Fallback для клиентов без HTML. Если оставить пустым, текст будет собран из HTML.</small>
         </label>
+        <details class="html-body-details" ${draft.body_html ? "open" : ""}>
+          <summary>HTML письма</summary>
+          <label class="field">
+            <span>HTML письма</span>
+            <textarea name="body_html" spellcheck="false" placeholder="<p>Здравствуйте.</p><p><strong>Короткий вопрос</strong> по вашей CRM.</p>">${esc(draft.body_html || "")}</textarea>
+            <small class="field-help">Если заполнено, получатель увидит эту HTML-версию письма.</small>
+          </label>
+        </details>
         <label class="field">
           <span>Отправить не раньше</span>
           <input name="send_after" type="datetime-local" value="${draft.send_after ? new Date(draft.send_after).toISOString().slice(0, 16) : ""}" placeholder="Оставь пустым, если можно отправлять сразу" />
@@ -2233,7 +2262,7 @@ async function loadOutreachDrafts() {
             <td>
               <div class="draft-message">
                 <strong>${esc(draft.subject || "Без темы")}</strong>
-                <span>${esc((draft.body_text || "").slice(0, 180))}${draft.body_text && draft.body_text.length > 180 ? "..." : ""}</span>
+                <span>${esc((draft.body_text || htmlPreviewText(draft.body_html)).slice(0, 180))}${(draft.body_text || htmlPreviewText(draft.body_html)).length > 180 ? "..." : ""}</span>
                 <div class="draft-steps">${followups.length
                   ? followups.map((step) => `<span>FU${Number(step.position) - 1}: +${Number(step.delay_days || 0)} дн.</span>`).join("")
                   : `<span>follow-up нет</span>`}

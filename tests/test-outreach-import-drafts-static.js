@@ -8,6 +8,7 @@ const server = fs.readFileSync("src/server.js", "utf8");
 const csv = fs.readFileSync("src/services/csv.js", "utf8");
 const migration = fs.readFileSync("db/migrations/003_outreach_imports.sql", "utf8");
 const sequenceMigration = fs.readFileSync("db/migrations/004_outreach_draft_sequences.sql", "utf8");
+const htmlMigration = fs.readFileSync("db/migrations/011_outreach_draft_html.sql", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
 const stopService = fs.readFileSync("src/services/outreach-stop.js", "utf8");
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -32,6 +33,16 @@ for (const expected of [
 ]) {
   if (!sequenceMigration.includes(expected)) {
     throw new Error(`outreach sequence migration should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "ALTER TABLE outreach_drafts",
+  "ADD COLUMN IF NOT EXISTS body_html text",
+  "ALTER TABLE outreach_draft_steps",
+]) {
+  if (!htmlMigration.includes(expected)) {
+    throw new Error(`outreach HTML migration should include ${expected}`);
   }
 }
 
@@ -138,6 +149,28 @@ const parsedZeroDelays = rowsToOutreachRows([
 
 if (parsedZeroDelays[0]?.followup_1_delay_days !== "0" || parsedZeroDelays[0]?.followup_2_delay_days !== "0") {
   throw new Error("outreach Excel parser should preserve numeric zero follow-up delays");
+}
+
+const parsedHtmlBodies = rowsToOutreachRows([
+  [
+    "Почта получателя",
+    "Тема письма",
+    "HTML письма",
+    "Фоллоуап 1: HTML",
+  ],
+  [
+    "client@example.com",
+    "HTML тема",
+    "<p><strong>Первое письмо</strong></p>",
+    "<p>HTML follow-up</p>",
+  ],
+]);
+
+if (
+  parsedHtmlBodies[0]?.body_html !== "<p><strong>Первое письмо</strong></p>" ||
+  parsedHtmlBodies[0]?.followup_1_body_html !== "<p>HTML follow-up</p>"
+) {
+  throw new Error("outreach parser should preserve HTML body columns");
 }
 
 for (const expected of [
