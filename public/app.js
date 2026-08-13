@@ -4392,6 +4392,30 @@ $("#startSelectedDraftsBtn").addEventListener("click", (event) => runAction({
   await startOutreachDrafts(draftIds);
 }));
 
+$("#bulkHtmlAssetsForm").addEventListener("submit", (event) => runAction({
+  title: "Массовая загрузка HTML и картинок",
+  button: event.submitter,
+}, async () => {
+  event.preventDefault();
+  const draftIds = outreachDraftSelectionStats().deletableDrafts.map((draft) => draft.id);
+  if (!draftIds.length) throw new Error("Выбери черновики, к которым нужно применить HTML и картинки.");
+  const htmlFiles = event.target.elements.html_files.files;
+  if (!htmlFiles.length) throw new Error("Выбери HTML-файлы цепочки.");
+  if (htmlFiles.length > 4) throw new Error("Можно загрузить максимум 4 HTML-файла: письмо и 3 follow-up.");
+  const form = new FormData(event.target);
+  form.set("draft_ids", draftIds.join(","));
+  const result = await api("/api/outreach/drafts/bulk-html-assets", { method: "POST", body: form });
+  event.target.reset();
+  clearOutreachDraftLaunchReview();
+  await Promise.all([loadOutreachDrafts(), loadQueue()]);
+  setActionResult({
+    status: result.errors?.length ? "warn" : "success",
+    title: "Массовая загрузка HTML и картинок",
+    message: `Обновлено черновиков: ${result.updated_drafts || 0}. Шагов: ${result.updated_steps || 0}. Inline-картинок: ${result.attached_images || 0}.`,
+    details: result,
+  });
+}));
+
 $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
   const draftIds = selectedDeletableOutreachDraftIds();
   if (!draftIds.length) {

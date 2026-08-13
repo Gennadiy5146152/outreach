@@ -26,6 +26,10 @@ const htmlUpload = multer({
   storage: multer.memoryStorage(),
   limits: { files: 4, fileSize: 10 * 1024 * 1024 },
 });
+const bulkHtmlAssetsUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 44, fileSize: 20 * 1024 * 1024 },
+});
 const attachmentUpload = multer({
   dest: env.attachmentDir,
   limits: { fileSize: 200 * 1024 * 1024 },
@@ -73,6 +77,47 @@ function htmlUploadBody(file) {
     throw error;
   }
   return normalizeOutboundBody({ bodyHtml: html });
+}
+
+function uploadAssetKey(value = "") {
+  const clean = String(value || "")
+    .replace(/\\/g, "/")
+    .split(/[?#]/)[0]
+    .trim();
+  return path.posix.basename(clean).toLowerCase();
+}
+
+function isInlineImageSrcCandidate(src = "") {
+  return !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(String(src || "").trim());
+}
+
+function rewriteHtmlImageSources(html, imagesByKey, onMatch) {
+  return String(html || "").replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi, (match, prefix, quote, src) => {
+    if (!isInlineImageSrcCandidate(src)) return match;
+    const key = uploadAssetKey(src);
+    const file = imagesByKey.get(key);
+    if (!file) return match;
+    return `${prefix}${quote}cid:${onMatch(key, file)}${quote}`;
+  });
+}
+
+async function createOutreachAttachmentFromUpload(client, stepId, file, contentId) {
+  await fs.mkdir(env.attachmentDir, { recursive: true });
+  const safeName = String(file.originalname || "asset")
+    .replace(/[\\/]/g, "_")
+    .replace(/[^\w.-]+/g, "_")
+    .slice(0, 120) || "asset";
+  const storagePath = path.join(env.attachmentDir, `${crypto.randomUUID()}-${safeName}`);
+  await fs.writeFile(storagePath, file.buffer);
+  const result = await client.query(
+    `
+      INSERT INTO attachments(outreach_step_id, file_name, mime_type, size_bytes, storage_path, content_id)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING *
+    `,
+    [stepId, file.originalname, file.mimetype, file.size, storagePath, contentId],
+  );
+  return result.rows[0];
 }
 
 function isUuid(value) {
@@ -1554,6 +1599,190 @@ app.post("/api/outreach/drafts/:id/html-files", htmlUpload.array("files", 4), as
   });
 
   if (!result) return res.status(404).json({ error: "not_found" });
+  res.json(result);
+}));
+
+app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
+  { name: "html_files", maxCount: 4 },
+  { name: "images", maxCount: 40 },
+]), asyncHandler(async (req, res) => {
+  const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
+  const htmlFiles = req.files?.html_files || [];
+  const imageFiles = req.files?.images || [];
+  if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
+  if (!htmlFiles.length) return res.status(400).json({ error: "html_files_required" });
+
+  const bodies = htmlFiles.map((file) => htmlUploadBody(file));
+  const imagesByKey = new Map();
+  for (const file of imageFiles) {
+    if (!String(file.mimetype || "").startsWith("image/")) return res.status(400).json({ error: "image_files_required" });
+    const key = uploadAssetKey(file.originalname);
+    if (key) imagesByKey.set(key, file);
+  }
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const drafts = (await client.query(
+        `
+          SELECT *
+          FROM outreach_drafts
+          WHERE id = ANY($1::uuid[])
+          ORDER BY created_at ASC
+        `,
+        [draftIds],
+      )).rows;
+      const foundIds = new Set(drafts.map((draft) => draft.id));
+      const missing = draftIds.filter((id) => !foundIds.has(id));
+      const positions = bodies.map((_, index) => index + 1);
+      const existingSteps = (await client.query(
+        `
+          SELECT *
+          FROM outreach_draft_steps
+          WHERE draft_id = ANY($1::uuid[])
+            AND position = ANY($2::int[])
+        `,
+        [draftIds, positions],
+      )).rows;
+      const stepsByDraft = new Map();
+      for (const step of existingSteps) {
+        const list = stepsByDraft.get(step.draft_id) || [];
+        list.push(step);
+        stepsByDraft.set(step.draft_id, list);
+      }
+
+      const updated = [];
+      const errors = missing.map((id) => ({ id, error: "Черновик не найден." }));
+      let updatedSteps = 0;
+      let attachedImages = 0;
+      const usedImageKeys = new Set();
+      const defaultDelayDays = { 1: 0, 2: 3, 3: 4, 4: 5 };
+
+      for (const draft of drafts) {
+        const currentSteps = stepsByDraft.get(draft.id) || [];
+        const existingByPosition = new Map(currentSteps.map((step) => [Number(step.position), step]));
+        const sentStep = currentSteps.find((step) => step.status === "sent");
+        if (sentStep) {
+          errors.push({ id: draft.id, email: draft.to_email, error: `Шаг ${sentStep.position} уже отправлен, HTML не менял.` });
+          continue;
+        }
+
+        const draftGuardErrors = [];
+        const draftSteps = [];
+
+        for (const [index, body] of bodies.entries()) {
+          const position = index + 1;
+          const existing = existingByPosition.get(position);
+          const subject = cleanText(existing?.subject || draft.subject);
+          const referencedImages = new Map();
+          const html = rewriteHtmlImageSources(body.html, imagesByKey, (key, file) => {
+            usedImageKeys.add(key);
+            if (!referencedImages.has(key)) {
+              referencedImages.set(key, {
+                file,
+                contentId: `${crypto.randomUUID()}@outreach.inline`,
+              });
+            }
+            return referencedImages.get(key).contentId;
+          });
+          const normalizedBody = normalizeOutboundBody({ bodyHtml: html });
+          const stepGuardErrors = personalizationGuardErrors(
+            { subject, body: normalizedBody.text },
+            position > 1 ? `Follow-up ${position - 1}: ` : "",
+          );
+          draftGuardErrors.push(...stepGuardErrors);
+          const status = stepGuardErrors.length ? "blocked" : "draft";
+          const delayDays = Number(existing?.delay_days ?? defaultDelayDays[position] ?? 0);
+          const step = (await client.query(
+            `
+              INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, body_html, delay_days, status)
+              VALUES ($1,$2,$3,$4,$5,$6,$7)
+              ON CONFLICT (draft_id, position) DO UPDATE SET
+                subject = EXCLUDED.subject,
+                body_text = EXCLUDED.body_text,
+                body_html = EXCLUDED.body_html,
+                delay_days = EXCLUDED.delay_days,
+                status = CASE
+                  WHEN EXCLUDED.status = 'blocked' THEN 'blocked'
+                  WHEN outreach_draft_steps.status IN ('queued','needs_approval') THEN outreach_draft_steps.status
+                  ELSE EXCLUDED.status
+                END,
+                updated_at = now()
+              RETURNING *
+            `,
+            [draft.id, position, subject, normalizedBody.text, normalizedBody.html, delayDays, status],
+          )).rows[0];
+          draftSteps.push(step);
+          updatedSteps += 1;
+
+          for (const item of referencedImages.values()) {
+            await createOutreachAttachmentFromUpload(client, step.id, item.file, item.contentId);
+            attachedImages += 1;
+          }
+
+          if (stepGuardErrors.length) {
+            await client.query(
+              `
+                UPDATE sending_queue
+                SET status = 'cancelled',
+                    last_error = $2,
+                    updated_at = now()
+                WHERE outreach_step_id = $1
+                  AND status IN ('pending','retrying')
+              `,
+              [step.id, stepGuardErrors.join("; ")],
+            );
+          } else {
+            await client.query(
+              `
+                UPDATE sending_queue
+                SET subject_override = $2,
+                    body_text_override = $3,
+                    body_html_override = $4,
+                    updated_at = now()
+                WHERE outreach_step_id = $1
+                  AND status IN ('pending','retrying')
+              `,
+              [step.id, subject, normalizedBody.text, normalizedBody.html],
+            );
+          }
+        }
+
+        const firstStep = draftSteps[0];
+        const check = outreachDraftStatus({ email: draft.to_email, subject: firstStep.subject, body: firstStep.body_text });
+        const nextStatus = [...check.errors, ...draftGuardErrors].length ? "blocked" : "ready";
+        const updatedDraft = (await client.query(
+          `
+            UPDATE outreach_drafts
+            SET subject = $2,
+                body_text = $3,
+                body_html = $4,
+                status = $5,
+                error_reason = $6,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING *
+          `,
+          [draft.id, firstStep.subject, firstStep.body_text, firstStep.body_html, nextStatus, [...check.errors, ...draftGuardErrors].join("; ")],
+        )).rows[0];
+        updated.push(updatedDraft);
+      }
+
+      await client.query("COMMIT");
+      return {
+        requested: draftIds.length,
+        updated_drafts: updated.length,
+        updated_steps: updatedSteps,
+        attached_images: attachedImages,
+        unused_images: [...imagesByKey.keys()].filter((key) => !usedImageKeys.has(key)),
+        errors,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
   res.json(result);
 }));
 

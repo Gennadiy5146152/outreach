@@ -1491,6 +1491,34 @@ h2 {
   margin-top: 10px;
 }
 
+.bulk-html-assets {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bulk-html-assets label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bulk-html-assets span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bulk-html-assets input {
+  min-width: 0;
+}
+
 .add-followup-card {
   padding: 10px;
   border: 1px dashed var(--line);
