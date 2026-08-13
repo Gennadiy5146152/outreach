@@ -432,6 +432,36 @@ function inlineImageButton(attachment = {}) {
   return `<button class="small-button" data-inline-image-cid="${esc(attachment.content_id)}" data-inline-image-alt="${esc(attachment.file_name)}">Вставить в HTML</button>`;
 }
 
+const HTML_CHAIN_FILE_LABELS = ["Стартовое письмо", "Follow-up 1", "Follow-up 2", "Follow-up 3"];
+
+function sortedBrowserFiles(files = []) {
+  return [...files].sort((left, right) => left.name.localeCompare(right.name, "ru", {
+    numeric: true,
+    sensitivity: "base",
+  }));
+}
+
+function renderBulkHtmlAssetsPreview() {
+  const form = $("#bulkHtmlAssetsForm");
+  const target = $("#bulkHtmlAssetsPreview");
+  if (!form || !target) return;
+  const htmlFiles = sortedBrowserFiles(form.elements.html_files.files);
+  const imageFiles = sortedBrowserFiles(form.elements.images.files);
+  if (!htmlFiles.length && !imageFiles.length) {
+    target.innerHTML = `<span>HTML применяются по имени файла: 01-start.html, 02-followup1.html, 03-followup2.html. Картинки сопоставляются по имени из src.</span>`;
+    return;
+  }
+  target.innerHTML = `
+    ${htmlFiles.length ? `
+      <ol>
+        ${htmlFiles.map((file, index) => `<li><strong>${esc(HTML_CHAIN_FILE_LABELS[index] || `Шаг ${index + 1}`)}</strong>: ${esc(file.name)}</li>`).join("")}
+      </ol>
+    ` : `<span>HTML-файлы не выбраны.</span>`}
+    ${imageFiles.length ? `<span>Картинки для автоподстановки: ${imageFiles.map((file) => esc(file.name)).join(", ")}</span>` : `<span>Картинки не выбраны. Внешние URL в HTML останутся как есть.</span>`}
+    <span>В HTML <code>src="images/banner.png"</code> совпадет с загруженным файлом <code>banner.png</code>.</span>
+  `;
+}
+
 function fmtDate(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("ru-RU", { timeZone: currentTimeZone() });
@@ -4406,6 +4436,7 @@ $("#bulkHtmlAssetsForm").addEventListener("submit", (event) => runAction({
   form.set("draft_ids", draftIds.join(","));
   const result = await api("/api/outreach/drafts/bulk-html-assets", { method: "POST", body: form });
   event.target.reset();
+  renderBulkHtmlAssetsPreview();
   clearOutreachDraftLaunchReview();
   await Promise.all([loadOutreachDrafts(), loadQueue()]);
   setActionResult({
@@ -4415,6 +4446,9 @@ $("#bulkHtmlAssetsForm").addEventListener("submit", (event) => runAction({
     details: result,
   });
 }));
+
+$("#bulkHtmlAssetsForm").addEventListener("change", renderBulkHtmlAssetsPreview);
+renderBulkHtmlAssetsPreview();
 
 $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
   const draftIds = selectedDeletableOutreachDraftIds();

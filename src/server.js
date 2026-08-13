@@ -62,6 +62,15 @@ function uploadOriginalName(fileOrName, fallback = "upload") {
   }
 }
 
+const uploadFileNameCollator = new Intl.Collator("ru", { numeric: true, sensitivity: "base" });
+
+function sortedUploadFiles(files = []) {
+  return [...files].sort((left, right) => uploadFileNameCollator.compare(
+    uploadOriginalName(left),
+    uploadOriginalName(right),
+  ));
+}
+
 function normalizeOutboundBody({ bodyText = "", bodyHtml = "" } = {}) {
   const text = cleanText(bodyText) || htmlToText(bodyHtml);
   const html = cleanText(bodyHtml) || markdownToHtml(text);
@@ -1498,7 +1507,7 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
 
 app.post("/api/outreach/drafts/:id/html-files", htmlUpload.array("files", 4), asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_draft" });
-  const files = req.files || [];
+  const files = sortedUploadFiles(req.files || []);
   if (!files.length) return res.status(400).json({ error: "files_required" });
   const bodies = files.map((file) => htmlUploadBody(file));
 
@@ -1622,7 +1631,7 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
   { name: "images", maxCount: 40 },
 ]), asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
-  const htmlFiles = req.files?.html_files || [];
+  const htmlFiles = sortedUploadFiles(req.files?.html_files || []);
   const imageFiles = req.files?.images || [];
   if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
   if (!htmlFiles.length) return res.status(400).json({ error: "html_files_required" });

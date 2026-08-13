@@ -1519,6 +1519,26 @@ h2 {
   min-width: 0;
 }
 
+.bulk-html-assets-preview {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bulk-html-assets-preview ol,
+.bulk-html-assets-preview ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.bulk-html-assets-preview strong {
+  color: var(--text);
+}
+
 .add-followup-card {
   padding: 10px;
   border: 1px dashed var(--line);
