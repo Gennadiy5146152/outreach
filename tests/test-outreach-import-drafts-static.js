@@ -133,6 +133,14 @@ for (const expected of [
   }
 }
 
+const draftsListRoute = server.slice(
+  server.indexOf("app.get(\"/api/outreach/drafts\""),
+  server.indexOf("app.post(\"/api/outreach/imports/preview\""),
+);
+if (draftsListRoute.includes("LIMIT 500")) {
+  throw new Error("outreach drafts list should not hide imported rows behind LIMIT 500");
+}
+
 for (const expected of [
   "rowsToOutreachRows",
   "String(value ?? \"\").trim()",

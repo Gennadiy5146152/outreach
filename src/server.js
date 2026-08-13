@@ -1326,7 +1326,6 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
         AND ($2 = '' OR d.import_id = $2::uuid)
       GROUP BY d.id, i.file_name, m.email
       ORDER BY d.created_at DESC
-      LIMIT 500
     `,
     [status, importId],
   );
