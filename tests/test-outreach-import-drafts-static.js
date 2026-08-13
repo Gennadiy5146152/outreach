@@ -351,6 +351,9 @@ for (const expected of [
   "bulkHtmlAssetsUpload.fields",
   "app.post(\"/api/outreach/drafts/bulk-html-assets\"",
   "function rewriteHtmlImageSources",
+  "missing_image_sources",
+  "decodeURIComponent(clean)",
+  "([^\\s>]+)",
   "content_id",
   "String(file?.mimetype || \"\").startsWith(\"image/\")",
 ]) {

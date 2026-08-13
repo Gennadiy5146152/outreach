@@ -4442,7 +4442,7 @@ $("#bulkHtmlAssetsForm").addEventListener("submit", (event) => runAction({
   setActionResult({
     status: result.errors?.length ? "warn" : "success",
     title: "Массовая загрузка HTML и картинок",
-    message: `Обновлено черновиков: ${result.updated_drafts || 0}. Шагов: ${result.updated_steps || 0}. Inline-картинок: ${result.attached_images || 0}.`,
+    message: `Обновлено черновиков: ${result.updated_drafts || 0}. Шагов: ${result.updated_steps || 0}. Inline-картинок: ${result.attached_images || 0}.${result.missing_image_sources?.length ? ` Не найдены картинки для src: ${result.missing_image_sources.length}.` : ""}`,
     details: result,
   });
 }));

@@ -101,10 +101,21 @@ function htmlUploadBody(file) {
 }
 
 function uploadAssetKey(value = "") {
-  const clean = String(value || "")
+  const raw = String(value || "")
     .replace(/\\/g, "/")
     .split(/[?#]/)[0]
     .trim();
+  let clean = raw
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/^\.\/+/, "");
+  try {
+    clean = decodeURIComponent(clean);
+  } catch {
+    // Keep the original browser/export value when it is not valid percent-encoding.
+  }
   return path.posix.basename(clean).toLowerCase();
 }
 
@@ -112,13 +123,20 @@ function isInlineImageSrcCandidate(src = "") {
   return !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(String(src || "").trim());
 }
 
-function rewriteHtmlImageSources(html, imagesByKey, onMatch) {
-  return String(html || "").replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi, (match, prefix, quote, src) => {
-    if (!isInlineImageSrcCandidate(src)) return match;
-    const key = uploadAssetKey(src);
-    const file = imagesByKey.get(key);
-    if (!file) return match;
-    return `${prefix}${quote}cid:${onMatch(key, file)}${quote}`;
+function rewriteHtmlImageSources(html, imagesByKey, onMatch, onMissing = () => {}) {
+  return String(html || "").replace(/<img\b[^>]*>/gi, (tag) => {
+    if (!/\bsrc\s*=/i.test(tag)) return tag;
+    return tag.replace(/(\bsrc\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i, (match, prefix, doubleQuoted, singleQuoted, unquoted) => {
+      const src = doubleQuoted ?? singleQuoted ?? unquoted ?? "";
+      if (!isInlineImageSrcCandidate(src)) return match;
+      const key = uploadAssetKey(src);
+      const file = imagesByKey.get(key);
+      if (!file) {
+        onMissing(src, key);
+        return match;
+      }
+      return `${prefix}"cid:${onMatch(key, file, src)}"`;
+    });
   });
 }
 
@@ -1680,6 +1698,7 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
       let updatedSteps = 0;
       let attachedImages = 0;
       const usedImageKeys = new Set();
+      const missingImageSources = new Set();
       const defaultDelayDays = { 1: 0, 2: 3, 3: 4, 4: 5 };
 
       for (const draft of drafts) {
@@ -1699,16 +1718,21 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
           const existing = existingByPosition.get(position);
           const subject = cleanText(existing?.subject || draft.subject);
           const referencedImages = new Map();
-          const html = rewriteHtmlImageSources(body.html, imagesByKey, (key, file) => {
-            usedImageKeys.add(key);
-            if (!referencedImages.has(key)) {
-              referencedImages.set(key, {
-                file,
-                contentId: `${crypto.randomUUID()}@outreach.inline`,
-              });
-            }
-            return referencedImages.get(key).contentId;
-          });
+          const html = rewriteHtmlImageSources(
+            body.html,
+            imagesByKey,
+            (key, file) => {
+              usedImageKeys.add(key);
+              if (!referencedImages.has(key)) {
+                referencedImages.set(key, {
+                  file,
+                  contentId: `${crypto.randomUUID()}@outreach.inline`,
+                });
+              }
+              return referencedImages.get(key).contentId;
+            },
+            (src) => missingImageSources.add(src),
+          );
           const normalizedBody = normalizeOutboundBody({ bodyHtml: html });
           const stepGuardErrors = personalizationGuardErrors(
             { subject, body: normalizedBody.text },
@@ -1799,6 +1823,7 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
         updated_steps: updatedSteps,
         attached_images: attachedImages,
         unused_images: [...imagesByKey.keys()].filter((key) => !usedImageKeys.has(key)),
+        missing_image_sources: [...missingImageSources],
         errors,
       };
     } catch (error) {
