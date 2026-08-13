@@ -2008,17 +2008,19 @@ function selectedOutreachDraftSignature(draftIds = [...state.selectedOutreachDra
 function outreachDraftFilterLabel(value = state.outreachDraftFilter) {
   return {
     ready: "готовы к старту",
-    active: "в процессе",
     blocked: "нужно исправить",
     all: "все",
   }[value] || "все";
 }
 
+function isActiveOutreachDraft(draft) {
+  return ["queued", "active_sequence"].includes(draft.status);
+}
+
 function visibleOutreachDrafts(drafts = state.allOutreachDrafts) {
   if (state.outreachDraftFilter === "ready") return drafts.filter((draft) => draft.status === "ready");
-  if (state.outreachDraftFilter === "active") return drafts.filter((draft) => ["queued", "active_sequence"].includes(draft.status));
   if (state.outreachDraftFilter === "blocked") return drafts.filter((draft) => draft.status === "blocked");
-  return drafts;
+  return drafts.filter((draft) => !isActiveOutreachDraft(draft));
 }
 
 function canDeleteOutreachDraft(draft) {
@@ -2026,7 +2028,7 @@ function canDeleteOutreachDraft(draft) {
 }
 
 function canCancelOutreachDraft(draft) {
-  return ["queued", "active_sequence"].includes(draft.status);
+  return isActiveOutreachDraft(draft);
 }
 
 function canSelectOutreachDraft(draft) {
@@ -2341,7 +2343,7 @@ async function loadOutreachDrafts() {
     clearOutreachDraftLaunchReview();
   }
   const ready = state.allOutreachDrafts.filter((draft) => draft.status === "ready").length;
-  const active = state.allOutreachDrafts.filter((draft) => ["queued", "active_sequence"].includes(draft.status)).length;
+  const active = state.allOutreachDrafts.filter(isActiveOutreachDraft).length;
   const blocked = state.allOutreachDrafts.filter((draft) => draft.status === "blocked").length;
   const selectable = state.outreachDrafts.filter(canSelectOutreachDraft).length;
   const selectableSelected = state.outreachDrafts
@@ -2349,15 +2351,14 @@ async function loadOutreachDrafts() {
     .length;
   const bulkDeleteButton = $("#deleteSelectedDraftsBtn");
   if (bulkDeleteButton) {
-    const activeMode = state.outreachDraftFilter === "active";
-    bulkDeleteButton.textContent = activeMode ? "Остановить" : "Удалить";
-    bulkDeleteButton.title = activeMode ? "Остановить выбранные черновики в процессе" : "Удалить выбранные черновики";
+    bulkDeleteButton.textContent = "Удалить";
+    bulkDeleteButton.title = "Удалить выбранные черновики";
   }
   $("#outreachDraftsSummary").innerHTML = `
     <span>Всего на экране: <strong>${state.outreachDrafts.length}</strong></span>
     <span>Показано: <strong>${esc(outreachDraftFilterLabel())}</strong></span>
     <span>Готовы: <strong>${ready}</strong></span>
-    <span>В процессе: <strong>${active}</strong></span>
+    <span>В отправке: <strong>${active}</strong></span>
     <span>Нужно исправить: <strong>${blocked}</strong></span>
     <span>Выбрано: <strong>${state.selectedOutreachDraftIds.size}</strong></span>
   `;
@@ -4523,7 +4524,7 @@ $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
   const confirmParts = [];
   if (deleteIds.length) confirmParts.push(`удалить: ${deleteIds.length}`);
   if (cancelIds.length) confirmParts.push(`остановить: ${cancelIds.length}`);
-  if (!window.confirm(`Обработать выбранные черновики (${confirmParts.join(", ")})? Остановленные черновики снимутся с очереди и уйдут из раздела “В процессе”.`)) return;
+  if (!window.confirm(`Обработать выбранные черновики (${confirmParts.join(", ")})? Остановленные черновики снимутся с очереди отправки.`)) return;
   runAction({
     title: "Удаление или остановка выбранных черновиков",
     button: event.currentTarget,
