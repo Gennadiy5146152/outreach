@@ -38,10 +38,14 @@ export async function sendMail(mailbox, message, attachments = []) {
   const preparedAttachments = [];
 
   for (const attachment of attachments) {
+    const contentId = attachment.content_id || "";
+    const inline = contentId && String(message.html || "").includes(`cid:${contentId}`);
     preparedAttachments.push({
       filename: attachment.file_name,
       content: await fs.readFile(attachment.storage_path),
       contentType: attachment.mime_type,
+      cid: inline ? contentId : undefined,
+      contentDisposition: inline ? "inline" : "attachment",
     });
   }
 

@@ -427,6 +427,11 @@ function attachmentSizeLabel(sizeBytes = 0) {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
+function inlineImageButton(attachment = {}) {
+  if (!attachment.content_id || !String(attachment.mime_type || "").startsWith("image/")) return "";
+  return `<button class="small-button" data-inline-image-cid="${esc(attachment.content_id)}" data-inline-image-alt="${esc(attachment.file_name)}">Вставить в HTML</button>`;
+}
+
 function fmtDate(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("ru-RU", { timeZone: currentTimeZone() });
@@ -2060,6 +2065,7 @@ function renderOutreachStepAttachments(step = {}, label = "Письмо") {
         ? `<ul>${attachments.map((attachment) => `
             <li>
               <span>${esc(attachment.file_name)} · ${attachmentSizeLabel(attachment.size_bytes)}</span>
+              ${inlineImageButton(attachment)}
               <button class="small-button" data-delete-attachment="${attachment.id}">Удалить</button>
             </li>
           `).join("")}</ul>`
@@ -4097,6 +4103,21 @@ function insertTextAtCursor(text) {
   document.execCommand("insertText", false, text);
 }
 
+function insertInlineImage(button) {
+  const cid = button.dataset.inlineImageCid;
+  if (!cid) return;
+  const root = button.closest(".outreach-step-block") || button.closest(".drawer-section") || document;
+  const details = root.querySelector(".html-body-details");
+  if (details) details.open = true;
+  const textarea = root.querySelector("textarea[name='body_html']");
+  if (!textarea) return;
+  const alt = esc(button.dataset.inlineImageAlt || "image");
+  const snippet = `<p><img src="cid:${cid}" alt="${alt}" style="max-width:100%;height:auto;"></p>`;
+  textarea.focus();
+  textarea.setRangeText(snippet, textarea.selectionStart, textarea.selectionEnd, "end");
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 document.body.addEventListener("focusin", (event) => {
   if (event.target.matches("#stepSubject, #htmlEditor, textarea[name='body_template_text']")) {
     state.editorTarget = event.target;
@@ -4107,6 +4128,11 @@ document.body.addEventListener("click", (event) => {
   const commandButton = event.target.closest("[data-editor-cmd]");
   const variableButton = event.target.closest("[data-editor-var]");
   const linkButton = event.target.closest("[data-editor-link]");
+  const inlineImage = event.target.closest("[data-inline-image-cid]");
+  if (inlineImage) {
+    insertInlineImage(inlineImage);
+    return;
+  }
   if (commandButton) {
     $("#htmlEditor").focus();
     document.execCommand(commandButton.dataset.editorCmd, false, null);

@@ -10,7 +10,9 @@ const migration = fs.readFileSync("db/migrations/003_outreach_imports.sql", "utf
 const sequenceMigration = fs.readFileSync("db/migrations/004_outreach_draft_sequences.sql", "utf8");
 const htmlMigration = fs.readFileSync("db/migrations/011_outreach_draft_html.sql", "utf8");
 const attachmentMigration = fs.readFileSync("db/migrations/012_outreach_step_attachments.sql", "utf8");
+const contentIdMigration = fs.readFileSync("db/migrations/013_attachment_content_ids.sql", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
+const mail = fs.readFileSync("src/services/mail.js", "utf8");
 const stopService = fs.readFileSync("src/services/outreach-stop.js", "utf8");
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
@@ -54,6 +56,15 @@ for (const expected of [
 ]) {
   if (!attachmentMigration.includes(expected)) {
     throw new Error(`outreach attachment migration should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "ADD COLUMN IF NOT EXISTS content_id text",
+  "attachments_content_id_unique",
+]) {
+  if (!contentIdMigration.includes(expected)) {
+    throw new Error(`attachment content-id migration should include ${expected}`);
   }
 }
 
@@ -276,6 +287,8 @@ for (const expected of [
   "data-outreach-draft-form",
   "data-outreach-step-form",
   "data-outreach-attachment-form",
+  "data-inline-image-cid",
+  "function insertInlineImage",
   "data-edit-outreach-draft",
   "data-start-draft",
   "data-cancel-draft",
@@ -284,6 +297,7 @@ for (const expected of [
   "refreshOpenOutreachDraftDrawer",
   "renderOutreachDraftFollowups",
   "renderOutreachStepAttachments",
+  "inlineImageButton",
   "/api/outreach/draft-steps/${stepId}/attachments",
   "Добавить follow-up",
   "Здесь показаны только follow-up, которые реально есть в черновике",
@@ -314,6 +328,25 @@ for (const expected of [
 ]) {
   if (!app.includes(expected)) {
     throw new Error(`outreach import frontend should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "function attachmentContentId",
+  "content_id",
+  "String(file?.mimetype || \"\").startsWith(\"image/\")",
+]) {
+  if (!server.includes(expected)) {
+    throw new Error(`outreach attachment API should include inline image support: ${expected}`);
+  }
+}
+
+for (const expected of [
+  "cid: inline ? contentId : undefined",
+  "contentDisposition: inline ? \"inline\" : \"attachment\"",
+]) {
+  if (!mail.includes(expected)) {
+    throw new Error(`mail sender should support cid inline images: ${expected}`);
   }
 }
 

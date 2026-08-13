@@ -48,6 +48,12 @@ function normalizeOutboundBody({ bodyText = "", bodyHtml = "" } = {}) {
   return { text, html };
 }
 
+function attachmentContentId(file) {
+  return String(file?.mimetype || "").startsWith("image/")
+    ? `${crypto.randomUUID()}@outreach.inline`
+    : null;
+}
+
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
@@ -1170,6 +1176,7 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
                        'file_name', a.file_name,
                        'mime_type', a.mime_type,
                        'size_bytes', a.size_bytes,
+                       'content_id', a.content_id,
                        'created_at', a.created_at
                      ) ORDER BY a.created_at)
                      FROM attachments a
@@ -1424,13 +1431,14 @@ app.post("/api/outreach/draft-steps/:id/attachments", attachmentUpload.single("f
     await fs.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: `attachment_too_large_max_${runtime.maxAttachmentMb}_mb` });
   }
+  const contentId = attachmentContentId(req.file);
   const result = await query(
     `
-      INSERT INTO attachments(outreach_step_id, file_name, mime_type, size_bytes, storage_path)
-      VALUES ($1,$2,$3,$4,$5)
+      INSERT INTO attachments(outreach_step_id, file_name, mime_type, size_bytes, storage_path, content_id)
+      VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING *
     `,
-    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path)],
+    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path), contentId],
   );
   res.status(201).json(result.rows[0]);
 }));
@@ -4327,13 +4335,14 @@ app.post("/api/steps/:id/attachments", attachmentUpload.single("file"), asyncHan
     await fs.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: `attachment_too_large_max_${runtime.maxAttachmentMb}_mb` });
   }
+  const contentId = attachmentContentId(req.file);
   const result = await query(
     `
-      INSERT INTO attachments(campaign_step_id, file_name, mime_type, size_bytes, storage_path)
-      VALUES ($1,$2,$3,$4,$5)
+      INSERT INTO attachments(campaign_step_id, file_name, mime_type, size_bytes, storage_path, content_id)
+      VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING *
     `,
-    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path)],
+    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path), contentId],
   );
   res.status(201).json(result.rows[0]);
 }));
