@@ -4754,28 +4754,16 @@ $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
   if (!window.confirm(`Обработать выбранные черновики (${confirmParts.join(", ")})? Остановленные черновики снимутся с очереди отправки.`)) return;
   runAction({
     title: "Удаление или остановка выбранных черновиков",
+    pending: `Отправляю пачку на сервер: удалить ${deleteIds.length}, остановить ${cancelIds.length}. Жду итоговый отчет...`,
     button: event.currentTarget,
   }, async () => {
-    const deleted = [];
-    const cancelled = [];
-    const errors = [];
-    for (const draftId of deleteIds) {
-      try {
-        const result = await api(`/api/outreach/drafts/${draftId}`, { method: "DELETE" });
-        deleted.push(result);
-        state.selectedOutreachDraftIds.delete(draftId);
-      } catch (error) {
-        errors.push({ draftId, error: errorMessage(error), details: error.data || error.message });
-      }
-    }
-    for (const draftId of cancelIds) {
-      try {
-        const result = await api(`/api/outreach/drafts/${draftId}/cancel`, { method: "POST" });
-        cancelled.push(result);
-        state.selectedOutreachDraftIds.delete(draftId);
-      } catch (error) {
-        errors.push({ draftId, error: errorMessage(error), details: error.data || error.message });
-      }
+    const result = await api("/api/outreach/drafts/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delete_ids: deleteIds, cancel_ids: cancelIds }),
+    });
+    for (const draftId of [...deleteIds, ...cancelIds]) {
+      state.selectedOutreachDraftIds.delete(draftId);
     }
     clearOutreachDraftLaunchReview();
     await Promise.all([loadOutreachDrafts(), loadOutreachImports(), loadQueue(), loadDashboard()]);
@@ -4783,10 +4771,10 @@ $("#deleteSelectedDraftsBtn").addEventListener("click", (event) => {
       refreshOpenOutreachDraftDrawer(state.openOutreachDraftId);
     }
     setActionResult({
-      status: errors.length ? "warn" : "success",
+      status: result.errors?.length ? "warn" : "success",
       title: "Удаление или остановка выбранных черновиков",
-      message: `Удалено: ${deleted.length}. Остановлено: ${cancelled.length}. Ошибок: ${errors.length}.`,
-      details: { deleted, cancelled, errors },
+      message: `Пакет обработан: запрошено ${result.requested}, удалено ${result.deleted}, остановлено ${result.cancelled}, ошибок ${result.errors?.length || 0}.`,
+      details: result,
     });
   });
 });

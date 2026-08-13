@@ -507,6 +507,10 @@ function optionalDateFilter(value) {
   return date ? date.toISOString() : "";
 }
 
+function uniqueUuidArray(value) {
+  return [...new Set(parseArray(value).filter(isUuid))];
+}
+
 function outreachDelayDays(value, fallback) {
   const text = String(value ?? "").trim();
   if (text === "") return fallback;
@@ -2049,6 +2053,207 @@ app.delete("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
       email: result.draft.to_email,
       deletedSteps: result.deleted_steps,
       deletedConversation: result.deleted_conversation,
+    },
+  });
+  res.json(result);
+}));
+
+app.post("/api/outreach/drafts/bulk-delete", asyncHandler(async (req, res) => {
+  const deleteIds = uniqueUuidArray(req.body.delete_ids || req.body.draft_ids);
+  const cancelIds = uniqueUuidArray(req.body.cancel_ids);
+  const requestedIds = [...new Set([...deleteIds, ...cancelIds])];
+  if (!requestedIds.length) return res.status(400).json({ error: "draft_ids_required" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const errors = [];
+      const deletedIds = [];
+      const cancelledIds = [];
+      let deletedSteps = 0;
+      let cancelledQueue = 0;
+      let cancelledSteps = 0;
+      let deletedConversations = 0;
+
+      if (deleteIds.length) {
+        const draftResult = await client.query(
+          `
+            SELECT d.*,
+                   EXISTS (
+                     SELECT 1
+                     FROM sending_queue q
+                     WHERE q.outreach_draft_id = d.id
+                       AND q.status IN ('pending','running','retrying','sent')
+                   ) AS has_active_queue,
+                   EXISTS (
+                     SELECT 1
+                     FROM messages msg
+                     WHERE msg.outreach_draft_id = d.id
+                        OR msg.outreach_step_id IN (
+                          SELECT id FROM outreach_draft_steps WHERE draft_id = d.id
+                        )
+                   ) AS has_messages,
+                   (SELECT count(*)::int FROM outreach_draft_steps WHERE draft_id = d.id) AS steps_count
+            FROM outreach_drafts d
+            WHERE d.id = ANY($1::uuid[])
+          `,
+          [deleteIds],
+        );
+        const draftsById = new Map(draftResult.rows.map((draft) => [draft.id, draft]));
+        const deletableIds = [];
+        for (const draftId of deleteIds) {
+          const draft = draftsById.get(draftId);
+          if (!draft) {
+            errors.push({ id: draftId, error: "Черновик не найден." });
+            continue;
+          }
+          const canDelete = ["draft", "ready", "blocked", "cancelled"].includes(draft.status)
+            && !draft.has_active_queue
+            && !draft.has_messages;
+          if (!canDelete) {
+            errors.push({ id: draftId, email: draft.to_email, error: "Черновик уже был запущен или имеет историю. Используй “Отменить”, чтобы остановить будущие письма." });
+            continue;
+          }
+          deletableIds.push(draftId);
+          deletedSteps += Number(draft.steps_count || 0);
+        }
+
+        if (deletableIds.length) {
+          const deleted = await client.query(
+            "DELETE FROM outreach_drafts WHERE id = ANY($1::uuid[]) RETURNING id, import_id, conversation_id",
+            [deletableIds],
+          );
+          deletedIds.push(...deleted.rows.map((draft) => draft.id));
+
+          const importIds = [...new Set(deleted.rows.map((draft) => draft.import_id).filter(Boolean))];
+          if (importIds.length) {
+            await client.query(
+              `
+                UPDATE outreach_imports i
+                SET rows_ready = (
+                      SELECT count(*)::int FROM outreach_drafts d
+                      WHERE d.import_id = i.id AND d.status = 'ready'
+                    ),
+                    rows_blocked = (
+                      SELECT count(*)::int FROM outreach_drafts d
+                      WHERE d.import_id = i.id AND d.status = 'blocked'
+                    ),
+                    rows_skipped = GREATEST(
+                      i.rows_total - (
+                        SELECT count(*)::int FROM outreach_drafts d
+                        WHERE d.import_id = i.id
+                      ),
+                      0
+                    )
+                WHERE i.id = ANY($1::uuid[])
+              `,
+              [importIds],
+            );
+          }
+
+          const conversationIds = [...new Set(deleted.rows.map((draft) => draft.conversation_id).filter(Boolean))];
+          if (conversationIds.length) {
+            const conversations = await client.query(
+              `
+                DELETE FROM outreach_conversations oc
+                WHERE oc.id = ANY($1::uuid[])
+                  AND NOT EXISTS (
+                    SELECT 1 FROM outreach_drafts d WHERE d.conversation_id = oc.id
+                  )
+                RETURNING id
+              `,
+              [conversationIds],
+            );
+            deletedConversations = conversations.rowCount;
+          }
+        }
+      }
+
+      if (cancelIds.length) {
+        const cancelResult = await client.query(
+          `
+            WITH requested AS (
+              SELECT unnest($1::uuid[]) AS id
+            ),
+            found AS (
+              SELECT d.*
+              FROM outreach_drafts d
+              JOIN requested r ON r.id = d.id
+            ),
+            cancellable AS (
+              SELECT *
+              FROM found
+              WHERE status IN ('queued','active_sequence')
+            ),
+            cancelled_drafts AS (
+              UPDATE outreach_drafts d
+              SET status = 'cancelled',
+                  error_reason = 'Отменено пользователем',
+                  updated_at = now()
+              FROM cancellable c
+              WHERE d.id = c.id
+              RETURNING d.id
+            ),
+            cancelled_queue AS (
+              UPDATE sending_queue q
+              SET status = 'cancelled',
+                  last_error = 'Черновик отменен пользователем',
+                  updated_at = now()
+              WHERE q.outreach_draft_id IN (SELECT id FROM cancellable)
+                AND q.status IN ('pending','retrying')
+              RETURNING q.id
+            ),
+            cancelled_steps AS (
+              UPDATE outreach_draft_steps ods
+              SET status = 'cancelled',
+                  updated_at = now()
+              WHERE ods.draft_id IN (SELECT id FROM cancellable)
+                AND ods.status <> 'sent'
+              RETURNING ods.id
+            )
+            SELECT
+              COALESCE((SELECT json_agg(id) FROM cancelled_drafts), '[]'::json) AS cancelled_ids,
+              (SELECT count(*)::int FROM cancelled_queue) AS cancelled_queue,
+              (SELECT count(*)::int FROM cancelled_steps) AS cancelled_steps,
+              COALESCE((SELECT json_agg(json_build_object('id', r.id, 'error', 'Черновик не найден.')) FROM requested r LEFT JOIN found f ON f.id = r.id WHERE f.id IS NULL), '[]'::json) AS missing_errors,
+              COALESCE((SELECT json_agg(json_build_object('id', f.id, 'email', f.to_email, 'error', 'Черновик не находится в отправке.')) FROM found f WHERE f.status NOT IN ('queued','active_sequence')), '[]'::json) AS status_errors
+          `,
+          [cancelIds],
+        );
+        const row = cancelResult.rows[0] || {};
+        cancelledIds.push(...(row.cancelled_ids || []));
+        cancelledQueue = Number(row.cancelled_queue || 0);
+        cancelledSteps = Number(row.cancelled_steps || 0);
+        errors.push(...(row.missing_errors || []), ...(row.status_errors || []));
+      }
+
+      await client.query("COMMIT");
+      return {
+        requested: requestedIds.length,
+        delete_requested: deleteIds.length,
+        cancel_requested: cancelIds.length,
+        deleted: deletedIds.length,
+        cancelled: cancelledIds.length,
+        deleted_ids: deletedIds,
+        cancelled_ids: cancelledIds,
+        deleted_steps: deletedSteps,
+        deleted_conversations: deletedConversations,
+        cancelled_queue: cancelledQueue,
+        cancelled_steps: cancelledSteps,
+        errors,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  await logEvent("outreach_drafts_bulk_delete", {
+    payload: {
+      requested: result.requested,
+      deleted: result.deleted,
+      cancelled: result.cancelled,
+      errors: result.errors.length,
     },
   });
   res.json(result);
