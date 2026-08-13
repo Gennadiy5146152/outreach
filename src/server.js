@@ -7,6 +7,7 @@ import { readSheet } from "read-excel-file/node";
 import { env } from "./config/env.js";
 import { pool, query, withClient } from "./db/pool.js";
 import { inferOutreachMapping, parseCsv, rowsToObjects, rowsToOutreachRows } from "./services/csv.js";
+import { parseXlsxRowsFromXml } from "./services/xlsx.js";
 import { parseEmail } from "./services/validation.js";
 import { checkSendingDomain } from "./services/domain-check.js";
 import { sendMail, verifyImap, verifySmtp } from "./services/mail.js";
@@ -464,7 +465,12 @@ async function parseOutreachRawFile(file) {
       return { fileType: "csv", rows: parseCsv(file.buffer.toString("utf8")).filter(nonEmptySheetRow) };
     }
     if (extension === ".xlsx") {
-      const rows = await readSheet(file.buffer);
+      let rows;
+      try {
+        rows = await readSheet(file.buffer);
+      } catch {
+        rows = parseXlsxRowsFromXml(file.buffer);
+      }
       return { fileType: "xlsx", rows: rows.filter(nonEmptySheetRow) };
     }
   } catch (error) {
