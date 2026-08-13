@@ -968,6 +968,32 @@ h2 {
   margin: 4px 0;
 }
 
+.action-progress {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+.action-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--warn), var(--accent));
+  animation: actionProgress 1.1s ease-in-out infinite;
+}
+
+@keyframes actionProgress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 .action-result span,
 .action-result summary {
   color: var(--muted);

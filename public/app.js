@@ -382,6 +382,11 @@ function actionResultHtml(result) {
         <p>${esc(result.message)}</p>
         <span>${fmtDate(result.createdAt)}</span>
       </div>
+      ${result.status === "pending" ? `
+        <div class="action-progress" role="progressbar" aria-label="Операция выполняется">
+          <div class="action-progress-bar"></div>
+        </div>
+      ` : ""}
       ${actionDetails(result.details)}
     </div>
   `;
