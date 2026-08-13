@@ -287,6 +287,7 @@ for (const expected of [
   "data-outreach-draft-form",
   "data-outreach-step-form",
   "data-outreach-attachment-form",
+  "data-outreach-html-chain-form",
   "data-inline-image-cid",
   "function insertInlineImage",
   "data-edit-outreach-draft",
@@ -297,6 +298,8 @@ for (const expected of [
   "refreshOpenOutreachDraftDrawer",
   "renderOutreachDraftFollowups",
   "renderOutreachStepAttachments",
+  "renderHtmlChainUpload",
+  "/api/outreach/drafts/${draftId}/html-files",
   "inlineImageButton",
   "/api/outreach/draft-steps/${stepId}/attachments",
   "Добавить follow-up",
@@ -333,6 +336,9 @@ for (const expected of [
 
 for (const expected of [
   "function attachmentContentId",
+  "htmlUpload.array(\"files\", 4)",
+  "function htmlUploadBody",
+  "app.post(\"/api/outreach/drafts/:id/html-files\"",
   "content_id",
   "String(file?.mimetype || \"\").startsWith(\"image/\")",
 ]) {

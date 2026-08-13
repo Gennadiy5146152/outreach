@@ -22,6 +22,10 @@ await fs.mkdir(env.attachmentDir, { recursive: true });
 
 const app = express();
 const csvUpload = multer({ storage: multer.memoryStorage() });
+const htmlUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 4, fileSize: 10 * 1024 * 1024 },
+});
 const attachmentUpload = multer({
   dest: env.attachmentDir,
   limits: { fileSize: 200 * 1024 * 1024 },
@@ -52,6 +56,23 @@ function attachmentContentId(file) {
   return String(file?.mimetype || "").startsWith("image/")
     ? `${crypto.randomUUID()}@outreach.inline`
     : null;
+}
+
+function htmlUploadBody(file) {
+  const name = String(file?.originalname || "").toLowerCase();
+  const mime = String(file?.mimetype || "").toLowerCase();
+  if (!name.endsWith(".html") && !name.endsWith(".htm") && !mime.includes("html")) {
+    const error = new Error("html_file_required");
+    error.status = 400;
+    throw error;
+  }
+  const html = file.buffer.toString("utf8").trim();
+  if (!html) {
+    const error = new Error("html_file_empty");
+    error.status = 400;
+    throw error;
+  }
+  return normalizeOutboundBody({ bodyHtml: html });
 }
 
 function isUuid(value) {
@@ -1405,6 +1426,127 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
       }
       await client.query("COMMIT");
       return { ...step.rows[0], guard_errors: guardErrors };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  if (!result) return res.status(404).json({ error: "not_found" });
+  res.json(result);
+}));
+
+app.post("/api/outreach/drafts/:id/html-files", htmlUpload.array("files", 4), asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_draft" });
+  const files = req.files || [];
+  if (!files.length) return res.status(400).json({ error: "files_required" });
+  const bodies = files.map((file) => htmlUploadBody(file));
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const draft = (await client.query("SELECT * FROM outreach_drafts WHERE id = $1", [req.params.id])).rows[0];
+      if (!draft) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const existingSteps = (await client.query(
+        "SELECT * FROM outreach_draft_steps WHERE draft_id = $1 AND position = ANY($2::int[])",
+        [draft.id, bodies.map((_, index) => index + 1)],
+      )).rows;
+      const existingByPosition = new Map(existingSteps.map((step) => [Number(step.position), step]));
+      const sentStep = existingSteps.find((step) => step.status === "sent");
+      if (sentStep) {
+        const error = new Error(`step_${sentStep.position}_already_sent`);
+        error.status = 409;
+        throw error;
+      }
+
+      const updatedSteps = [];
+      const guardErrors = [];
+      const defaultDelayDays = { 1: 0, 2: 3, 3: 4, 4: 5 };
+
+      for (const [index, body] of bodies.entries()) {
+        const position = index + 1;
+        const existing = existingByPosition.get(position);
+        const subject = cleanText(existing?.subject || draft.subject);
+        const stepGuardErrors = personalizationGuardErrors(
+          { subject, body: body.text },
+          position > 1 ? `Follow-up ${position - 1}: ` : "",
+        );
+        guardErrors.push(...stepGuardErrors);
+        const status = stepGuardErrors.length ? "blocked" : "draft";
+        const delayDays = Number(existing?.delay_days ?? defaultDelayDays[position] ?? 0);
+        const step = (await client.query(
+          `
+            INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, body_html, delay_days, status)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)
+            ON CONFLICT (draft_id, position) DO UPDATE SET
+              subject = EXCLUDED.subject,
+              body_text = EXCLUDED.body_text,
+              body_html = EXCLUDED.body_html,
+              delay_days = EXCLUDED.delay_days,
+              status = CASE
+                WHEN EXCLUDED.status = 'blocked' THEN 'blocked'
+                WHEN outreach_draft_steps.status IN ('queued','needs_approval') THEN outreach_draft_steps.status
+                ELSE EXCLUDED.status
+              END,
+              updated_at = now()
+            RETURNING *
+          `,
+          [draft.id, position, subject, body.text, body.html, delayDays, status],
+        )).rows[0];
+        updatedSteps.push(step);
+
+        if (stepGuardErrors.length) {
+          await client.query(
+            `
+              UPDATE sending_queue
+              SET status = 'cancelled',
+                  last_error = $2,
+                  updated_at = now()
+              WHERE outreach_step_id = $1
+                AND status IN ('pending','retrying')
+            `,
+            [step.id, stepGuardErrors.join("; ")],
+          );
+        } else {
+          await client.query(
+            `
+              UPDATE sending_queue
+              SET subject_override = $2,
+                  body_text_override = $3,
+                  body_html_override = $4,
+                  updated_at = now()
+              WHERE outreach_step_id = $1
+                AND status IN ('pending','retrying')
+            `,
+            [step.id, subject, body.text, body.html],
+          );
+        }
+      }
+
+      const firstBody = bodies[0];
+      const firstSubject = cleanText(updatedSteps[0]?.subject || draft.subject);
+      const check = outreachDraftStatus({ email: draft.to_email, subject: firstSubject, body: firstBody.text });
+      const nextStatus = [...check.errors, ...guardErrors].length ? "blocked" : "ready";
+      const updatedDraft = (await client.query(
+        `
+          UPDATE outreach_drafts
+          SET subject = $2,
+              body_text = $3,
+              body_html = $4,
+              status = $5,
+              error_reason = $6,
+              updated_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [draft.id, firstSubject, firstBody.text, firstBody.html, nextStatus, [...check.errors, ...guardErrors].join("; ")],
+      )).rows[0];
+
+      await client.query("COMMIT");
+      return { draft: updatedDraft, steps: updatedSteps, guard_errors: guardErrors };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

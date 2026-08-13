@@ -2079,6 +2079,19 @@ function renderOutreachStepAttachments(step = {}, label = "Письмо") {
   `;
 }
 
+function renderHtmlChainUpload(draft) {
+  return `
+    <form class="html-chain-upload" data-outreach-html-chain-form="${draft.id}">
+      <label class="field">
+        <span>HTML-файлы цепочки</span>
+        <input name="files" type="file" accept=".html,.htm,text/html" multiple />
+        <small class="field-help">Выбери файлы в порядке: основное письмо, follow-up 1, follow-up 2, follow-up 3. Каждый файл станет телом своего шага.</small>
+      </label>
+      <button class="small-button">Применить HTML</button>
+    </form>
+  `;
+}
+
 function outreachDraftStepForm(draft, position, { isNew = false } = {}) {
   const stepByPosition = new Map((draft.steps || []).map((step) => [Number(step.position), step]));
   const step = stepByPosition.get(position) || {};
@@ -2150,6 +2163,7 @@ function renderOutreachDraftDrawer(draft) {
   $("#outreachDraftDrawerBody").innerHTML = `
     <section class="drawer-section">
       <h3>Основное письмо</h3>
+      ${renderHtmlChainUpload(draft)}
       <form class="form outreach-draft-edit-form" data-outreach-draft-form="${draft.id}">
         <label class="field">
           <span>Email получателя</span>
@@ -4487,6 +4501,31 @@ document.body.addEventListener("submit", (event) => {
         : hasGuardErrors
           ? "Follow-up сохранен как “нужно исправить”: убери незаполненные переменные перед запуском."
           : "Follow-up сохранен.",
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("submit", (event) => {
+  const draftId = event.target.dataset.outreachHtmlChainForm;
+  if (!draftId) return;
+  event.preventDefault();
+  runAction({
+    title: "Загрузка HTML-файлов",
+    button: event.submitter,
+  }, async () => {
+    const input = event.target.querySelector("input[type='file']");
+    if (!input?.files?.length) throw new Error("Выбери HTML-файлы цепочки.");
+    if (input.files.length > 4) throw new Error("Можно загрузить максимум 4 HTML-файла: письмо и 3 follow-up.");
+    const form = new FormData(event.target);
+    const result = await api(`/api/outreach/drafts/${draftId}/html-files`, { method: "POST", body: form });
+    event.target.reset();
+    await Promise.all([loadOutreachDrafts(), loadQueue()]);
+    refreshOpenOutreachDraftDrawer(draftId);
+    setActionResult({
+      status: result.draft?.status === "ready" ? "success" : "warn",
+      title: "Загрузка HTML-файлов",
+      message: `HTML применен к шагам: ${result.steps?.length || 0}.`,
       details: result,
     });
   });
