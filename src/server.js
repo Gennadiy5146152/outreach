@@ -444,13 +444,31 @@ function parseOptionalDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function nonEmptySheetRow(row) {
+  return Array.isArray(row) && row.some((value) => String(value || "").trim());
+}
+
+function importFileReadError(error, fileName) {
+  if (error?.status) return error;
+  const wrapped = new Error(`Не удалось прочитать файл “${fileName || "upload"}”. Проверь, что это настоящий .xlsx/.csv из шаблона и файл не поврежден.`);
+  wrapped.status = 400;
+  wrapped.cause = error;
+  return wrapped;
+}
+
 async function parseOutreachRawFile(file) {
-  const extension = path.extname(uploadOriginalName(file, "")).toLowerCase();
-  if (extension === ".csv") {
-    return { fileType: "csv", rows: parseCsv(file.buffer.toString("utf8")) };
-  }
-  if (extension === ".xlsx") {
-    return { fileType: "xlsx", rows: await readSheet(file.buffer) };
+  const fileName = uploadOriginalName(file, "");
+  const extension = path.extname(fileName).toLowerCase();
+  try {
+    if (extension === ".csv") {
+      return { fileType: "csv", rows: parseCsv(file.buffer.toString("utf8")).filter(nonEmptySheetRow) };
+    }
+    if (extension === ".xlsx") {
+      const rows = await readSheet(file.buffer);
+      return { fileType: "xlsx", rows: rows.filter(nonEmptySheetRow) };
+    }
+  } catch (error) {
+    throw importFileReadError(error, fileName);
   }
   const error = new Error("unsupported_file_type");
   error.status = 400;
@@ -1336,7 +1354,7 @@ app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler
     fileType,
     columns: header.map((item, index) => ({ index, name: String(item || "").trim() || `Колонка ${index + 1}` })),
     mapping,
-    rowsTotal: data.filter((row) => row.some((value) => String(value || "").trim())).length,
+    rowsTotal: data.filter(nonEmptySheetRow).length,
     preview: mappedRows.slice(0, 10),
     errors,
   });

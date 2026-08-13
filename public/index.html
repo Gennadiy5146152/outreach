@@ -186,6 +186,17 @@
               <a class="button" href="/api/outreach/imports/template.csv">Скачать шаблон</a>
             </div>
             <div id="outreachImportStatus" class="inline-status" hidden></div>
+            <div id="outreachImportProgress" class="import-progress" hidden>
+              <div class="import-progress-head">
+                <strong id="outreachImportProgressTitle">Подготовка файла</strong>
+                <span id="outreachImportProgressPercent">0%</span>
+              </div>
+              <div class="import-progress-track">
+                <div id="outreachImportProgressBar" class="import-progress-bar"></div>
+              </div>
+              <div id="outreachImportProgressMeta" class="import-progress-meta"></div>
+              <div id="outreachImportProgressReport" class="import-progress-report" hidden></div>
+            </div>
           </form>
         </section>
 

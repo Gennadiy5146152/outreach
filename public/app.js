@@ -61,6 +61,7 @@ const state = {
     global: null,
     mailboxes: {},
   },
+  outreachImportProgress: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -123,6 +124,41 @@ async function api(path, options = {}) {
     throw error;
   }
   return data;
+}
+
+function apiWithUploadProgress(path, { method = "POST", body, onUploadProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open(method, path);
+    request.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) return;
+      onUploadProgress?.(Math.round((event.loaded / event.total) * 100));
+    });
+    request.upload.addEventListener("load", () => onUploadProgress?.(100));
+    request.addEventListener("load", () => {
+      let data = null;
+      try {
+        data = request.responseText ? JSON.parse(request.responseText) : null;
+      } catch {
+        data = null;
+      }
+      if (request.status === 401) {
+        window.location.href = "/login.html";
+        resolve(null);
+        return;
+      }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(data);
+        return;
+      }
+      const error = new Error(data?.error || data?.errors?.join("\n") || request.statusText);
+      error.status = request.status;
+      error.data = data;
+      reject(error);
+    });
+    request.addEventListener("error", () => reject(new Error("Не удалось загрузить файл на сервер")));
+    request.send(body);
+  });
 }
 
 function formJson(form) {
@@ -1999,6 +2035,124 @@ function setOutreachImportStatus(message = "", status = "pending") {
   target.hidden = !message;
   target.dataset.status = status;
   target.textContent = message;
+}
+
+const OUTREACH_IMPORT_UPLOAD_WEIGHT = 30;
+const OUTREACH_IMPORT_PROCESS_MAX = 94;
+
+function outreachImportElapsedSeconds(progress) {
+  return Math.max(0, Math.floor((Date.now() - progress.startedAt) / 1000));
+}
+
+function estimateOutreachImportSeconds({ mode, rowsTotal = 0, fileSize = 0 }) {
+  const fileMb = fileSize ? fileSize / 1024 / 1024 : 0;
+  const rowRate = mode === "create" ? 35 : 120;
+  const floor = mode === "create" ? 8 : 4;
+  return Math.max(floor, Math.ceil((Number(rowsTotal) || 0) / rowRate + fileMb * 3));
+}
+
+function clearOutreachImportProgress({ hide = false } = {}) {
+  if (state.outreachImportProgress?.timer) {
+    window.clearInterval(state.outreachImportProgress.timer);
+  }
+  state.outreachImportProgress = null;
+  if (hide && $("#outreachImportProgress")) {
+    $("#outreachImportProgress").hidden = true;
+  }
+}
+
+function outreachImportProgressPercent(progress) {
+  if (progress.status === "success") return 100;
+  if (progress.status === "error") return Math.max(progress.percent || 0, 4);
+  if (progress.stage === "processing") {
+    const processingStartedAt = progress.processingStartedAt || Date.now();
+    const elapsed = Math.max(0, (Date.now() - processingStartedAt) / 1000);
+    const share = progress.estimatedSeconds ? Math.min(elapsed / progress.estimatedSeconds, 1) : 0;
+    return Math.max(progress.percent || OUTREACH_IMPORT_UPLOAD_WEIGHT, OUTREACH_IMPORT_UPLOAD_WEIGHT + share * (OUTREACH_IMPORT_PROCESS_MAX - OUTREACH_IMPORT_UPLOAD_WEIGHT));
+  }
+  return Math.max(4, Math.min(OUTREACH_IMPORT_UPLOAD_WEIGHT, 4 + (progress.uploadPercent || 0) * ((OUTREACH_IMPORT_UPLOAD_WEIGHT - 4) / 100)));
+}
+
+function renderOutreachImportProgress(progress = state.outreachImportProgress) {
+  const node = $("#outreachImportProgress");
+  if (!node || !progress) return;
+  const percent = Math.round(outreachImportProgressPercent(progress));
+  progress.percent = percent;
+  node.hidden = false;
+  node.dataset.status = progress.status || "pending";
+  $("#outreachImportProgressTitle").textContent = progress.title;
+  $("#outreachImportProgressPercent").textContent = `${percent}%`;
+  $("#outreachImportProgressBar").style.width = `${percent}%`;
+
+  const meta = [progress.message, `прошло: ${fmtSeconds(outreachImportElapsedSeconds(progress))}`].filter(Boolean);
+  if (progress.stage === "upload") {
+    meta.push(`загружено файла: ${Math.round(progress.uploadPercent || 0)}%`);
+  }
+  if (progress.stage === "processing" && progress.status !== "success" && progress.status !== "error") {
+    const elapsed = Math.max(0, Math.floor((Date.now() - (progress.processingStartedAt || Date.now())) / 1000));
+    const eta = Math.max(0, Math.ceil((progress.estimatedSeconds || 0) - elapsed));
+    if (progress.rowsTotal) {
+      const share = progress.estimatedSeconds ? Math.min(elapsed / progress.estimatedSeconds, 1) : 0;
+      const rowsDone = Math.min(progress.rowsTotal, Math.floor(progress.rowsTotal * share));
+      meta.push(`оценка: ${rowsDone}/${progress.rowsTotal} строк`);
+    }
+    if (eta > 0) meta.push(`осталось примерно: ${fmtSeconds(eta)}`);
+  }
+  $("#outreachImportProgressMeta").textContent = meta.join(" · ");
+
+  const report = $("#outreachImportProgressReport");
+  report.hidden = !progress.report;
+  report.textContent = progress.report || "";
+}
+
+function startOutreachImportProgress({ title, message, mode, rowsTotal = 0, fileSize = 0 }) {
+  clearOutreachImportProgress();
+  const progress = {
+    title,
+    message,
+    mode,
+    rowsTotal,
+    fileSize,
+    startedAt: Date.now(),
+    uploadPercent: 0,
+    percent: 4,
+    stage: "upload",
+    status: "pending",
+    estimatedSeconds: estimateOutreachImportSeconds({ mode, rowsTotal, fileSize }),
+    timer: null,
+  };
+  progress.timer = window.setInterval(() => renderOutreachImportProgress(progress), 1000);
+  state.outreachImportProgress = progress;
+  renderOutreachImportProgress(progress);
+  return progress;
+}
+
+function setOutreachImportUploadProgress(progress, uploadPercent) {
+  if (!progress) return;
+  progress.stage = "upload";
+  progress.uploadPercent = Math.max(progress.uploadPercent || 0, Math.min(100, Number(uploadPercent) || 0));
+  progress.message = "Загружаю файл на сервер...";
+  renderOutreachImportProgress(progress);
+}
+
+function setOutreachImportProcessing(progress, message) {
+  if (!progress || progress.status === "success" || progress.status === "error") return;
+  progress.stage = "processing";
+  progress.message = message;
+  progress.uploadPercent = 100;
+  progress.processingStartedAt ||= Date.now();
+  renderOutreachImportProgress(progress);
+}
+
+function finishOutreachImportProgress(progress, { title, message, report, status = "success" }) {
+  if (!progress) return;
+  if (progress.timer) window.clearInterval(progress.timer);
+  progress.status = status;
+  progress.title = title || progress.title;
+  progress.message = message || progress.message;
+  progress.report = report;
+  progress.percent = status === "success" ? 100 : progress.percent;
+  renderOutreachImportProgress(progress);
 }
 
 function selectedOutreachDraftSignature(draftIds = [...state.selectedOutreachDraftIds]) {
@@ -4324,13 +4478,37 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
     });
     return;
   }
+  const file = $("#outreachImportForm input[name='file']").files?.[0];
+  const rowsTotal = Number(state.outreachImportPreview.rowsTotal || 0);
+  const progress = startOutreachImportProgress({
+    title: "Создание черновиков",
+    message: "Загружаю файл на сервер...",
+    mode: "create",
+    rowsTotal,
+    fileSize: file?.size || 0,
+  });
   const button = $("#createOutreachDraftsBtn");
   const originalButtonText = button.textContent;
   try {
     button.textContent = "Создаю черновики...";
     setOutreachImportStatus("Создаю черновики из файла. После обработки автоматически открою раздел «Черновики».", "pending");
     const body = new FormData(event.target);
-    const result = await api("/api/outreach/imports", { method: "POST", body });
+    const result = await apiWithUploadProgress("/api/outreach/imports", {
+      method: "POST",
+      body,
+      onUploadProgress: (percent) => {
+        setOutreachImportUploadProgress(progress, percent);
+        if (percent >= 100) {
+          setOutreachImportProcessing(progress, "Файл загружен. Создаю черновики и проверяю строки...");
+        }
+      },
+    });
+    const elapsed = fmtSeconds(outreachImportElapsedSeconds(progress));
+    finishOutreachImportProgress(progress, {
+      title: "Черновики созданы",
+      message: "Готово. Обновляю список и открываю раздел «Черновики»...",
+      report: `Строк: ${result.rows_total || rowsTotal}. Готово: ${result.rows_ready}. Нужно исправить: ${result.rows_blocked}. Время выполнения: ${elapsed}.`,
+    });
     setOutreachImportStatus("Черновики созданы. Обновляю список и перехожу в раздел «Черновики»...", "success");
     event.target.reset();
     state.outreachImportPreview = null;
@@ -4341,9 +4519,17 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
     setActionResult({
       status: result.rows_blocked ? "warn" : "success",
       title: "Импорт персональных писем",
-      message: `Файл обработан: готово ${result.rows_ready}, нужно исправить ${result.rows_blocked}.`,
+      message: `Файл обработан за ${elapsed}: строк ${result.rows_total || rowsTotal}, готово ${result.rows_ready}, нужно исправить ${result.rows_blocked}.`,
       details: result,
     });
+  } catch (error) {
+    finishOutreachImportProgress(progress, {
+      title: "Импорт не завершен",
+      message: "Сервер вернул ошибку во время обработки файла.",
+      report: errorMessage(error),
+      status: "error",
+    });
+    throw error;
   } finally {
     button.textContent = originalButtonText;
   }
@@ -4352,8 +4538,10 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
 async function previewOutreachImport() {
   const form = $("#outreachImportForm");
   const body = new FormData(form);
-  if (!body.get("file")?.name) {
+  const file = body.get("file");
+  if (!file?.name) {
     setOutreachImportStatus("");
+    clearOutreachImportProgress({ hide: true });
     setActionResult({
       status: "warn",
       title: "Чтение файла",
@@ -4361,16 +4549,49 @@ async function previewOutreachImport() {
     });
     return;
   }
-  setOutreachImportStatus("Читаю файл и готовлю предпросмотр строк...", "pending");
-  state.outreachImportPreview = await api("/api/outreach/imports/preview", { method: "POST", body });
-  renderOutreachImportPreview();
-  setOutreachImportStatus("Файл прочитан. Проверь строки ниже и нажми «Создать черновики».", "success");
-  setActionResult({
-    status: "success",
+  const progress = startOutreachImportProgress({
     title: "Чтение файла",
-    message: `Файл прочитан: строк ${state.outreachImportPreview.rowsTotal}. Проверь таблицу ниже и создай черновики.`,
-    details: state.outreachImportPreview.errors,
+    message: "Загружаю файл на сервер...",
+    mode: "preview",
+    fileSize: file.size || 0,
   });
+  setOutreachImportStatus("Читаю файл и готовлю предпросмотр строк...", "pending");
+  try {
+    state.outreachImportPreview = await apiWithUploadProgress("/api/outreach/imports/preview", {
+      method: "POST",
+      body,
+      onUploadProgress: (percent) => {
+        setOutreachImportUploadProgress(progress, percent);
+        if (percent >= 100) {
+          setOutreachImportProcessing(progress, "Файл загружен. Сервер читает Excel и готовит предпросмотр...");
+        }
+      },
+    });
+    const blocked = state.outreachImportPreview.errors.filter((item) => item.status === "blocked").length;
+    const ready = Math.max(Number(state.outreachImportPreview.rowsTotal || 0) - blocked, 0);
+    const elapsed = fmtSeconds(outreachImportElapsedSeconds(progress));
+    renderOutreachImportPreview();
+    finishOutreachImportProgress(progress, {
+      title: "Файл прочитан",
+      message: "Проверь строки ниже и нажми «Создать черновики».",
+      report: `Строк: ${state.outreachImportPreview.rowsTotal}. Готовы к черновикам: ${ready}. Нужно исправить: ${blocked}. Время чтения: ${elapsed}.`,
+    });
+    setOutreachImportStatus("Файл прочитан. Проверь строки ниже и нажми «Создать черновики».", "success");
+    setActionResult({
+      status: "success",
+      title: "Чтение файла",
+      message: `Файл прочитан за ${elapsed}: строк ${state.outreachImportPreview.rowsTotal}. Проверь таблицу ниже и создай черновики.`,
+      details: state.outreachImportPreview.errors,
+    });
+  } catch (error) {
+    finishOutreachImportProgress(progress, {
+      title: "Файл не прочитан",
+      message: "Сервер вернул ошибку во время чтения файла.",
+      report: errorMessage(error),
+      status: "error",
+    });
+    throw error;
+  }
 }
 
 $("#outreachImportForm input[name='file']").addEventListener("change", () => {
@@ -4378,6 +4599,7 @@ $("#outreachImportForm input[name='file']").addEventListener("change", () => {
   $("#outreachImportPreview").hidden = true;
   $("#createOutreachDraftsBtn").disabled = true;
   setOutreachImportStatus("");
+  clearOutreachImportProgress({ hide: true });
   const file = $("#outreachImportForm input[name='file']").files?.[0];
   if (!file) return;
   runAction({
