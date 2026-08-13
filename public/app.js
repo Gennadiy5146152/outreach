@@ -1934,6 +1934,7 @@ async function loadOutreachImports() {
 function renderOutreachImportPreview() {
   const preview = state.outreachImportPreview;
   if (!preview) return;
+  setOutreachImportStatus("");
   $("#outreachImportPreview").hidden = false;
   const blocked = preview.errors.filter((item) => item.status === "blocked").length;
   const ready = Math.max(Number(preview.rowsTotal || 0) - blocked, 0);
@@ -1965,6 +1966,14 @@ function renderOutreachImportPreview() {
     </tbody>
   `;
   $("#createOutreachDraftsBtn").disabled = false;
+}
+
+function setOutreachImportStatus(message = "", status = "pending") {
+  const target = $("#outreachImportStatus");
+  if (!target) return;
+  target.hidden = !message;
+  target.dataset.status = status;
+  target.textContent = message;
 }
 
 function selectedOutreachDraftSignature(draftIds = [...state.selectedOutreachDraftIds]) {
@@ -4265,6 +4274,7 @@ $("#importForm").addEventListener("submit", (event) => runAction({
 
 $("#outreachImportForm").addEventListener("submit", (event) => runAction({
   title: "Импорт персональных писем",
+  pending: "Создаю черновики из файла. После обработки открою раздел «Черновики»...",
   button: event.submitter,
 }, async () => {
   event.preventDefault();
@@ -4276,26 +4286,36 @@ $("#outreachImportForm").addEventListener("submit", (event) => runAction({
     });
     return;
   }
-  const body = new FormData(event.target);
-  const result = await api("/api/outreach/imports", { method: "POST", body });
-  event.target.reset();
-  state.outreachImportPreview = null;
-  $("#outreachImportPreview").hidden = true;
-  $("#createOutreachDraftsBtn").disabled = true;
-  await Promise.all([loadLeads(), loadOutreachImports(), loadOutreachDrafts()]);
-  switchView("outreachDrafts");
-  setActionResult({
-    status: result.rows_blocked ? "warn" : "success",
-    title: "Импорт персональных писем",
-    message: `Файл обработан: готово ${result.rows_ready}, нужно исправить ${result.rows_blocked}.`,
-    details: result,
-  });
+  const button = $("#createOutreachDraftsBtn");
+  const originalButtonText = button.textContent;
+  try {
+    button.textContent = "Создаю черновики...";
+    setOutreachImportStatus("Создаю черновики из файла. После обработки автоматически открою раздел «Черновики».", "pending");
+    const body = new FormData(event.target);
+    const result = await api("/api/outreach/imports", { method: "POST", body });
+    setOutreachImportStatus("Черновики созданы. Обновляю список и перехожу в раздел «Черновики»...", "success");
+    event.target.reset();
+    state.outreachImportPreview = null;
+    $("#outreachImportPreview").hidden = true;
+    $("#createOutreachDraftsBtn").disabled = true;
+    await Promise.all([loadLeads(), loadOutreachImports(), loadOutreachDrafts()]);
+    switchView("outreachDrafts");
+    setActionResult({
+      status: result.rows_blocked ? "warn" : "success",
+      title: "Импорт персональных писем",
+      message: `Файл обработан: готово ${result.rows_ready}, нужно исправить ${result.rows_blocked}.`,
+      details: result,
+    });
+  } finally {
+    button.textContent = originalButtonText;
+  }
 }));
 
 async function previewOutreachImport() {
   const form = $("#outreachImportForm");
   const body = new FormData(form);
   if (!body.get("file")?.name) {
+    setOutreachImportStatus("");
     setActionResult({
       status: "warn",
       title: "Чтение файла",
@@ -4303,8 +4323,10 @@ async function previewOutreachImport() {
     });
     return;
   }
+  setOutreachImportStatus("Читаю файл и готовлю предпросмотр строк...", "pending");
   state.outreachImportPreview = await api("/api/outreach/imports/preview", { method: "POST", body });
   renderOutreachImportPreview();
+  setOutreachImportStatus("Файл прочитан. Проверь строки ниже и нажми «Создать черновики».", "success");
   setActionResult({
     status: "success",
     title: "Чтение файла",
@@ -4317,6 +4339,7 @@ $("#outreachImportForm input[name='file']").addEventListener("change", () => {
   state.outreachImportPreview = null;
   $("#outreachImportPreview").hidden = true;
   $("#createOutreachDraftsBtn").disabled = true;
+  setOutreachImportStatus("");
   const file = $("#outreachImportForm input[name='file']").files?.[0];
   if (!file) return;
   runAction({
