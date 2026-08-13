@@ -1163,7 +1163,18 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
                    'body_html', ods.body_html,
                    'delay_days', ods.delay_days,
                    'status', ods.status,
-                   'queue_id', ods.queue_id
+                   'queue_id', ods.queue_id,
+                   'attachments', COALESCE((
+                     SELECT json_agg(json_build_object(
+                       'id', a.id,
+                       'file_name', a.file_name,
+                       'mime_type', a.mime_type,
+                       'size_bytes', a.size_bytes,
+                       'created_at', a.created_at
+                     ) ORDER BY a.created_at)
+                     FROM attachments a
+                     WHERE a.outreach_step_id = ods.id
+                   ), '[]'::json)
                  )
                  ORDER BY ods.position
                ) FILTER (WHERE ods.id IS NOT NULL),
@@ -1395,6 +1406,33 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
 
   if (!result) return res.status(404).json({ error: "not_found" });
   res.json(result);
+}));
+
+app.post("/api/outreach/draft-steps/:id/attachments", attachmentUpload.single("file"), asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: "outreach_step_required" });
+  }
+  if (!req.file) return res.status(400).json({ error: "file_required" });
+  const step = (await query("SELECT id FROM outreach_draft_steps WHERE id = $1", [req.params.id])).rows[0];
+  if (!step) {
+    await fs.unlink(req.file.path).catch(() => {});
+    return res.status(404).json({ error: "outreach_step_not_found" });
+  }
+  const runtime = await getRuntimeSettings();
+  if (req.file.size > runtime.maxAttachmentMb * 1024 * 1024) {
+    await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: `attachment_too_large_max_${runtime.maxAttachmentMb}_mb` });
+  }
+  const result = await query(
+    `
+      INSERT INTO attachments(outreach_step_id, file_name, mime_type, size_bytes, storage_path)
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING *
+    `,
+    [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, path.resolve(req.file.path)],
+  );
+  res.status(201).json(result.rows[0]);
 }));
 
 app.post("/api/outreach/drafts/:id/cancel", asyncHandler(async (req, res) => {

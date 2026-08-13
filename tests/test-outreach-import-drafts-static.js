@@ -9,6 +9,7 @@ const csv = fs.readFileSync("src/services/csv.js", "utf8");
 const migration = fs.readFileSync("db/migrations/003_outreach_imports.sql", "utf8");
 const sequenceMigration = fs.readFileSync("db/migrations/004_outreach_draft_sequences.sql", "utf8");
 const htmlMigration = fs.readFileSync("db/migrations/011_outreach_draft_html.sql", "utf8");
+const attachmentMigration = fs.readFileSync("db/migrations/012_outreach_step_attachments.sql", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
 const stopService = fs.readFileSync("src/services/outreach-stop.js", "utf8");
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -43,6 +44,16 @@ for (const expected of [
 ]) {
   if (!htmlMigration.includes(expected)) {
     throw new Error(`outreach HTML migration should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "ALTER TABLE attachments",
+  "outreach_step_id uuid REFERENCES outreach_draft_steps",
+  "attachments_outreach_step_idx",
+]) {
+  if (!attachmentMigration.includes(expected)) {
+    throw new Error(`outreach attachment migration should include ${expected}`);
   }
 }
 
@@ -264,6 +275,7 @@ for (const expected of [
   "$(\"#deleteSelectedDraftsBtn\").addEventListener",
   "data-outreach-draft-form",
   "data-outreach-step-form",
+  "data-outreach-attachment-form",
   "data-edit-outreach-draft",
   "data-start-draft",
   "data-cancel-draft",
@@ -271,6 +283,8 @@ for (const expected of [
   "openOutreachDraftDrawer",
   "refreshOpenOutreachDraftDrawer",
   "renderOutreachDraftFollowups",
+  "renderOutreachStepAttachments",
+  "/api/outreach/draft-steps/${stepId}/attachments",
   "Добавить follow-up",
   "Здесь показаны только follow-up, которые реально есть в черновике",
   "Email получателя",
@@ -379,6 +393,7 @@ if (templateLinkCount !== 1) {
 for (const expected of [
   "subject_override || item.subject_template",
   "body_text_override || item.body_template_text",
+  "outreach_step_id = $2",
   "outreach_draft_id, outreach_step_id",
   "UPDATE outreach_draft_steps",
   "UPDATE outreach_drafts SET status = 'active_sequence'",

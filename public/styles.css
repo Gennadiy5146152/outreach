@@ -1531,6 +1531,57 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+.outreach-step-block {
+  display: grid;
+  gap: 10px;
+}
+
+.step-attachments {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.step-attachments-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.step-attachments-title span {
+  color: var(--muted);
+}
+
+.step-attachments ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-attachments li,
+.inline-upload-form {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.step-attachments li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.inline-upload-form input {
+  min-width: 0;
+}
+
 .outreach-step-edit-form {
   padding: 10px;
   border: 1px solid var(--line);

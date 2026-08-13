@@ -421,6 +421,12 @@ function htmlPreviewText(value = "") {
     .trim();
 }
 
+function attachmentSizeLabel(sizeBytes = 0) {
+  const kb = Number(sizeBytes || 0) / 1024;
+  if (kb < 1024) return `${Math.max(1, Math.round(kb))} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
 function fmtDate(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("ru-RU", { timeZone: currentTimeZone() });
@@ -2042,41 +2048,69 @@ function outreachDraftMailboxOptions(selectedId) {
   ].join("");
 }
 
+function renderOutreachStepAttachments(step = {}, label = "Письмо") {
+  const attachments = step.attachments || [];
+  return `
+    <section class="step-attachments">
+      <div class="step-attachments-title">
+        <strong>Вложения</strong>
+        <span>${esc(label)}</span>
+      </div>
+      ${attachments.length
+        ? `<ul>${attachments.map((attachment) => `
+            <li>
+              <span>${esc(attachment.file_name)} · ${attachmentSizeLabel(attachment.size_bytes)}</span>
+              <button class="small-button" data-delete-attachment="${attachment.id}">Удалить</button>
+            </li>
+          `).join("")}</ul>`
+        : `<p class="muted">Файлов нет.</p>`}
+      <form class="inline-upload-form" data-outreach-attachment-form="${step.id || ""}">
+        <input name="file" type="file" ${step.id ? "" : "disabled"} />
+        <button class="small-button" ${step.id ? "" : "disabled"}>Прикрепить файл</button>
+      </form>
+      ${step.id ? "" : `<small class="field-help">Сначала сохрани шаг, потом можно прикрепить файл.</small>`}
+    </section>
+  `;
+}
+
 function outreachDraftStepForm(draft, position, { isNew = false } = {}) {
   const stepByPosition = new Map((draft.steps || []).map((step) => [Number(step.position), step]));
   const step = stepByPosition.get(position) || {};
   const defaultDelay = position === 2 ? 3 : position === 3 ? 4 : 5;
   return `
-    <form class="form outreach-step-edit-form" data-outreach-step-form="${draft.id}" data-position="${position}">
-      <div class="form-section-title">${isNew ? "Новый " : ""}Follow-up ${position - 1}</div>
-      <label class="field">
-        <span>Тема follow-up</span>
-        <input name="subject" value="${esc(step.subject || "")}" placeholder="Если оставить пустым, будет тема первого письма" />
-        <small class="field-help">Заполняй только если у этого шага должна быть отдельная тема.</small>
-      </label>
-      <label class="field">
-        <span>Текст follow-up</span>
-        <textarea name="body_text" placeholder="Напиши продолжение. Можно Markdown: **жирный**, *курсив*, [ссылка](https://...).">${esc(step.body_text || "")}</textarea>
-        <small class="field-help">Если лид ответит, следующие письма цепочки остановятся. Fallback для клиентов без HTML можно собрать из HTML.</small>
-      </label>
-      <details class="html-body-details" ${step.body_html ? "open" : ""}>
-        <summary>HTML follow-up</summary>
+    <div class="outreach-step-block">
+      <form class="form outreach-step-edit-form" data-outreach-step-form="${draft.id}" data-position="${position}">
+        <div class="form-section-title">${isNew ? "Новый " : ""}Follow-up ${position - 1}</div>
         <label class="field">
-          <span>HTML follow-up</span>
-          <textarea name="body_html" spellcheck="false" placeholder="<p>Добрый день.</p><p><strong>Коротко</strong> подниму письмо выше.</p>">${esc(step.body_html || "")}</textarea>
-          <small class="field-help">Если заполнено, уйдет как HTML-версия письма.</small>
+          <span>Тема follow-up</span>
+          <input name="subject" value="${esc(step.subject || "")}" placeholder="Если оставить пустым, будет тема первого письма" />
+          <small class="field-help">Заполняй только если у этого шага должна быть отдельная тема.</small>
         </label>
-      </details>
-      <label class="field">
-        <span>Через сколько дней отправить</span>
-        <input name="delay_days" type="number" min="0" step="1" value="${step.delay_days ?? defaultDelay}" placeholder="Например: ${defaultDelay}" />
-        <small class="field-help">Считается от предыдущего письма в этой цепочке.</small>
-      </label>
-      <div class="form-actions">
-        <button ${step.status === "sent" ? "disabled" : ""}>Сохранить follow-up</button>
-        ${step.status ? `<span class="muted">${esc(statusLabel(step.status))}</span>` : ""}
-      </div>
-    </form>
+        <label class="field">
+          <span>Текст follow-up</span>
+          <textarea name="body_text" placeholder="Напиши продолжение. Можно Markdown: **жирный**, *курсив*, [ссылка](https://...).">${esc(step.body_text || "")}</textarea>
+          <small class="field-help">Если лид ответит, следующие письма цепочки остановятся. Fallback для клиентов без HTML можно собрать из HTML.</small>
+        </label>
+        <details class="html-body-details" ${step.body_html ? "open" : ""}>
+          <summary>HTML follow-up</summary>
+          <label class="field">
+            <span>HTML follow-up</span>
+            <textarea name="body_html" spellcheck="false" placeholder="<p>Добрый день.</p><p><strong>Коротко</strong> подниму письмо выше.</p>">${esc(step.body_html || "")}</textarea>
+            <small class="field-help">Если заполнено, уйдет как HTML-версия письма.</small>
+          </label>
+        </details>
+        <label class="field">
+          <span>Через сколько дней отправить</span>
+          <input name="delay_days" type="number" min="0" step="1" value="${step.delay_days ?? defaultDelay}" placeholder="Например: ${defaultDelay}" />
+          <small class="field-help">Считается от предыдущего письма в этой цепочке.</small>
+        </label>
+        <div class="form-actions">
+          <button ${step.status === "sent" ? "disabled" : ""}>Сохранить follow-up</button>
+          ${step.status ? `<span class="muted">${esc(statusLabel(step.status))}</span>` : ""}
+        </div>
+      </form>
+      ${renderOutreachStepAttachments(step, `Follow-up ${position - 1}`)}
+    </div>
   `;
 }
 
@@ -2105,6 +2139,7 @@ function renderOutreachDraftFollowups(draft) {
 }
 
 function renderOutreachDraftDrawer(draft) {
+  const firstStep = (draft.steps || []).find((step) => Number(step.position) === 1) || {};
   $("#outreachDraftDrawerTitle").textContent = `${draft.company || "Без компании"} · ${draft.to_email}`;
   $("#outreachDraftDrawerBody").innerHTML = `
     <section class="drawer-section">
@@ -2163,6 +2198,7 @@ function renderOutreachDraftDrawer(draft) {
           ${draft.status ? pill(draft.status) : ""}
         </div>
       </form>
+      ${renderOutreachStepAttachments(firstStep, "Основное письмо")}
     </section>
     <section class="drawer-section">
       <h3>Цепочка follow-up</h3>
@@ -4431,6 +4467,31 @@ document.body.addEventListener("submit", (event) => {
 });
 
 document.body.addEventListener("submit", (event) => {
+  const stepId = event.target.dataset.outreachAttachmentForm;
+  if (stepId === undefined) return;
+  event.preventDefault();
+  runAction({
+    title: "Загрузка вложения",
+    button: event.submitter,
+  }, async () => {
+    if (!stepId) throw new Error("Сначала сохрани шаг письма, затем прикрепи файл.");
+    const form = new FormData(event.target);
+    if (!form.get("file")?.name) throw new Error("Выбери файл для вложения.");
+    const result = await api(`/api/outreach/draft-steps/${stepId}/attachments`, { method: "POST", body: form });
+    event.target.reset();
+    const openDraftId = state.openOutreachDraftId;
+    await Promise.all([loadOutreachDrafts(), loadQueue()]);
+    if (openDraftId) refreshOpenOutreachDraftDrawer(openDraftId);
+    setActionResult({
+      status: "success",
+      title: "Загрузка вложения",
+      message: "Файл прикреплен к шагу письма.",
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("submit", (event) => {
   const conversationId = event.target.dataset.conversationReplyForm;
   if (!conversationId) return;
   event.preventDefault();
@@ -5138,7 +5199,9 @@ document.body.addEventListener("click", async (event) => {
       button: event.target,
     }, async () => {
       const result = await api(`/api/attachments/${deleteAttachmentId}`, { method: "DELETE" });
+      const openDraftId = state.openOutreachDraftId;
       await refresh();
+      if (openDraftId) refreshOpenOutreachDraftDrawer(openDraftId);
       setActionResult({ status: "success", title: "Удаление вложения", message: "Вложение удалено.", details: result });
     });
     return;

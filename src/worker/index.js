@@ -612,7 +612,16 @@ async function processSend(item) {
   );
   const message = messageInsert.rows[0];
   const attachments = (
-    await query("SELECT * FROM attachments WHERE campaign_step_id = $1 ORDER BY created_at", [item.campaign_step_id])
+    await query(
+      `
+        SELECT *
+        FROM attachments
+        WHERE ($1::uuid IS NOT NULL AND campaign_step_id = $1)
+           OR ($2::uuid IS NOT NULL AND outreach_step_id = $2)
+        ORDER BY created_at
+      `,
+      [item.campaign_step_id, item.outreach_step_id],
+    )
   ).rows;
 
   if (await queueItemCancelled(item.id)) {
