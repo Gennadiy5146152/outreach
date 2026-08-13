@@ -433,6 +433,12 @@ function inlineImageButton(attachment = {}) {
 }
 
 const HTML_CHAIN_FILE_LABELS = ["Стартовое письмо", "Follow-up 1", "Follow-up 2", "Follow-up 3"];
+const HTML_CHAIN_INPUTS = [
+  ["html_start", HTML_CHAIN_FILE_LABELS[0]],
+  ["html_followup_1", HTML_CHAIN_FILE_LABELS[1]],
+  ["html_followup_2", HTML_CHAIN_FILE_LABELS[2]],
+  ["html_followup_3", HTML_CHAIN_FILE_LABELS[3]],
+];
 
 function sortedBrowserFiles(files = []) {
   return [...files].sort((left, right) => left.name.localeCompare(right.name, "ru", {
@@ -445,16 +451,18 @@ function renderBulkHtmlAssetsPreview() {
   const form = $("#bulkHtmlAssetsForm");
   const target = $("#bulkHtmlAssetsPreview");
   if (!form || !target) return;
-  const htmlFiles = sortedBrowserFiles(form.elements.html_files.files);
+  const htmlFiles = HTML_CHAIN_INPUTS
+    .map(([name, label]) => ({ label, file: form.elements[name]?.files?.[0] }))
+    .filter((item) => item.file);
   const imageFiles = sortedBrowserFiles(form.elements.images.files);
   if (!htmlFiles.length && !imageFiles.length) {
-    target.innerHTML = `<span>HTML применяются по имени файла: 01-start.html, 02-followup1.html, 03-followup2.html. Картинки сопоставляются по имени из src.</span>`;
+    target.innerHTML = `<span>Выбери HTML в нужные поля: стартовое письмо отдельно, каждый follow-up отдельно. Картинки сопоставляются по имени из src.</span>`;
     return;
   }
   target.innerHTML = `
     ${htmlFiles.length ? `
       <ol>
-        ${htmlFiles.map((file, index) => `<li><strong>${esc(HTML_CHAIN_FILE_LABELS[index] || `Шаг ${index + 1}`)}</strong>: ${esc(file.name)}</li>`).join("")}
+        ${htmlFiles.map((item) => `<li><strong>${esc(item.label)}</strong>: ${esc(item.file.name)}</li>`).join("")}
       </ol>
     ` : `<span>HTML-файлы не выбраны.</span>`}
     ${imageFiles.length ? `<span>Картинки для автоподстановки: ${imageFiles.map((file) => esc(file.name)).join(", ")}</span>` : `<span>Картинки не выбраны. Внешние URL в HTML останутся как есть.</span>`}
@@ -4452,9 +4460,7 @@ $("#bulkHtmlAssetsForm").addEventListener("submit", (event) => runAction({
   event.preventDefault();
   const draftIds = outreachDraftSelectionStats().deletableDrafts.map((draft) => draft.id);
   if (!draftIds.length) throw new Error("Выбери черновики, к которым нужно применить HTML и картинки.");
-  const htmlFiles = event.target.elements.html_files.files;
-  if (!htmlFiles.length) throw new Error("Выбери HTML-файлы цепочки.");
-  if (htmlFiles.length > 4) throw new Error("Можно загрузить максимум 4 HTML-файла: письмо и 3 follow-up.");
+  if (!event.target.elements.html_start.files.length) throw new Error("Выбери HTML-файл для стартового письма.");
   const form = new FormData(event.target);
   form.set("draft_ids", draftIds.join(","));
   const result = await api("/api/outreach/drafts/bulk-html-assets", { method: "POST", body: form });

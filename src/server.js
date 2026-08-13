@@ -1645,16 +1645,29 @@ app.post("/api/outreach/drafts/:id/html-files", htmlUpload.array("files", 4), as
 }));
 
 app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
+  { name: "html_start", maxCount: 1 },
+  { name: "html_followup_1", maxCount: 1 },
+  { name: "html_followup_2", maxCount: 1 },
+  { name: "html_followup_3", maxCount: 1 },
   { name: "html_files", maxCount: 4 },
   { name: "images", maxCount: 40 },
 ]), asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
-  const htmlFiles = sortedUploadFiles(req.files?.html_files || []);
+  const namedHtmlFiles = [
+    { position: 1, file: req.files?.html_start?.[0] },
+    { position: 2, file: req.files?.html_followup_1?.[0] },
+    { position: 3, file: req.files?.html_followup_2?.[0] },
+    { position: 4, file: req.files?.html_followup_3?.[0] },
+  ].filter((item) => item.file);
+  const legacyHtmlFiles = sortedUploadFiles(req.files?.html_files || [])
+    .map((file, index) => ({ position: index + 1, file }));
+  const htmlFiles = namedHtmlFiles.length ? namedHtmlFiles : legacyHtmlFiles;
   const imageFiles = req.files?.images || [];
   if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
   if (!htmlFiles.length) return res.status(400).json({ error: "html_files_required" });
+  if (!htmlFiles.some((item) => item.position === 1)) return res.status(400).json({ error: "html_start_required" });
 
-  const bodies = htmlFiles.map((file) => htmlUploadBody(file));
+  const bodies = htmlFiles.map((item) => ({ position: item.position, ...htmlUploadBody(item.file) }));
   const imagesByKey = new Map();
   for (const file of imageFiles) {
     if (!String(file.mimetype || "").startsWith("image/")) return res.status(400).json({ error: "image_files_required" });
@@ -1676,7 +1689,7 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
       )).rows;
       const foundIds = new Set(drafts.map((draft) => draft.id));
       const missing = draftIds.filter((id) => !foundIds.has(id));
-      const positions = bodies.map((_, index) => index + 1);
+      const positions = bodies.map((body) => body.position);
       const existingSteps = (await client.query(
         `
           SELECT *
@@ -1713,8 +1726,8 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
         const draftGuardErrors = [];
         const draftSteps = [];
 
-        for (const [index, body] of bodies.entries()) {
-          const position = index + 1;
+        for (const body of bodies) {
+          const position = body.position;
           const existing = existingByPosition.get(position);
           const subject = cleanText(existing?.subject || draft.subject);
           const referencedImages = new Map();
@@ -1796,7 +1809,7 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
           }
         }
 
-        const firstStep = draftSteps[0];
+        const firstStep = draftSteps.find((step) => Number(step.position) === 1);
         const check = outreachDraftStatus({ email: draft.to_email, subject: firstStep.subject, body: firstStep.body_text });
         const nextStatus = [...check.errors, ...draftGuardErrors].length ? "blocked" : "ready";
         const updatedDraft = (await client.query(
