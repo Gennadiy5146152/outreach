@@ -11,6 +11,10 @@ for (const expected of [
   "participationSearch",
   "data-participation-status",
   "participation-status-filters",
+  "participation-filter-head",
+  "toggleParticipationFiltersBtn",
+  "participationAdvancedFilters",
+  "participation-table-wrap",
   "participationMailbox",
   "participationImport",
   "participationRun",
@@ -76,11 +80,13 @@ for (const expected of [
 
 for (const expected of [
   ".participation-toolbar",
+  ".participation-filter-head",
   ".participation-filter-grid",
   ".participation-run-context",
   ".participation-summary",
   ".participation-status",
   ".participation-details",
+  "#participationView .participation-table-wrap",
 ]) {
   if (!css.includes(expected)) {
     throw new Error(`participation CSS should include ${expected}`);

@@ -2642,14 +2642,30 @@ th {
   position: relative;
 }
 
-.participation-toolbar {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
+.participation-panel .panel-head h2 {
+  margin-bottom: 0;
 }
 
-.participation-toolbar > input[type="search"] {
-  width: min(620px, 100%);
+.participation-toolbar {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.participation-filter-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.participation-filter-head > input[type="search"] {
+  flex: 1 1 320px;
+  min-width: 220px;
+}
+
+#toggleParticipationFiltersBtn {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .participation-status-filters {
@@ -2730,14 +2746,14 @@ th {
 .participation-summary {
   display: grid;
   grid-template-columns: repeat(6, minmax(90px, 1fr));
-  margin: 14px 0 10px;
+  margin: 8px 0;
   border-block: 1px solid var(--line);
 }
 
 .participation-summary > span {
   display: grid;
   gap: 3px;
-  padding: 9px 12px;
+  padding: 6px 10px;
   border-right: 1px solid var(--line);
 }
 
@@ -2752,7 +2768,7 @@ th {
 }
 
 .participation-summary strong {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .participation-summary .is-running strong {
@@ -2904,6 +2920,11 @@ th {
   gap: 8px;
 }
 
+.run-header-actions #runQuickSelect {
+  width: min(320px, 32vw);
+  min-width: 220px;
+}
+
 .run-detail-panel {
   position: relative;
 }
@@ -2962,6 +2983,7 @@ th {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -3141,7 +3163,7 @@ th {
 .run-step-state.is-error { background: #fef2f2; color: #b42318; }
 
 #runRowsTable {
-  min-width: 1510px;
+  min-width: 1400px;
   table-layout: fixed;
 }
 
@@ -3516,6 +3538,14 @@ dialog::backdrop {
   align-items: start;
 }
 
+#runsView.runs-list-collapsed.active {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#runsView.runs-list-collapsed > #runsListPanel {
+  display: none;
+}
+
 #runsView > .panel:first-child {
   position: sticky;
   top: 16px;
@@ -3531,6 +3561,11 @@ dialog::backdrop {
   max-height: min(68vh, 760px);
   overscroll-behavior: contain;
   border-block: 1px solid var(--line);
+}
+
+#participationView .participation-table-wrap {
+  max-height: none;
+  overflow-y: visible;
 }
 
 .operational-table thead th {
@@ -3550,18 +3585,7 @@ dialog::backdrop {
   background: var(--surface);
 }
 
-#runRowsTable th:nth-child(2),
-#runRowsTable td:nth-child(2) {
-  position: sticky;
-  left: 42px;
-  z-index: 3;
-  min-width: 210px;
-  background: var(--surface);
-  box-shadow: 1px 0 0 var(--line);
-}
-
-#runRowsTable thead th:first-child,
-#runRowsTable thead th:nth-child(2) {
+#runRowsTable thead th:first-child {
   z-index: 6;
   background: #fbfcfb;
 }
@@ -3849,6 +3873,15 @@ input[type="file"]::file-selector-button {
     grid-template-columns: 1fr 1fr;
   }
 
+  .participation-filter-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .participation-status-filters {
+    width: 100%;
+  }
+
   .participation-run-context,
   .participation-run-context > div:first-child {
     align-items: stretch;
@@ -3903,6 +3936,11 @@ input[type="file"]::file-selector-button {
   .run-selection-summary {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .run-header-actions #runQuickSelect {
+    width: 100%;
+    min-width: 0;
   }
 
   .run-header-actions .run-status-badge {

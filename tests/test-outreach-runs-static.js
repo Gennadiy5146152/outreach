@@ -12,6 +12,9 @@ for (const expected of [
   "runsView",
   "runRowsTable",
   "runRowsSelectVisible",
+  "runs-list-collapsed",
+  "runQuickSelect",
+  "toggleRunsListBtn",
   "stopActiveRunBtn",
   "Остановить follow-up",
   "Продолжить follow-up",
@@ -34,6 +37,7 @@ for (const expected of [
   "function visibleRunRows()",
   "function renderRunRows()",
   "function renderRunsList()",
+  "function setRunsListCollapsed(collapsed)",
   "function runOperationalStatus(run)",
   "function runOperationalStatusLabel(run)",
   "async function loadRunDetail",
@@ -113,6 +117,7 @@ for (const expected of [
 
 for (const expected of [
   ".run-list",
+  "#runsView.runs-list-collapsed.active",
   ".run-bulkbar",
   ".run-status-badge",
   ".run-selection-actions",
@@ -125,6 +130,10 @@ for (const expected of [
   if (!css.includes(expected)) {
     throw new Error(`runs CSS should include ${expected}`);
   }
+}
+
+if (css.includes("#runRowsTable th:nth-child(2)")) {
+  throw new Error("runs table should not pin the company column");
 }
 
 console.log("OK: outreach runs static test passed");

@@ -641,8 +641,8 @@
         </section>
       </section>
 
-      <section class="view" id="runsView">
-        <section class="panel">
+      <section class="view runs-list-collapsed" id="runsView">
+        <section id="runsListPanel" class="panel">
           <div class="panel-head">
             <div>
               <h2>Запуски рассылок</h2>
@@ -661,6 +661,8 @@
               <p id="runDetailMeta" class="muted">Выбери запуск выше.</p>
             </div>
             <div class="run-header-actions">
+              <select id="runQuickSelect" aria-label="Выбрать запуск"></select>
+              <button id="toggleRunsListBtn" class="icon-button" type="button" aria-label="Показать список запусков" title="Показать список запусков" aria-expanded="false">☰</button>
               <span id="runStatusBadge" class="run-status-badge is-empty">Статус не выбран</span>
               <button id="stopActiveRunBtn" class="danger-button" hidden>Остановить запуск</button>
             </div>
@@ -696,22 +698,24 @@
           <div class="panel-head">
             <div>
               <h2>Участие почт в рассылках</h2>
-              <p class="muted">Сводка по компаниям: какая почта получателя участвовала в каком запуске и с какого нашего ящика шла отправка.</p>
             </div>
-            <button id="reloadParticipationBtn">Обновить участие</button>
+            <button id="reloadParticipationBtn" class="icon-button" aria-label="Обновить участие" title="Обновить участие">↻</button>
           </div>
           <div id="participationLoading" class="run-detail-loading" hidden><span></span>Обновляю участие...</div>
           <div class="participation-toolbar">
-            <input id="participationSearch" type="search" placeholder="Компания, email, наша почта, файл или запуск" />
-            <div class="quick-filters participation-status-filters" aria-label="Статус участия">
-              <button class="small-button active" data-participation-status="">Все</button>
-              <button class="small-button" data-participation-status="active">В процессе</button>
-              <button class="small-button" data-participation-status="replied">Ответили</button>
-              <button class="small-button" data-participation-status="stopped">Остановлены</button>
-              <button class="small-button" data-participation-status="sent">Завершены</button>
-              <button class="small-button" data-participation-status="error">Ошибки</button>
+            <div class="participation-filter-head">
+              <input id="participationSearch" type="search" placeholder="Компания, email, наша почта, файл или запуск" />
+              <div class="quick-filters participation-status-filters" aria-label="Статус участия">
+                <button class="small-button active" data-participation-status="">Все</button>
+                <button class="small-button" data-participation-status="active">В процессе</button>
+                <button class="small-button" data-participation-status="replied">Ответили</button>
+                <button class="small-button" data-participation-status="stopped">Остановлены</button>
+                <button class="small-button" data-participation-status="sent">Завершены</button>
+                <button class="small-button" data-participation-status="error">Ошибки</button>
+              </div>
+              <button id="toggleParticipationFiltersBtn" class="small-button" type="button" aria-expanded="false">Фильтры</button>
             </div>
-            <div class="participation-filter-grid">
+            <div id="participationAdvancedFilters" class="participation-filter-grid" hidden>
               <label><span>Наша почта</span><select id="participationMailbox"></select></label>
               <label><span>Запуск</span><select id="participationRun"></select></label>
               <label><span>Рассылка</span><select id="participationCampaign"></select></label>
@@ -730,7 +734,7 @@
             </div>
           </div>
           <div id="participationSummary" class="participation-summary"></div>
-          <div class="table-wrap operational-table"><table id="participationTable"></table></div>
+          <div class="table-wrap operational-table participation-table-wrap"><table id="participationTable"></table></div>
           <div id="participationPagination" class="pagination"></div>
         </section>
       </section>

@@ -1469,6 +1469,16 @@ function runListTitle(run) {
   return run.title || "Запуск без названия";
 }
 
+function setRunsListCollapsed(collapsed) {
+  const view = $("#runsView");
+  const button = $("#toggleRunsListBtn");
+  if (!view || !button) return;
+  view.classList.toggle("runs-list-collapsed", collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.setAttribute("aria-label", collapsed ? "Показать список запусков" : "Скрыть список запусков");
+  button.title = collapsed ? "Показать список запусков" : "Скрыть список запусков";
+}
+
 function renderRunsList() {
   const statusCounts = state.runs.reduce((counts, run) => {
     const status = runOperationalStatus(run);
@@ -1490,6 +1500,13 @@ function renderRunsList() {
       </button>
     `).join("")
     : `<p class="muted">Запусков пока нет. Запусти кампанию или выбранные черновики.</p>`;
+  const quickSelect = $("#runQuickSelect");
+  if (quickSelect) {
+    quickSelect.innerHTML = state.runs.map((run) => (
+      `<option value="${esc(run.id)}" ${run.id === state.activeRunId ? "selected" : ""}>${esc(runListTitle(run))} · ${esc(runOperationalStatusLabel(run))}</option>`
+    )).join("");
+    quickSelect.disabled = state.runs.length === 0;
+  }
 }
 
 function runDetailCacheKey(runId) {
@@ -1541,6 +1558,7 @@ async function selectRun(runId, { force = false } = {}) {
   state.expandedRunRows = new Set();
   state.expandedRunActions = new Set();
   renderRunsList();
+  setRunsListCollapsed(true);
   await loadRunDetail(runId, { force });
 }
 
@@ -1620,6 +1638,9 @@ function renderParticipationFilters() {
   $$("[data-participation-status]").forEach((button) => {
     button.classList.toggle("active", button.dataset.participationStatus === filters.status);
   });
+  const activeAdvancedFilters = [filters.mailbox_id, filters.import_id, filters.run_id, filters.campaign_id].filter(Boolean).length;
+  const advancedToggle = $("#toggleParticipationFiltersBtn");
+  if (advancedToggle) advancedToggle.textContent = activeAdvancedFilters ? `Фильтры · ${activeAdvancedFilters}` : "Фильтры";
   if ($("#participationMailbox")) {
     $("#participationMailbox").innerHTML = renderParticipationSelectOptions(
       state.participationOptions.mailboxes,
@@ -4523,6 +4544,10 @@ $$("[data-run-filter]").forEach((button) => button.addEventListener("click", () 
   state.selectedRunLeadIds = new Set();
   loadRunDetail(state.activeRunId);
 }));
+$("#toggleRunsListBtn")?.addEventListener("click", () => {
+  setRunsListCollapsed(!$("#runsView").classList.contains("runs-list-collapsed"));
+});
+$("#runQuickSelect")?.addEventListener("change", (event) => selectRun(event.currentTarget.value));
 $$("[data-participation-status]").forEach((button) => button.addEventListener("click", () => {
   state.participationFilters.status = button.dataset.participationStatus || "";
   state.participationPagination.page = 1;
@@ -4530,6 +4555,12 @@ $$("[data-participation-status]").forEach((button) => button.addEventListener("c
   renderParticipationFilters();
   loadParticipation();
 }));
+$("#toggleParticipationFiltersBtn")?.addEventListener("click", (event) => {
+  const filters = $("#participationAdvancedFilters");
+  const expanded = filters.hidden;
+  filters.hidden = !expanded;
+  event.currentTarget.setAttribute("aria-expanded", String(expanded));
+});
 $("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
   title: "Обновление запусков",
   button: event.currentTarget,
