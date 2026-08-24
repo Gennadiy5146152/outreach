@@ -601,6 +601,7 @@ const STATUS_LABELS = {
   opened: "открыто",
   replied: "ответил",
   active: "активен",
+  stopped: "остановлено",
   paused: "пауза",
   completed: "завершен",
   meeting: "встреча",
@@ -714,6 +715,7 @@ const EVENT_LABELS = {
   unsubscribe_detected: "Получена отписка",
   not_target_received: "Получен ответ “не целевой”",
   outreach_conversation_stopped: "Цепочка остановлена",
+  outreach_run_stopped: "Запуск остановлен",
   outreach_conversation_continued: "Follow-up продолжен",
   outreach_followup_delayed: "Follow-up отложен",
   manual_reply_sent: "Ручной ответ отправлен",
@@ -1218,6 +1220,14 @@ function runRowsStats(rows) {
   };
 }
 
+function activeRunHasActiveQueue() {
+  return Number(state.runs.find((run) => run.id === state.activeRunId)?.active_queue || 0) > 0;
+}
+
+function activeRunStatus() {
+  return state.runs.find((run) => run.id === state.activeRunId)?.status || "";
+}
+
 function runTimeline(row) {
   const queueEvents = runRowQueueItems(row).map((item) => ({
     kind: "queue",
@@ -1245,7 +1255,7 @@ function renderRunRows() {
 
   $("#runDetailTitle").textContent = detail?.run?.title || "Таблица запуска";
   $("#runDetailMeta").textContent = detail?.run
-    ? `${runModeLabel(detail.run.mode)} · ${fmtDate(detail.run.created_at)}`
+    ? `${runModeLabel(detail.run.mode)} · ${statusLabel(detail.run.status)} · ${fmtDate(detail.run.created_at)}`
     : "Выбери запуск выше.";
   $("#runRowsSummary").innerHTML = `
     <span>Всего: <strong>${stats.total}</strong></span>
@@ -1260,6 +1270,14 @@ function renderRunRows() {
   $("#runRowsSelectVisible").checked = allVisibleSelected;
   $("#runRowsSelectVisible").disabled = visibleRows.length === 0;
   $("#runBulkSelection").textContent = `Выбрано: ${state.selectedRunLeadIds.size} из ${visibleRows.length} на экране`;
+  const stopActiveRunBtn = $("#stopActiveRunBtn");
+  if (stopActiveRunBtn) {
+    const hasActiveQueue = activeRunHasActiveQueue();
+    stopActiveRunBtn.disabled = !state.activeRunId || !hasActiveQueue;
+    stopActiveRunBtn.textContent = hasActiveQueue
+      ? "Остановить весь запуск"
+      : activeRunStatus() === "stopped" ? "Запуск остановлен" : "Нет активной очереди";
+  }
   ["runBulkStopBtn", "runBulkContinueBtn", "runBulkSuppressBtn"].forEach((id) => {
     const button = $(`#${id}`);
     if (button) button.disabled = state.selectedRunLeadIds.size === 0;
@@ -1329,7 +1347,7 @@ async function loadRuns(preferredRunId = state.activeRunId) {
     ? state.runs.map((run) => `
       <button class="run-tab ${run.id === state.activeRunId ? "active" : ""}" data-select-run="${run.id}">
         <strong>${esc(run.title)}</strong>
-        <span>${esc(fmtDate(run.created_at))} · ${Number(run.recipients || run.total_recipients || 0)} получателей · ${Number(run.replies || 0)} ответов · ${Number(run.active_queue || 0)} в работе</span>
+        <span>${esc(statusLabel(run.status))} · ${esc(fmtDate(run.created_at))} · ${Number(run.recipients || run.total_recipients || 0)} получателей · ${Number(run.replies || 0)} ответов · ${Number(run.active_queue || 0)} в работе</span>
       </button>
     `).join("")
     : `<p class="muted">Запусков пока нет. Запусти кампанию или выбранные черновики.</p>`;
@@ -1427,6 +1445,14 @@ function renderParticipationFilters() {
       "Все рассылки",
     );
   }
+  const stopParticipationRunBtn = $("#stopParticipationRunBtn");
+  if (stopParticipationRunBtn) {
+    const selectedRun = (state.participationOptions.runs || []).find((run) => run.id === filters.run_id);
+    stopParticipationRunBtn.disabled = !filters.run_id || selectedRun?.status === "stopped";
+    stopParticipationRunBtn.textContent = selectedRun?.status === "stopped"
+      ? "Запуск остановлен"
+      : "Остановить выбранный запуск";
+  }
 }
 
 function renderParticipationTable() {
@@ -1506,6 +1532,28 @@ async function runActionForLeads(endpoint, leadIds, title, message) {
   state.selectedRunLeadIds = new Set();
   await Promise.all([loadRuns(state.activeRunId), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations(), loadSuppressions()]);
   setActionResult({ status: "success", title, message: message(result), details: result });
+}
+
+async function stopRun(runId, button) {
+  if (!runId) return;
+  const run = state.runs.find((item) => item.id === runId) || state.participationOptions.runs.find((item) => item.id === runId);
+  const title = run?.title || "выбранный запуск";
+  if (!window.confirm(`Остановить весь запуск “${title}”? Все будущие письма этого запуска будут сняты с очереди.`)) return;
+  await runAction({
+    title: "Остановка запуска",
+    pending: "Останавливаю весь запуск и снимаю будущие письма с очереди...",
+    button,
+  }, async () => {
+    const result = await api(`/api/outreach/runs/${runId}/stop`, { method: "POST" });
+    state.selectedRunLeadIds = new Set();
+    await Promise.all([loadRuns(runId), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations()]);
+    setActionResult({
+      status: "success",
+      title: "Остановка запуска",
+      message: `Запуск остановлен. Отменено писем: ${result.cancelled_queue}. Черновиков остановлено: ${result.cancelled_drafts}.`,
+      details: result,
+    });
+  });
 }
 
 function stepName(position) {
@@ -4174,6 +4222,7 @@ $("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
   await loadRuns(state.activeRunId);
   setActionResult({ status: "success", title: "Обновление запусков", message: "Таблица запусков обновлена." });
 }));
+$("#stopActiveRunBtn")?.addEventListener("click", (event) => stopRun(state.activeRunId, event.currentTarget));
 $("#reloadParticipationBtn")?.addEventListener("click", (event) => runAction({
   title: "Обновление участия",
   button: event.currentTarget,
@@ -4181,6 +4230,7 @@ $("#reloadParticipationBtn")?.addEventListener("click", (event) => runAction({
   await loadParticipation();
   setActionResult({ status: "success", title: "Обновление участия", message: "Таблица участия обновлена." });
 }));
+$("#stopParticipationRunBtn")?.addEventListener("click", (event) => stopRun(state.participationFilters.run_id, event.currentTarget));
 $("#runBulkStopBtn")?.addEventListener("click", (event) => runAction({
   title: "Остановка follow-up",
   button: event.currentTarget,

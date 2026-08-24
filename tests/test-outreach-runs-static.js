@@ -13,6 +13,7 @@ for (const expected of [
   "runRowsTable",
   "runRowsSelectVisible",
   "Остановить выбранные follow-up",
+  "Остановить весь запуск",
   "Продолжить выбранные follow-up",
   "В стоп-лист выбранные",
   "run-bulk-actions",
@@ -37,6 +38,9 @@ for (const expected of [
   "runRowsSelectAll",
   "runRowsSelectVisible",
   "runBulkSelection",
+  "stopActiveRunBtn",
+  "stopParticipationRunBtn",
+  "async function stopRun",
   "stop-followups",
   "continue-followups",
   "approved_queue",
@@ -61,6 +65,7 @@ for (const expected of [
 for (const expected of [
   "app.get(\"/api/outreach/runs\"",
   "app.get(\"/api/outreach/runs/:id\"",
+  "app.post(\"/api/outreach/runs/:id/stop\"",
   "app.post(\"/api/outreach/runs/:id/stop-followups\"",
   "app.post(\"/api/outreach/runs/:id/continue-followups\"",
   "app.post(\"/api/outreach/runs/:id/suppress\"",
@@ -75,6 +80,9 @@ for (const expected of [
   "approved_at = now()",
   "approved_queue",
   "run_id = $1",
+  "run_stopped_by_user",
+  "outreach_run_stopped",
+  "Запуск полностью остановлен пользователем",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`runs API should include ${expected}`);

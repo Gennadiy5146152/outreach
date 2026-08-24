@@ -2889,6 +2889,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
             WHEN COALESCE(replies.reply_count, 0) > 0 THEN 'replied'
             WHEN COALESCE(s.failed_queue, 0) > 0 THEN 'error'
             WHEN COALESCE(s.followup_cancelled, 0) > 0 AND COALESCE(s.followup_pending, 0) = 0 THEN 'stopped'
+            WHEN COALESCE(s.cancelled_queue, 0) > 0 AND COALESCE(s.active_queue, 0) = 0 AND COALESCE(s.sent_messages, 0) = 0 THEN 'stopped'
             WHEN COALESCE(s.active_queue, 0) > 0 THEN 'active'
             WHEN COALESCE(s.sent_messages, 0) > 0 THEN 'sent'
             ELSE 'queued'
@@ -2940,7 +2941,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
     SELECT
       COALESCE((SELECT json_agg(json_build_object('id', id, 'email', email) ORDER BY email) FROM mailboxes), '[]'::json) AS mailboxes,
       COALESCE((SELECT json_agg(json_build_object('id', id, 'file_name', file_name) ORDER BY created_at DESC) FROM outreach_imports LIMIT 100), '[]'::json) AS imports,
-      COALESCE((SELECT json_agg(json_build_object('id', id, 'title', title) ORDER BY created_at DESC) FROM outreach_runs LIMIT 100), '[]'::json) AS runs,
+      COALESCE((SELECT json_agg(json_build_object('id', id, 'title', title, 'status', status) ORDER BY created_at DESC) FROM outreach_runs LIMIT 100), '[]'::json) AS runs,
       COALESCE((SELECT json_agg(json_build_object('id', id, 'name', name) ORDER BY created_at DESC) FROM campaigns LIMIT 100), '[]'::json) AS campaigns
   `);
 
@@ -2966,6 +2967,99 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
       return publicRow;
     }),
   });
+}));
+
+app.post("/api/outreach/runs/:id/stop", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
+
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      const run = (await client.query("SELECT * FROM outreach_runs WHERE id = $1 FOR UPDATE", [req.params.id])).rows[0];
+      if (!run) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      const cancelled = await client.query(
+        `
+          UPDATE sending_queue
+          SET status = 'cancelled',
+              last_error = 'Запуск полностью остановлен пользователем',
+              updated_at = now()
+          WHERE run_id = $1
+            AND status IN ('pending','retrying','running')
+          RETURNING outreach_step_id
+        `,
+        [req.params.id],
+      );
+      const pausedEnrollments = await client.query(
+        `
+          UPDATE enrollments
+          SET status = 'paused',
+              stopped_at = now(),
+              stop_reason = 'run_stopped_by_user'
+          WHERE id IN (
+            SELECT DISTINCT enrollment_id
+            FROM sending_queue
+            WHERE run_id = $1
+              AND enrollment_id IS NOT NULL
+          )
+            AND status = 'active'
+        `,
+        [req.params.id],
+      );
+      const cancelledDrafts = await client.query(
+        `
+          UPDATE outreach_drafts
+          SET status = 'cancelled',
+              updated_at = now()
+          WHERE id IN (
+            SELECT DISTINCT outreach_draft_id
+            FROM sending_queue
+            WHERE run_id = $1
+              AND outreach_draft_id IS NOT NULL
+          )
+            AND status IN ('queued','active_sequence','paused','ready')
+        `,
+        [req.params.id],
+      );
+      const stepIds = cancelled.rows.map((row) => row.outreach_step_id).filter(Boolean);
+      let cancelledSteps = 0;
+      if (stepIds.length) {
+        cancelledSteps = (await client.query(
+          "UPDATE outreach_draft_steps SET status = 'cancelled', updated_at = now() WHERE id = ANY($1::uuid[])",
+          [stepIds],
+        )).rowCount;
+      }
+      await client.query(
+        `
+          UPDATE outreach_runs
+          SET status = 'stopped',
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [req.params.id],
+      );
+      await client.query("COMMIT");
+      return {
+        stopped: true,
+        cancelled_queue: cancelled.rowCount,
+        cancelled_steps: cancelledSteps,
+        paused_enrollments: pausedEnrollments.rowCount,
+        cancelled_drafts: cancelledDrafts.rowCount,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+
+  if (!result) return res.status(404).json({ error: "not_found" });
+  await logEvent("outreach_run_stopped", {
+    payload: { runId: req.params.id, ...result },
+  });
+  res.json(result);
 }));
 
 app.post("/api/outreach/runs/:id/stop-followups", asyncHandler(async (req, res) => {

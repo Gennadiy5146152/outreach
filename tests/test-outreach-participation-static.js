@@ -12,6 +12,7 @@ for (const expected of [
   "participationMailbox",
   "participationImport",
   "participationRun",
+  "stopParticipationRunBtn",
   "participationCampaign",
   "participationTable",
 ]) {
@@ -49,6 +50,8 @@ for (const expected of [
   "import_id = $6::uuid",
   "last_reply_classification",
   "filtered_replied",
+  "cancelled_queue, 0) > 0 AND COALESCE(s.active_queue, 0) = 0",
+  "'status', status",
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`participation API should include ${expected}`);

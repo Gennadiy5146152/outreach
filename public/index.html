@@ -637,7 +637,7 @@
           <div class="panel-head">
             <div>
               <h2>Запуски рассылок</h2>
-              <p class="muted">Рабочая таблица по каждому старту: кому отправлено, кто ответил и где остановлены follow-up.</p>
+              <p class="muted">Рабочая таблица по каждому старту: кому отправлено, кто ответил и где можно остановить весь запуск.</p>
             </div>
             <button id="reloadRunsBtn">Обновить запуски</button>
           </div>
@@ -652,6 +652,7 @@
               <p id="runDetailMeta" class="muted">Выбери запуск выше.</p>
             </div>
             <div class="run-bulk-actions">
+              <button id="stopActiveRunBtn" class="danger-button">Остановить весь запуск</button>
               <button id="runBulkStopBtn" class="small-button">Остановить выбранные follow-up</button>
               <button id="runBulkContinueBtn" class="small-button">Продолжить выбранные follow-up</button>
               <button id="runBulkSuppressBtn" class="small-button">В стоп-лист выбранные</button>
@@ -696,6 +697,7 @@
             <select id="participationMailbox"></select>
             <select id="participationImport"></select>
             <select id="participationRun"></select>
+            <button id="stopParticipationRunBtn" class="danger-button" type="button">Остановить выбранный запуск</button>
             <select id="participationCampaign"></select>
           </div>
           <div id="participationSummary" class="summary-line"></div>
