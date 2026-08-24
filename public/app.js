@@ -1228,6 +1228,10 @@ function activeRunStatus() {
   return state.runs.find((run) => run.id === state.activeRunId)?.status || "";
 }
 
+function activeRunCanBeStopped() {
+  return activeRunStatus() === "active" || activeRunHasActiveQueue();
+}
+
 function runTimeline(row) {
   const queueEvents = runRowQueueItems(row).map((item) => ({
     kind: "queue",
@@ -1272,9 +1276,9 @@ function renderRunRows() {
   $("#runBulkSelection").textContent = `Выбрано: ${state.selectedRunLeadIds.size} из ${visibleRows.length} на экране`;
   const stopActiveRunBtn = $("#stopActiveRunBtn");
   if (stopActiveRunBtn) {
-    const hasActiveQueue = activeRunHasActiveQueue();
-    stopActiveRunBtn.disabled = !state.activeRunId || !hasActiveQueue;
-    stopActiveRunBtn.textContent = hasActiveQueue
+    const canBeStopped = activeRunCanBeStopped();
+    stopActiveRunBtn.disabled = !state.activeRunId || !canBeStopped;
+    stopActiveRunBtn.textContent = canBeStopped
       ? "Остановить весь запуск"
       : activeRunStatus() === "stopped" ? "Запуск остановлен" : "Нет активной очереди";
   }
@@ -1554,6 +1558,8 @@ async function stopRun(runId, button) {
       details: result,
     });
   });
+  renderRunRows();
+  renderParticipationFilters();
 }
 
 function stepName(position) {
