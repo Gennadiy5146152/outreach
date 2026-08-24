@@ -2835,7 +2835,10 @@ th {
 }
 
 .run-expanded-actions {
+  position: sticky;
+  left: 52px;
   display: flex;
+  width: min(760px, calc(100vw - 760px));
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
@@ -3614,6 +3617,8 @@ input[type="file"]::file-selector-button {
   .run-expanded-actions {
     align-items: stretch;
     flex-direction: column;
+    left: 52px;
+    width: calc(100vw - 84px);
   }
 
   .run-expanded-actions > strong {
