@@ -51,6 +51,23 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function paginationParams(req, { defaultPageSize = 50, maxPageSize = 100 } = {}) {
+  const page = Math.max(Math.trunc(Number(req.query.page || 1)) || 1, 1);
+  const requestedPageSize = Math.trunc(Number(req.query.pageSize || defaultPageSize)) || defaultPageSize;
+  const pageSize = Math.min(Math.max(requestedPageSize, 5), maxPageSize);
+  return { page, pageSize, offset: (page - 1) * pageSize };
+}
+
+function paginationMeta({ page, pageSize }, total) {
+  const normalizedTotal = Math.max(Number(total || 0), 0);
+  return {
+    page,
+    pageSize,
+    total: normalizedTotal,
+    totalPages: Math.max(Math.ceil(normalizedTotal / pageSize), 1),
+  };
+}
+
 function uploadOriginalName(fileOrName, fallback = "upload") {
   const raw = typeof fileOrName === "string" ? fileOrName : fileOrName?.originalname;
   const name = String(raw || fallback);
@@ -880,6 +897,7 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
           ) reply_times
           WHERE first_sent_at IS NOT NULL
             AND first_reply_at IS NOT NULL
+            AND first_reply_at >= first_sent_at
         ) AS avg_hours_to_reply,
         (SELECT count(*)::int FROM messages WHERE direction = 'outbound' AND type = 'outreach' AND outreach_step_id IS NOT NULL AND status = 'sent') AS sent_total,
         (
@@ -969,6 +987,7 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
           AND inbound.outreach_step_id = outbound.outreach_step_id
         WHERE inbound.first_reply_at IS NOT NULL
           AND outbound.first_sent_at IS NOT NULL
+          AND inbound.first_reply_at >= outbound.first_sent_at
         GROUP BY outbound.position
       )
       SELECT
@@ -2652,6 +2671,10 @@ app.get("/api/outreach/runs", asyncHandler(async (_req, res) => {
 
 app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_run" });
+  const pagination = paginationParams(req);
+  const filter = ["all", "waiting", "replied", "decision", "stopped", "errors"].includes(req.query.filter)
+    ? req.query.filter
+    : "all";
   const run = (await query("SELECT * FROM outreach_runs WHERE id = $1", [req.params.id])).rows[0];
   if (!run) return res.status(404).json({ error: "not_found" });
 
@@ -2773,16 +2796,115 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
             )
           )
       ) history ON true
+      WHERE (
+        $3 = 'all'
+        OR ($3 = 'replied' AND EXISTS (
+          SELECT 1 FROM messages reply
+          WHERE reply.direction = 'inbound'
+            AND reply.type <> 'warmup'
+            AND reply.lead_id = l.id
+            AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
+        ))
+        OR ($3 = 'waiting' AND NOT EXISTS (
+          SELECT 1 FROM messages reply
+          WHERE reply.direction = 'inbound'
+            AND reply.type <> 'warmup'
+            AND reply.lead_id = l.id
+            AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
+        ))
+        OR ($3 = 'decision' AND conv.status IN ('waiting_reply_review','manual_reply_needed'))
+        OR ($3 = 'stopped' AND EXISTS (
+          SELECT 1
+          FROM sending_queue stopped_queue
+          LEFT JOIN campaign_steps stopped_campaign_step ON stopped_campaign_step.id = stopped_queue.campaign_step_id
+          LEFT JOIN outreach_draft_steps stopped_draft_step ON stopped_draft_step.id = stopped_queue.outreach_step_id
+          WHERE stopped_queue.run_id = $1
+            AND stopped_queue.lead_id = l.id
+            AND stopped_queue.status = 'cancelled'
+            AND COALESCE(stopped_campaign_step.position, stopped_draft_step.position, 1) > 1
+        ))
+        OR ($3 = 'errors' AND EXISTS (
+          SELECT 1 FROM sending_queue failed_queue
+          WHERE failed_queue.run_id = $1
+            AND failed_queue.lead_id = l.id
+            AND failed_queue.status = 'failed'
+        ))
+      )
       ORDER BY l.company NULLS LAST, l.email
+      LIMIT $4 OFFSET $5
     `,
-    [req.params.id, run.created_at],
+    [req.params.id, run.created_at, filter, pagination.pageSize, pagination.offset],
   );
 
-  res.json({ run, rows: rows.rows });
+  const filteredTotal = Number((await query(
+    `
+      WITH recipients AS (
+        SELECT DISTINCT lead_id
+        FROM sending_queue
+        WHERE run_id = $1 AND lead_id IS NOT NULL
+        UNION
+        SELECT DISTINCT lead_id
+        FROM messages
+        WHERE run_id = $1 AND lead_id IS NOT NULL
+      )
+      SELECT count(*)::int AS total
+      FROM recipients r
+      LEFT JOIN LATERAL (
+        SELECT oc.status
+        FROM outreach_conversations oc
+        WHERE oc.lead_id = r.lead_id
+        ORDER BY oc.updated_at DESC
+        LIMIT 1
+      ) conv ON true
+      WHERE (
+        $3 = 'all'
+        OR ($3 = 'replied' AND EXISTS (
+          SELECT 1 FROM messages reply
+          WHERE reply.direction = 'inbound'
+            AND reply.type <> 'warmup'
+            AND reply.lead_id = r.lead_id
+            AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
+        ))
+        OR ($3 = 'waiting' AND NOT EXISTS (
+          SELECT 1 FROM messages reply
+          WHERE reply.direction = 'inbound'
+            AND reply.type <> 'warmup'
+            AND reply.lead_id = r.lead_id
+            AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
+        ))
+        OR ($3 = 'decision' AND conv.status IN ('waiting_reply_review','manual_reply_needed'))
+        OR ($3 = 'stopped' AND EXISTS (
+          SELECT 1
+          FROM sending_queue stopped_queue
+          LEFT JOIN campaign_steps stopped_campaign_step ON stopped_campaign_step.id = stopped_queue.campaign_step_id
+          LEFT JOIN outreach_draft_steps stopped_draft_step ON stopped_draft_step.id = stopped_queue.outreach_step_id
+          WHERE stopped_queue.run_id = $1
+            AND stopped_queue.lead_id = r.lead_id
+            AND stopped_queue.status = 'cancelled'
+            AND COALESCE(stopped_campaign_step.position, stopped_draft_step.position, 1) > 1
+        ))
+        OR ($3 = 'errors' AND EXISTS (
+          SELECT 1 FROM sending_queue failed_queue
+          WHERE failed_queue.run_id = $1
+            AND failed_queue.lead_id = r.lead_id
+            AND failed_queue.status = 'failed'
+        ))
+      )
+    `,
+    [req.params.id, run.created_at, filter],
+  )).rows[0]?.total || 0);
+
+  res.json({
+    run,
+    rows: rows.rows,
+    filter,
+    pagination: paginationMeta(pagination, filteredTotal),
+  });
 }));
 
 app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
   const search = cleanText(req.query.search).toLowerCase();
+  const pagination = paginationParams(req);
   const status = cleanText(req.query.status);
   const mailboxId = isUuid(req.query.mailbox_id) ? req.query.mailbox_id : "";
   const runId = isUuid(req.query.run_id) ? req.query.run_id : "";
@@ -2932,9 +3054,9 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
         AND ($5 = '' OR campaign_id = $5::uuid)
         AND ($6 = '' OR import_id = $6::uuid)
       ORDER BY last_touch_at DESC NULLS LAST, first_touch_at DESC NULLS LAST
-      LIMIT 500
+      LIMIT $7 OFFSET $8
     `,
-    [search, status, mailboxId, runId, campaignId, importId],
+    [search, status, mailboxId, runId, campaignId, importId, pagination.pageSize, pagination.offset],
   );
 
   const filters = await query(`
@@ -2955,6 +3077,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
       errors: Number(first.filtered_errors || 0),
     },
     filters: filters.rows[0] || { mailboxes: [], imports: [], runs: [], campaigns: [] },
+    pagination: paginationMeta(pagination, first.filtered_total),
     rows: result.rows.map((row) => {
       const {
         filtered_total,
@@ -3331,8 +3454,17 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
   const status = req.query.status || "";
   const classification = req.query.classification || "";
   const onlyReview = toBool(req.query.review);
+  const reviewFilter = ["hot", "needsReply", "followup", "unknown"].includes(req.query.review_filter)
+    ? req.query.review_filter
+    : "";
+  const pagination = paginationParams(req, { defaultPageSize: 30 });
   const result = await query(
     `
+      WITH latest_conversations AS (
+        SELECT DISTINCT ON (lead_id) *
+        FROM outreach_conversations
+        ORDER BY lead_id, COALESCE(last_message_at, updated_at, created_at) DESC
+      )
       SELECT oc.*,
              l.company,
              l.contact_name,
@@ -3358,8 +3490,12 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
              COALESCE(stats.outbound_total, 0)::int AS outbound_total,
              COALESCE(stats.inbound_total, 0)::int AS inbound_total,
              COALESCE(queue.pending_total, 0)::int AS pending_total,
-             COALESCE(queue.approval_total, 0)::int AS approval_total
-      FROM outreach_conversations oc
+             COALESCE(queue.approval_total, 0)::int AS approval_total,
+             count(*) OVER()::int AS filtered_total,
+             count(*) FILTER (WHERE oc.status IN ('waiting_reply_review','manual_reply_needed')) OVER()::int AS filtered_review,
+             count(*) FILTER (WHERE COALESCE(stats.inbound_total, 0) > 0) OVER()::int AS filtered_replied,
+             COALESCE(sum(COALESCE(queue.approval_total, 0)) OVER(), 0)::int AS filtered_approval
+      FROM latest_conversations oc
       LEFT JOIN leads l ON l.id = oc.lead_id
       LEFT JOIN LATERAL (
         SELECT msg.*
@@ -3389,12 +3525,39 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
       WHERE ($1 = '' OR oc.status = $1)
         AND ($2 = '' OR oc.classification = $2)
         AND ($3 = false OR oc.status IN ('waiting_reply_review','manual_reply_needed'))
+        AND (
+          $4 = ''
+          OR ($4 = 'hot' AND (
+            COALESCE(oc.classification, latest.reply_classification, latest.ai_classification, '') = 'positive_reply'
+            OR latest.ai_lead_temperature IN ('hot','warm')
+            OR latest.ai_funnel_stage IN ('interested','details_requested','price_requested','meeting_possible','delegated')
+          ))
+          OR ($4 = 'needsReply' AND (
+            latest.ai_next_best_action IN ('reply_manually','send_details','send_price','send_cases','suggest_call','ask_qualifying_question','reply_manually_or_stop')
+            OR NULLIF(latest.ai_reply_draft, '') IS NOT NULL
+          ))
+          OR ($4 = 'followup' AND COALESCE(queue.approval_total, 0) > 0)
+          OR ($4 = 'unknown' AND COALESCE(oc.classification, latest.reply_classification, latest.ai_classification, 'unknown') = 'unknown')
+        )
       ORDER BY COALESCE(oc.last_message_at, oc.updated_at, oc.created_at) DESC
-      LIMIT 300
+      LIMIT $5 OFFSET $6
     `,
-    [status, classification, onlyReview],
+    [status, classification, onlyReview, reviewFilter, pagination.pageSize, pagination.offset],
   );
-  res.json(result.rows.map(publicConversationRow));
+  const first = result.rows[0] || {};
+  res.json({
+    rows: result.rows.map((row) => {
+      const { filtered_total, filtered_review, filtered_replied, filtered_approval, ...publicRow } = row;
+      return publicConversationRow(publicRow);
+    }),
+    summary: {
+      total: Number(first.filtered_total || 0),
+      review: Number(first.filtered_review || 0),
+      replied: Number(first.filtered_replied || 0),
+      approval: Number(first.filtered_approval || 0),
+    },
+    pagination: paginationMeta(pagination, first.filtered_total),
+  });
 }));
 
 async function outreachConversationExportRows(req) {
@@ -5543,7 +5706,9 @@ app.post("/api/campaigns/:id/approve-pending", asyncHandler(async (req, res) => 
   res.json({ approved: result.rowCount });
 }));
 
-app.get("/api/sending", asyncHandler(async (_req, res) => {
+app.get("/api/sending", asyncHandler(async (req, res) => {
+  const pagination = paginationParams(req);
+  const filter = ["waiting", "sent", "all"].includes(req.query.filter) ? req.query.filter : "waiting";
   const result = await query(`
     SELECT q.*, l.company, l.email,
            COALESCE(c.name, 'Персональный импорт') AS campaign_name,
@@ -5632,13 +5797,34 @@ app.get("/api/sending", asyncHandler(async (_req, res) => {
         LIMIT 80
       ) item
     ) history ON true
+    WHERE (
+      $1 = 'all'
+      OR ($1 = 'waiting' AND q.status IN ('pending','retrying','running'))
+      OR ($1 = 'sent' AND q.status = 'sent')
+    )
     ORDER BY q.scheduled_at ASC
-    LIMIT 300
-  `);
-  res.json(result.rows.map((row) => ({
-    ...row,
-    chain_messages: (row.chain_messages || []).map(publicMessageRow),
-  })));
+    LIMIT $2 OFFSET $3
+  `, [filter, pagination.pageSize, pagination.offset]);
+  const total = Number((await query(
+    `
+      SELECT count(*)::int AS total
+      FROM sending_queue q
+      WHERE (
+        $1 = 'all'
+        OR ($1 = 'waiting' AND q.status IN ('pending','retrying','running'))
+        OR ($1 = 'sent' AND q.status = 'sent')
+      )
+    `,
+    [filter],
+  )).rows[0]?.total || 0);
+  res.json({
+    rows: result.rows.map((row) => ({
+      ...row,
+      chain_messages: (row.chain_messages || []).map(publicMessageRow),
+    })),
+    filter,
+    pagination: paginationMeta(pagination, total),
+  });
 }));
 
 app.get("/api/sending/progress", asyncHandler(async (_req, res) => {
@@ -5653,6 +5839,8 @@ app.get("/api/sending/progress", asyncHandler(async (_req, res) => {
       (SELECT count(*)::int FROM sending_queue) AS total,
       (SELECT count(*)::int FROM sending_queue WHERE status = 'sent') AS sent,
       (SELECT count(*)::int FROM sending_queue WHERE status = 'failed') AS failed,
+      (SELECT count(*)::int FROM sending_queue WHERE status = 'cancelled') AS cancelled,
+      (SELECT count(*)::int FROM sending_queue WHERE status IN ('pending','retrying') AND requires_approval = true AND approved_at IS NULL) AS approval_pending,
       (SELECT count(*)::int FROM deliverable) AS active,
       (SELECT min(scheduled_at) FROM deliverable WHERE status IN ('pending','retrying')) AS next_scheduled_at,
       (SELECT avg(EXTRACT(EPOCH FROM (scheduled_at - lag_scheduled_at)) / 60.0) FROM deliverable WHERE lag_scheduled_at IS NOT NULL) AS avg_gap_minutes
@@ -5661,22 +5849,73 @@ app.get("/api/sending/progress", asyncHandler(async (_req, res) => {
   const avgGap = Number.isFinite(Number(row.avg_gap_minutes)) ? Math.max(Number(row.avg_gap_minutes), 0) : 0;
   res.json({
     ...row,
-    percent: row.total ? Math.round((row.sent / row.total) * 100) : 0,
+    percent: row.total ? Math.round(((Number(row.sent) + Number(row.failed) + Number(row.cancelled)) / row.total) * 100) : 0,
     etaMinutes: Math.round(Number(row.active || 0) * avgGap),
   });
 }));
 
-app.get("/api/inbox", asyncHandler(async (_req, res) => {
-  const result = await query(`
-    SELECT msg.*, l.company, l.email AS lead_email, m.email AS mailbox_email
-    FROM messages msg
-    LEFT JOIN leads l ON l.id = msg.lead_id
-    LEFT JOIN mailboxes m ON m.id = msg.mailbox_id
-    WHERE msg.direction = 'inbound'
-    ORDER BY msg.received_at DESC NULLS LAST, msg.created_at DESC
-    LIMIT 200
-  `);
-  res.json(result.rows.map(publicMessageRow));
+app.get("/api/inbox", asyncHandler(async (req, res) => {
+  const pagination = paginationParams(req, { defaultPageSize: 30 });
+  const filter = ["all", "decision", "outreach", "positive"].includes(req.query.filter)
+    ? req.query.filter
+    : "all";
+  const result = await query(
+    `
+      WITH ranked AS (
+        SELECT msg.*,
+               row_number() OVER (
+                 PARTITION BY msg.mailbox_id, COALESCE(
+                   NULLIF(lower(replace(replace(msg.message_id_header, '<', ''), '>', '')), ''),
+                   msg.id::text
+                 )
+                 ORDER BY COALESCE(msg.received_at, msg.created_at) DESC, msg.id DESC
+               ) AS duplicate_rank
+        FROM messages msg
+        WHERE msg.direction = 'inbound'
+      ), deduped AS (
+        SELECT * FROM ranked WHERE duplicate_rank = 1
+      )
+      SELECT msg.*, l.company, l.email AS lead_email, m.email AS mailbox_email,
+             count(*) OVER()::int AS filtered_total,
+             count(*) FILTER (WHERE msg.reply_classification IS NULL OR msg.reply_classification = 'unknown') OVER()::int AS filtered_decision,
+             count(*) FILTER (WHERE msg.lead_id IS NOT NULL) OVER()::int AS filtered_outreach,
+             count(*) FILTER (WHERE msg.reply_classification = 'positive_reply') OVER()::int AS filtered_positive
+      FROM deduped msg
+      LEFT JOIN leads l ON l.id = msg.lead_id
+      LEFT JOIN mailboxes m ON m.id = msg.mailbox_id
+      WHERE (
+        $1 = 'all'
+        OR ($1 = 'decision' AND (msg.reply_classification IS NULL OR msg.reply_classification = 'unknown'))
+        OR ($1 = 'outreach' AND msg.lead_id IS NOT NULL)
+        OR ($1 = 'positive' AND msg.reply_classification = 'positive_reply')
+      )
+      ORDER BY msg.received_at DESC NULLS LAST, msg.created_at DESC
+      LIMIT $2 OFFSET $3
+    `,
+    [filter, pagination.pageSize, pagination.offset],
+  );
+  const first = result.rows[0] || {};
+  res.json({
+    rows: result.rows.map((row) => {
+      const {
+        duplicate_rank,
+        filtered_total,
+        filtered_decision,
+        filtered_outreach,
+        filtered_positive,
+        ...publicRow
+      } = row;
+      return publicMessageRow(publicRow);
+    }),
+    summary: {
+      total: Number(first.filtered_total || 0),
+      decision: Number(first.filtered_decision || 0),
+      outreach: Number(first.filtered_outreach || 0),
+      positive: Number(first.filtered_positive || 0),
+    },
+    filter,
+    pagination: paginationMeta(pagination, first.filtered_total),
+  });
 }));
 
 app.post("/api/inbox/sync", asyncHandler(async (_req, res) => {

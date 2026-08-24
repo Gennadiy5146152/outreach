@@ -20,15 +20,18 @@ const state = {
   segments: [],
   queue: [],
   queueFilter: "waiting",
+  queuePagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
   expandedQueueGroups: new Set(),
   runs: [],
   runDetail: null,
   activeRunId: null,
   runFilter: "all",
+  runPagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
   selectedRunLeadIds: new Set(),
   expandedRunRows: new Set(),
   participationRows: [],
   participationSummary: null,
+  participationPagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
   participationFilters: {
     search: "",
     status: "",
@@ -54,6 +57,9 @@ const state = {
   inbox: [],
   inboxSyncStatus: null,
   inboxFilter: "all",
+  inboxPagination: { page: 1, pageSize: 30, total: 0, totalPages: 1 },
+  conversationPagination: { page: 1, pageSize: 30, total: 0, totalPages: 1 },
+  reviewPagination: { page: 1, pageSize: 30, total: 0, totalPages: 1 },
   leadQuickFilter: "all",
   editorTarget: null,
   campaignStep: "campaign",
@@ -66,6 +72,43 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+function paginationQuery(pagination) {
+  return { page: pagination.page || 1, pageSize: pagination.pageSize || 50 };
+}
+
+function renderPagination(targetId, pagination, scope) {
+  const node = $(`#${targetId}`);
+  if (!node) return;
+  const page = Number(pagination?.page || 1);
+  const pageSize = Number(pagination?.pageSize || 50);
+  const total = Number(pagination?.total || 0);
+  const totalPages = Number(pagination?.totalPages || 1);
+  const from = total ? (page - 1) * pageSize + 1 : 0;
+  const to = Math.min(page * pageSize, total);
+  node.innerHTML = `
+    <span>${from}-${to} из ${total}</span>
+    <div class="pagination-actions">
+      <button class="small-button" data-page-scope="${scope}" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""} aria-label="Предыдущая страница" title="Предыдущая страница">←</button>
+      <strong>Страница ${page} из ${totalPages}</strong>
+      <button class="small-button" data-page-scope="${scope}" data-page="${page + 1}" ${page >= totalPages ? "disabled" : ""} aria-label="Следующая страница" title="Следующая страница">→</button>
+      <label>По <select data-page-size-scope="${scope}">
+        ${[25, 50, 100].map((size) => `<option value="${size}" ${size === pageSize ? "selected" : ""}>${size}</option>`).join("")}
+      </select></label>
+    </div>
+  `;
+}
+
+function paginationScope(scope) {
+  return {
+    queue: [state.queuePagination, loadQueue],
+    runs: [state.runPagination, () => loadRuns(state.activeRunId)],
+    participation: [state.participationPagination, loadParticipation],
+    inbox: [state.inboxPagination, loadInbox],
+    conversations: [state.conversationPagination, loadConversations],
+    review: [state.reviewPagination, loadReviewConversations],
+  }[scope];
+}
 const TIME_ZONE_OPTIONS = [
   ["Europe/Moscow", "Москва (UTC+3)"],
   ["Europe/Kaliningrad", "Калининград (UTC+2)"],
@@ -107,6 +150,26 @@ const VIEW_TITLES = {
   suppression: "Стоп-лист",
   events: "События",
   settings: "Настройки",
+};
+const VIEW_GROUPS = {
+  start: "Рабочий стол",
+  dashboard: "Рабочий стол",
+  outreachImport: "Аутрич",
+  outreachDrafts: "Аутрич",
+  runs: "Аутрич",
+  participation: "Аутрич",
+  queue: "Аутрич",
+  review: "Ответы",
+  conversations: "Ответы",
+  inbox: "Ответы",
+  leads: "Данные",
+  aiExport: "Данные",
+  suppression: "Данные",
+  mailboxes: "Почта",
+  warmup: "Почта",
+  settings: "Сервис",
+  events: "Сервис",
+  campaigns: "Сервис",
 };
 const VALID_VIEWS = new Set(Object.keys(VIEW_TITLES));
 
@@ -358,13 +421,27 @@ function renderInboxSyncStatus() {
               <span>${esc(statusLabel(job.status))}${job.looks_stuck ? " · похоже, зависла" : ""}</span>
               <span>возраст: ${esc(fmtSeconds(job.age_seconds))}</span>
               <span>попытка: ${esc(job.attempts)}/${esc(job.max_attempts)}</span>
-              ${job.status !== "done" && job.last_error ? `<p>Ошибка: ${esc(job.last_error)}</p>` : ""}
+              ${job.status !== "done" && job.last_error ? `
+                <p>${esc(humanizeSyncError(job.last_error))}</p>
+                <details><summary>Технические детали</summary><pre>${esc(job.last_error)}</pre></details>
+              ` : ""}
             </div>
           `).join("")}
         </div>
       ` : `<p class="muted">Последних IMAP-задач нет. Нажми “Синхронизировать IMAP”, чтобы создать проверку входящих.</p>`}
     </div>
   `;
+}
+
+function humanizeSyncError(value = "") {
+  const error = String(value || "");
+  if (/more expressions than target columns/i.test(error)) {
+    return "Входящее письмо не удалось сохранить. Ошибка обработчика уже исправлена; повтори синхронизацию отдельной проверкой.";
+  }
+  if (/command failed/i.test(error)) {
+    return "Синхронизация не завершилась. Проверь подключение ящика перед отдельным повторным запуском.";
+  }
+  return "Синхронизация временно не завершилась. Техническая причина доступна ниже.";
 }
 
 function actionResultHtml(result) {
@@ -377,6 +454,7 @@ function actionResultHtml(result) {
   }[result.status] || result.status;
   return `
     <div class="action-result ${esc(result.status)}">
+      <button class="action-result-close" data-dismiss-action-result aria-label="Закрыть уведомление" title="Закрыть">×</button>
       <div>
         <strong>${esc(statusText)}: ${esc(result.title)}</strong>
         <p>${esc(result.message)}</p>
@@ -414,6 +492,14 @@ function setActionResult({ status = "success", title, message, details, target }
   }
   renderGlobalActionResult();
   toast(`${title}: ${message}`);
+  clearTimeout(setActionResult.timer);
+  if (["success", "warn"].includes(status)) {
+    setActionResult.timer = setTimeout(() => {
+      if (state.actionResults.global !== result) return;
+      state.actionResults.global = null;
+      renderGlobalActionResult();
+    }, 10000);
+  }
 }
 
 function errorMessage(error) {
@@ -460,6 +546,14 @@ function htmlPreviewText(value = "") {
     .replace(/&gt;/g, ">")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function compactMessageText(value = "", fallback = "Текста письма нет.") {
+  const text = htmlPreviewText(String(value || "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/@media[^{}]*\{(?:[^{}]|\{[^{}]*\})*\}/gi, " ")
+    .replace(/(?:^|\s)[.#]?[a-z][\w-]*(?:\s+[.#]?[a-z][\w-]*)*\s*\{[^{}]*\}/gi, " "));
+  return text || fallback;
 }
 
 function attachmentSizeLabel(sizeBytes = 0) {
@@ -1254,6 +1348,7 @@ function renderRunRows() {
   const rows = detail?.rows || [];
   const visibleRows = visibleRunRows();
   const stats = runRowsStats(rows);
+  const pagination = detail?.pagination || state.runPagination;
   state.selectedRunLeadIds = new Set([...state.selectedRunLeadIds].filter((id) => visibleRows.some((row) => row.lead_id === id)));
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => state.selectedRunLeadIds.has(row.lead_id));
 
@@ -1262,12 +1357,8 @@ function renderRunRows() {
     ? `${runModeLabel(detail.run.mode)} · ${statusLabel(detail.run.status)} · ${fmtDate(detail.run.created_at)}`
     : "Выбери запуск выше.";
   $("#runRowsSummary").innerHTML = `
-    <span>Всего: <strong>${stats.total}</strong></span>
-    <span>Молчат: <strong>${stats.waiting}</strong></span>
-    <span>Ответили: <strong>${stats.replied}</strong></span>
-    <span>Нужна реакция: <strong>${stats.decision}</strong></span>
-    <span>Остановлены: <strong>${stats.stopped}</strong></span>
-    <span>Ошибки: <strong>${stats.errors}</strong></span>
+    <span>По фильтру: <strong>${Number(pagination.total || 0)}</strong></span>
+    <span>На странице: <strong>${stats.total}</strong></span>
     <span>Выбрано: <strong>${state.selectedRunLeadIds.size}</strong></span>
   `;
   $$("[data-run-filter]").forEach((button) => button.classList.toggle("active", button.dataset.runFilter === state.runFilter));
@@ -1334,6 +1425,7 @@ function renderRunRows() {
       }).join("") : `<tr><td colspan="9" class="muted">По выбранному фильтру строк нет.</td></tr>`}
     </tbody>
   `;
+  renderPagination("runRowsPagination", pagination, "runs");
 }
 
 async function loadRuns(preferredRunId = state.activeRunId) {
@@ -1345,7 +1437,7 @@ async function loadRuns(preferredRunId = state.activeRunId) {
   if (!activeExists) state.activeRunId = state.runs[0]?.id || null;
   $("#runsSummary").innerHTML = `
     <span>Запусков: <strong>${state.runs.length}</strong></span>
-    <span>Активный: <strong>${esc(state.runs.find((run) => run.id === state.activeRunId)?.title || "не выбран")}</strong></span>
+    <span>Выбран: <strong>${esc(state.runs.find((run) => run.id === state.activeRunId)?.title || "не выбран")}</strong></span>
   `;
   $("#runsList").innerHTML = state.runs.length
     ? state.runs.map((run) => `
@@ -1356,7 +1448,12 @@ async function loadRuns(preferredRunId = state.activeRunId) {
     `).join("")
     : `<p class="muted">Запусков пока нет. Запусти кампанию или выбранные черновики.</p>`;
   if (state.activeRunId) {
-    state.runDetail = await api(`/api/outreach/runs/${state.activeRunId}`);
+    const params = new URLSearchParams({
+      filter: state.runFilter,
+      ...paginationQuery(state.runPagination),
+    });
+    state.runDetail = await api(`/api/outreach/runs/${state.activeRunId}?${params}`);
+    state.runPagination = state.runDetail.pagination || state.runPagination;
   } else {
     state.runDetail = null;
   }
@@ -1403,6 +1500,9 @@ function participationQueryString() {
   Object.entries(state.participationFilters).forEach(([key, value]) => {
     if (value) params.set(key, value);
   });
+  const pagination = paginationQuery(state.participationPagination);
+  params.set("page", pagination.page);
+  params.set("pageSize", pagination.pageSize);
   const text = params.toString();
   return text ? `?${text}` : "";
 }
@@ -1514,6 +1614,7 @@ function renderParticipationTable() {
       `).join("") : `<tr><td colspan="9" class="muted">По этим фильтрам участия пока нет.</td></tr>`}
     </tbody>
   `;
+  renderPagination("participationPagination", state.participationPagination, "participation");
 }
 
 async function loadParticipation() {
@@ -1521,6 +1622,7 @@ async function loadParticipation() {
   const data = await api(`/api/outreach/participation${participationQueryString()}`);
   state.participationRows = data.rows || [];
   state.participationSummary = data.summary || {};
+  state.participationPagination = data.pagination || state.participationPagination;
   state.participationOptions = data.filters || { mailboxes: [], imports: [], runs: [], campaigns: [] };
   renderParticipationFilters();
   renderParticipationTable();
@@ -1812,7 +1914,10 @@ function switchView(view, options = {}) {
   $(`#${nextView}View`).classList.add("active");
   $$("nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === nextView));
   $("#title").textContent = VIEW_TITLES[nextView];
+  if ($("#viewEyebrow")) $("#viewEyebrow").textContent = VIEW_GROUPS[nextView] || "Outreach Desk";
+  document.body.classList.remove("nav-open");
   rememberView(nextView, options);
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
 
 function switchCampaignStep(step) {
@@ -2627,7 +2732,7 @@ async function loadOutreachDrafts() {
           </tr>
         `;
         }).join("")
-        : `<tr><td colspan="6" class="muted">Черновиков по текущему фильтру нет.</td></tr>`}
+        : `<tr><td colspan="6" class="muted">Черновиков по текущему фильтру нет.${active ? ` ${active} уже участвуют в отправке. <button class="link-button" data-go="runs">Открыть запуски</button>` : ""}</td></tr>`}
     </tbody>
   `;
 }
@@ -3047,6 +3152,16 @@ function renderSetupChecklist() {
   const campaignsWithSteps = state.campaigns.filter((campaign) => campaign.steps.length > 0);
   const queuedOrSent = Number(dashboard.queue.pending || 0) + Number(dashboard.queue.sent || 0);
   const runtimeDryRun = state.settings?.runtime?.dryRun;
+  const operational = queuedOrSent > 0 || Number(dashboard.outreach?.sent_total || 0) > 0 || state.runs.length > 0;
+  document.body.classList.toggle("operation-ready", operational);
+
+  if ($("#startHeroTitle") && $("#startHeroAction")) {
+    $("#startHeroTitle").textContent = operational
+      ? "Контролируй активные запуски, очередь и ответы из одного рабочего стола."
+      : "Сначала подключи 2 свои почты, потом включи прогрев, потом запускай тестовую рассылку.";
+    $("#startHeroAction").textContent = operational ? "Открыть запуски" : "Начать с подключения почты";
+    $("#startHeroAction").dataset.go = operational ? "runs" : "mailboxes";
+  }
 
   const steps = [
     {
@@ -3098,10 +3213,21 @@ function renderSetupChecklist() {
   ];
 
   const next = steps.find((step) => !step.done);
-  $("#setupChecklist").innerHTML = `
-    ${next ? `<div class="next-action"><strong>Сейчас сделай это:</strong> ${esc(next.title)} <button data-go="${next.view}">${esc(next.action)}</button></div>` : `<div class="next-action success"><strong>Базовая настройка готова.</strong> Можно тестировать рассылку и смотреть метрики.</div>`}
-    <div class="setup-list">${steps.map(stepCard).join("")}</div>
-  `;
+  if (operational) {
+    $("#setupChecklist").innerHTML = `
+      <div class="next-action success">
+        <strong>Сервис работает.</strong>
+        В очереди: ${Number(dashboard.queue.pending || 0)} · отправлено: ${Number(dashboard.queue.sent || 0)} · ошибок: ${Number(dashboard.queue.failed || 0)}.
+        <button data-go="runs">Открыть запуски</button>
+      </div>
+      <details class="setup-disclosure"><summary>Проверить настройку сервиса</summary><div class="setup-list">${steps.map(stepCard).join("")}</div></details>
+    `;
+  } else {
+    $("#setupChecklist").innerHTML = `
+      ${next ? `<div class="next-action"><strong>Сейчас сделай это:</strong> ${esc(next.title)} <button data-go="${next.view}">${esc(next.action)}</button></div>` : `<div class="next-action success"><strong>Базовая настройка готова.</strong> Можно тестировать рассылку и смотреть метрики.</div>`}
+      <div class="setup-list">${steps.map(stepCard).join("")}</div>
+    `;
+  }
 }
 
 function renderAttachments() {
@@ -3140,8 +3266,7 @@ function inboxNeedsDecision(item) {
 }
 
 function inboxPreviewText(item) {
-  const text = (item.body_text || "").replace(/\s+/g, " ").trim();
-  if (!text) return "Текста письма нет.";
+  const text = compactMessageText(item.body_text);
   return text.length > 320 ? `${text.slice(0, 320)}...` : text;
 }
 
@@ -3204,41 +3329,46 @@ async function loadInboxSyncStatus() {
 }
 
 async function loadQueue() {
-  const [queue, progress] = await Promise.all([api("/api/sending"), api("/api/sending/progress")]);
-  state.queue = [...queue].sort((a, b) => {
+  const params = new URLSearchParams({
+    filter: state.queueFilter,
+    ...paginationQuery(state.queuePagination),
+  });
+  const [data, progress] = await Promise.all([api(`/api/sending?${params}`), api("/api/sending/progress")]);
+  state.queue = [...(data.rows || [])].sort((a, b) => {
     const rank = queueSortRank(a) - queueSortRank(b);
     if (rank !== 0) return rank;
     const left = new Date(a.scheduled_at || a.sent_at || a.updated_at || 0).getTime();
     const right = new Date(b.scheduled_at || b.sent_at || b.updated_at || 0).getTime();
     return left - right;
   });
-  const total = state.queue.length;
+  state.queuePagination = data.pagination || state.queuePagination;
+  const total = Number(state.queuePagination.total || 0);
   const next = state.queue.find((item) => ["pending", "retrying"].includes(item.status) && !(item.requires_approval && !item.approved_at));
   const nextCountdown = next && new Date(next.scheduled_at).getTime() <= Date.now() ? "сейчас" : `через ${fmtCountdown(next?.scheduled_at)}`;
+  const active = Number(progress.active || 0);
   $("#sendProgress").innerHTML = `
     <div class="progress">
       <div class="bar"><span style="width:${progress.percent}%"></span></div>
       <div>
-        <strong>Отправка:</strong> ${progress.sent} из ${progress.total} · ошибок: ${progress.failed} · осталось примерно ${progress.etaMinutes} мин.
+        <strong>${active ? "Идет отправка" : "Активных отправок нет"}:</strong>
+        отправлено ${progress.sent} · снято с очереди ${progress.cancelled || 0} · ошибок ${progress.failed} · активно ${active}.
+        ${active ? `Осталось примерно ${progress.etaMinutes} мин.` : "Остановленные письма больше не будут отправлены."}
         ${next ? `<br><span class="muted">Следующее письмо: ${nextCountdown} · ${fmtDate(next.scheduled_at)}</span>` : ""}
       </div>
     </div>
   `;
   const waitingWindow = state.queue.filter((item) => item.status === "pending" && item.last_error?.startsWith("Вне окна отправки")).length;
-  const approvalNeeded = state.queue.filter((item) => item.requires_approval && !item.approved_at).length;
+  const approvalNeeded = Number(progress.approval_pending || 0);
   const failed = state.queue.filter((item) => item.status === "failed").length;
   const readyToSend = state.queue.filter((item) => ["pending", "retrying"].includes(item.status) && !(item.requires_approval && !item.approved_at)).length;
   const sent = state.queue.filter((item) => item.status === "sent").length;
-  const visibleQueue = state.queue.filter((item) => {
-    if (state.queueFilter === "sent") return item.status === "sent";
-    if (state.queueFilter === "all") return true;
-    return queueNeedsSending(item);
-  });
+  const visibleQueue = state.queue;
   const visibleGroups = queueGroups(visibleQueue);
   const visibleGroupKeys = new Set(visibleGroups.map((group) => group.key));
   state.expandedQueueGroups = new Set([...state.expandedQueueGroups].filter((key) => visibleGroupKeys.has(key)));
   $("#queueSummary").innerHTML = `
-    <span>В очереди: <strong>${total}</strong></span>
+    <span>По фильтру: <strong>${total}</strong></span>
+    <span>На странице: <strong>${state.queue.length}</strong></span>
     <span>Цепочек на экране: <strong>${visibleGroups.length}</strong></span>
     <span>Готовы к обработке: <strong>${readyToSend}</strong></span>
     <span>Ждут окна: <strong>${waitingWindow}</strong></span>
@@ -3300,19 +3430,27 @@ async function loadQueue() {
   $$("[data-queue-filter]").forEach((button) => {
     button.classList.toggle("active", button.dataset.queueFilter === state.queueFilter);
   });
+  const approveAllButton = $("#approveAllBtn");
+  if (approveAllButton) approveAllButton.disabled = approvalNeeded === 0;
+  renderPagination("queuePagination", state.queuePagination, "queue");
 }
 
 async function loadInbox() {
-  state.inbox = await api("/api/inbox");
-  const visibleItems = inboxVisibleItems();
-  const decisionCount = state.inbox.filter(inboxNeedsDecision).length;
-  const outreachCount = state.inbox.filter((item) => item.lead_email).length;
-  const positiveCount = state.inbox.filter((item) => item.reply_classification === "positive_reply").length;
+  const params = new URLSearchParams({
+    filter: state.inboxFilter,
+    ...paginationQuery(state.inboxPagination),
+  });
+  const data = await api(`/api/inbox?${params}`);
+  state.inbox = data.rows || [];
+  state.inboxPagination = data.pagination || state.inboxPagination;
+  const visibleItems = state.inbox;
+  const summary = data.summary || {};
   $("#inboxSummary").innerHTML = `
-    <span>Всего входящих: <strong>${state.inbox.length}</strong></span>
-    <span>Нужно разобрать: <strong>${decisionCount}</strong></span>
-    <span>По лидам: <strong>${outreachCount}</strong></span>
-    <span>Позитивные: <strong>${positiveCount}</strong></span>
+    <span>По фильтру: <strong>${Number(summary.total || 0)}</strong></span>
+    <span>На странице: <strong>${state.inbox.length}</strong></span>
+    <span>Нужно разобрать: <strong>${Number(summary.decision || 0)}</strong></span>
+    <span>По лидам: <strong>${Number(summary.outreach || 0)}</strong></span>
+    <span>Позитивные: <strong>${Number(summary.positive || 0)}</strong></span>
     <span>Показано: <strong>${esc(inboxFilterLabel(state.inboxFilter).toLowerCase())}</strong></span>
   `;
   $("#inboxList").innerHTML = visibleItems.length
@@ -3368,10 +3506,11 @@ async function loadInbox() {
   $$("[data-inbox-filter]").forEach((button) => {
     button.classList.toggle("active", button.dataset.inboxFilter === state.inboxFilter);
   });
+  renderPagination("inboxPagination", state.inboxPagination, "inbox");
   renderInboxSyncStatus();
 }
 
-function conversationQuery() {
+function conversationQuery({ paginate = true } = {}) {
   const params = new URLSearchParams();
   const status = $("#conversationStatusFilter")?.value || "";
   const classification = $("#conversationClassificationFilter")?.value || "";
@@ -3379,19 +3518,30 @@ function conversationQuery() {
   if (status) params.set("status", status);
   if (classification) params.set("classification", classification);
   if (review) params.set("review", "true");
+  if (paginate) {
+    const pagination = paginationQuery(state.conversationPagination);
+    params.set("page", pagination.page);
+    params.set("pageSize", pagination.pageSize);
+  }
   return params.toString();
 }
 
 function updateConversationExportLink() {
-  const query = conversationQuery();
+  const query = conversationQuery({ paginate: false });
   const href = `/api/outreach/conversations/export.jsonl${query ? `?${query}` : ""}`;
-  $("#conversationExportLink").setAttribute("href", href);
+  $("#conversationExportLink")?.setAttribute("href", href);
 }
 
-function reviewQuery() {
+function reviewQuery({ paginate = true } = {}) {
   const params = new URLSearchParams({ review: "true" });
   const classification = $("#reviewClassificationFilter")?.value || "";
   if (classification) params.set("classification", classification);
+  if (state.reviewFilter !== "all") params.set("review_filter", state.reviewFilter);
+  if (paginate) {
+    const pagination = paginationQuery(state.reviewPagination);
+    params.set("page", pagination.page);
+    params.set("pageSize", pagination.pageSize);
+  }
   return params.toString();
 }
 
@@ -3410,8 +3560,8 @@ function applyConversationPreset(preset) {
 }
 
 function updateReviewExportLink() {
-  const query = reviewQuery();
-  $("#reviewExportLink").setAttribute("href", `/api/outreach/conversations/export.jsonl?${query}`);
+  const query = reviewQuery({ paginate: false });
+  $("#reviewExportLink")?.setAttribute("href", `/api/outreach/conversations/export.jsonl?${query}`);
 }
 
 function conversationAiField(item, field) {
@@ -3515,6 +3665,7 @@ function renderReviewWorkbench() {
     return classification === "positive_reply" || ["hot", "warm"].includes(conversationAiField(item, "lead_temperature"));
   }).length;
   $("#reviewSummary").innerHTML = `
+    <span>По основному фильтру: <strong>${Number(state.reviewPagination.total || 0)}</strong></span>
     <span>На экране: <strong>${visible.length}</strong></span>
     <span>Теплые: <strong>${hotCount}</strong></span>
     <span>Follow-up ждут: <strong>${approvalCount}</strong></span>
@@ -3682,8 +3833,7 @@ function conversationLastDate(item) {
 }
 
 function conversationPreviewText(item) {
-  const text = (item.latest_body_text || "").replace(/\s+/g, " ").trim();
-  if (!text) return "Текста последнего письма пока нет.";
+  const text = compactMessageText(item.latest_body_text, "Текста последнего письма пока нет.");
   return text.length > 260 ? `${text.slice(0, 260)}...` : text;
 }
 
@@ -3872,28 +4022,33 @@ async function loadConversations() {
   if (!$("#conversationList")) return;
   const query = conversationQuery();
   updateConversationExportLink();
-  state.outreachConversations = await api(`/api/outreach/conversations${query ? `?${query}` : ""}`);
-  const reviewCount = state.outreachConversations.filter((item) => ["waiting_reply_review", "manual_reply_needed"].includes(item.status)).length;
-  const approvalCount = state.outreachConversations.reduce((sum, item) => sum + Number(item.approval_total || 0), 0);
-  const repliedCount = state.outreachConversations.filter((item) => Number(item.inbound_total || 0) > 0).length;
+  const data = await api(`/api/outreach/conversations${query ? `?${query}` : ""}`);
+  state.outreachConversations = data.rows || [];
+  state.conversationPagination = data.pagination || state.conversationPagination;
+  const summary = data.summary || {};
   $("#conversationSummary").innerHTML = `
-    <span>Диалогов на экране: <strong>${state.outreachConversations.length}</strong></span>
-    <span>Требуют решения: <strong>${reviewCount}</strong></span>
-    <span>С входящими ответами: <strong>${repliedCount}</strong></span>
-    <span>Follow-up ждут подтверждения: <strong>${approvalCount}</strong></span>
+    <span>По фильтру: <strong>${Number(summary.total || 0)}</strong></span>
+    <span>На странице: <strong>${state.outreachConversations.length}</strong></span>
+    <span>Требуют решения: <strong>${Number(summary.review || 0)}</strong></span>
+    <span>С входящими ответами: <strong>${Number(summary.replied || 0)}</strong></span>
+    <span>Follow-up ждут подтверждения: <strong>${Number(summary.approval || 0)}</strong></span>
   `;
   $("#conversationList").innerHTML = renderConversationCards(state.outreachConversations, "Диалогов по текущему фильтру нет.");
   $$("[data-conversation-preset]").forEach((button) => {
     button.classList.toggle("active", button.dataset.conversationPreset === state.conversationPreset);
   });
+  renderPagination("conversationPagination", state.conversationPagination, "conversations");
 }
 
 async function loadReviewConversations() {
   if (!$("#reviewList")) return;
   const query = reviewQuery();
   updateReviewExportLink();
-  state.reviewConversations = await api(`/api/outreach/conversations?${query}`);
+  const data = await api(`/api/outreach/conversations?${query}`);
+  state.reviewConversations = data.rows || [];
+  state.reviewPagination = data.pagination || state.reviewPagination;
   renderReviewWorkbench();
+  renderPagination("reviewPagination", state.reviewPagination, "review");
 }
 
 async function openConversation(conversationId) {
@@ -4183,6 +4338,14 @@ async function refresh() {
 
 window.addEventListener("hashchange", () => switchView(viewFromLocation(), { updateUrl: false }));
 $$("nav button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
+$("#navOpenBtn")?.addEventListener("click", () => document.body.classList.add("nav-open"));
+$("#navCloseBtn")?.addEventListener("click", () => document.body.classList.remove("nav-open"));
+$("#navBackdrop")?.addEventListener("click", () => document.body.classList.remove("nav-open"));
+document.body.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-dismiss-action-result]")) return;
+  state.actionResults.global = null;
+  renderGlobalActionResult();
+});
 $("#refreshBtn").addEventListener("click", (event) => runAction({
   title: "Обновление данных",
   button: event.currentTarget,
@@ -4215,11 +4378,13 @@ $$("[data-lead-quick-filter]").forEach((button) => button.addEventListener("clic
 }));
 $$("[data-queue-filter]").forEach((button) => button.addEventListener("click", () => {
   state.queueFilter = button.dataset.queueFilter || "waiting";
+  state.queuePagination.page = 1;
   loadQueue();
 }));
 $$("[data-run-filter]").forEach((button) => button.addEventListener("click", () => {
   state.runFilter = button.dataset.runFilter || "all";
-  renderRunRows();
+  state.runPagination.page = 1;
+  loadRuns(state.activeRunId);
 }));
 $("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
   title: "Обновление запусков",
@@ -4260,6 +4425,7 @@ $("#runBulkSuppressBtn")?.addEventListener("click", (event) => runAction({
 }));
 $$("[data-inbox-filter]").forEach((button) => button.addEventListener("click", () => {
   state.inboxFilter = button.dataset.inboxFilter || "all";
+  state.inboxPagination.page = 1;
   loadInbox();
 }));
 $("#activeCampaign").addEventListener("change", () => loadCampaignLeads());
@@ -4281,6 +4447,27 @@ $("#campaignAvailableLeadsTable").addEventListener("change", (event) => {
     state.selectedCampaignLeadIds.delete(leadId);
   }
   updateCampaignLeadSelection();
+});
+
+document.body.addEventListener("click", (event) => {
+  const pageButton = event.target.closest("[data-page-scope]");
+  if (!pageButton || pageButton.disabled) return;
+  const config = paginationScope(pageButton.dataset.pageScope);
+  if (!config) return;
+  const [pagination, loader] = config;
+  pagination.page = Math.max(Number(pageButton.dataset.page || 1), 1);
+  loader();
+});
+
+document.body.addEventListener("change", (event) => {
+  const scope = event.target.dataset.pageSizeScope;
+  if (!scope) return;
+  const config = paginationScope(scope);
+  if (!config) return;
+  const [pagination, loader] = config;
+  pagination.page = 1;
+  pagination.pageSize = Number(event.target.value || pagination.pageSize);
+  loader();
 });
 
 $("#campaignLeadsTable").addEventListener("change", (event) => {
@@ -4314,6 +4501,7 @@ document.body.addEventListener("change", (event) => {
       participationCampaign: "campaign_id",
     }[event.target.id];
     state.participationFilters[key] = event.target.value;
+    state.participationPagination.page = 1;
     loadParticipation();
     return;
   }
@@ -4340,6 +4528,7 @@ document.body.addEventListener("focusin", (event) => {
 document.body.addEventListener("input", (event) => {
   if (event.target.id === "participationSearch") {
     state.participationFilters.search = event.target.value.trim();
+    state.participationPagination.page = 1;
     clearTimeout(loadParticipation.searchTimer);
     loadParticipation.searchTimer = setTimeout(() => loadParticipation(), 350);
     return;
@@ -5109,20 +5298,26 @@ document.body.addEventListener("click", (event) => {
 ["conversationStatusFilter", "conversationClassificationFilter", "conversationReviewOnly"].forEach((id) => {
   document.getElementById(id)?.addEventListener("change", () => {
     state.conversationPreset = "custom";
+    state.conversationPagination.page = 1;
     loadConversations();
   });
 });
 
 $$("[data-conversation-preset]").forEach((button) => button.addEventListener("click", () => {
   applyConversationPreset(button.dataset.conversationPreset || "all");
+  state.conversationPagination.page = 1;
   loadConversations();
 }));
 
-$("#reviewClassificationFilter")?.addEventListener("change", () => loadReviewConversations());
+$("#reviewClassificationFilter")?.addEventListener("change", () => {
+  state.reviewPagination.page = 1;
+  loadReviewConversations();
+});
 
 $$("[data-review-filter]").forEach((button) => button.addEventListener("click", () => {
   state.reviewFilter = button.dataset.reviewFilter || "all";
-  renderReviewWorkbench();
+  state.reviewPagination.page = 1;
+  loadReviewConversations();
 }));
 
 [
@@ -5525,6 +5720,7 @@ document.body.addEventListener("click", async (event) => {
   }
   if (selectRunId) {
     state.activeRunId = selectRunId;
+    state.runPagination.page = 1;
     state.selectedRunLeadIds = new Set();
     state.expandedRunRows = new Set();
     await loadRuns(selectRunId);
@@ -5532,6 +5728,7 @@ document.body.addEventListener("click", async (event) => {
   }
   if (participationRunId) {
     state.activeRunId = participationRunId;
+    state.runPagination.page = 1;
     switchView("runs");
     await loadRuns(participationRunId);
     return;

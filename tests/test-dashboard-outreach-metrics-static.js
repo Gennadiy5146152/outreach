@@ -19,6 +19,7 @@ for (const expected of [
   "outreachReplyRate",
   "positiveReplyRate",
   "avg_hours_to_reply",
+  "first_reply_at >= first_sent_at",
   "outreach_step_id IS NOT NULL",
   "JOIN messages msg ON msg.id = o.message_id",
   "WHERE msg.type = 'outreach'",
@@ -32,6 +33,7 @@ for (const expected of [
   "reply_times",
   "stopped_after_step",
   "avg_hours_to_reply",
+  "inbound.first_reply_at >= outbound.first_sent_at",
   "open_rate",
   "positive_rate",
 ]) {

@@ -7,10 +7,13 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <aside class="sidebar">
-      <div class="brand">
-        <strong>Outreach Desk</strong>
-        <span>Локальный B2B-аутрич</span>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand">
+          <strong>Outreach Desk</strong>
+          <span>Локальный B2B-аутрич</span>
+        </div>
+        <button id="navCloseBtn" class="icon-button nav-close" type="button" aria-label="Закрыть меню" title="Закрыть меню">×</button>
       </div>
       <nav>
         <div class="nav-group">
@@ -55,8 +58,9 @@
 
     <main>
       <header>
+        <button id="navOpenBtn" class="icon-button nav-open" type="button" aria-label="Открыть меню" title="Открыть меню">☰</button>
         <div>
-          <p class="eyebrow">Первый этап</p>
+          <p class="eyebrow" id="viewEyebrow">Рабочий стол</p>
           <h1 id="title">Старт</h1>
         </div>
         <div class="header-actions">
@@ -65,16 +69,17 @@
           <a class="button" href="/api/export/leads.csv">CSV лидов</a>
         </div>
       </header>
+      <button id="navBackdrop" class="nav-backdrop" type="button" aria-label="Закрыть меню"></button>
       <div id="actionResult" hidden></div>
 
       <section class="view active" id="startView">
         <section class="panel hero-help">
           <div>
             <p class="eyebrow">Самый короткий путь</p>
-            <h2>Сначала подключи 2 свои почты, потом включи прогрев, потом запускай тестовую рассылку.</h2>
+            <h2 id="startHeroTitle">Сначала подключи 2 свои почты, потом включи прогрев, потом запускай тестовую рассылку.</h2>
             <p id="runtimeModeText">Проверяю режим отправки...</p>
           </div>
-          <button data-go="mailboxes">Начать с подключения почты</button>
+          <button id="startHeroAction" data-go="mailboxes">Начать с подключения почты</button>
         </section>
 
         <section class="panel start-panel">
@@ -296,7 +301,9 @@
       </section>
 
       <section class="view" id="leadsView">
-        <div class="grid two">
+        <details class="data-entry-disclosure">
+          <summary>Добавить или импортировать лидов</summary>
+          <div class="grid two data-entry-grid">
           <section class="panel">
             <h2>Новый лид</h2>
             <p class="help-text">Минимум нужны компания и email. После добавления email автоматически попадет в очередь проверки.</p>
@@ -328,7 +335,8 @@
             </form>
             <button id="validateBtn">Запустить проверку email</button>
           </section>
-        </div>
+          </div>
+        </details>
         <section class="panel">
           <div class="panel-head">
             <div>
@@ -628,7 +636,8 @@
             <button class="small-button" data-queue-filter="all">Все</button>
           </div>
           <div id="queueSummary" class="summary-line"></div>
-          <div class="table-wrap"><table id="queueTable"></table></div>
+          <div class="table-wrap operational-table"><table id="queueTable"></table></div>
+          <div id="queuePagination" class="pagination"></div>
         </section>
       </section>
 
@@ -671,7 +680,8 @@
             <label class="check"><input id="runRowsSelectVisible" type="checkbox" /> Выбрать все строки по фильтру</label>
             <span id="runBulkSelection" class="muted">Выбрано: 0</span>
           </div>
-          <div class="table-wrap"><table id="runRowsTable"></table></div>
+          <div class="table-wrap operational-table"><table id="runRowsTable"></table></div>
+          <div id="runRowsPagination" class="pagination"></div>
         </section>
       </section>
 
@@ -701,7 +711,8 @@
             <select id="participationCampaign"></select>
           </div>
           <div id="participationSummary" class="summary-line"></div>
-          <div class="table-wrap"><table id="participationTable"></table></div>
+          <div class="table-wrap operational-table"><table id="participationTable"></table></div>
+          <div id="participationPagination" class="pagination"></div>
         </section>
       </section>
 
@@ -723,6 +734,7 @@
           <div id="inboxSummary" class="summary-line"></div>
           <div id="inboxSyncStatus"></div>
           <div id="inboxList" class="inbox"></div>
+          <div id="inboxPagination" class="pagination"></div>
         </section>
       </section>
 
@@ -745,7 +757,6 @@
                 <option value="bounce">Недоставка</option>
                 <option value="unknown">Не разобрано</option>
               </select>
-              <a id="reviewExportLink" class="button" href="/api/outreach/conversations/export.jsonl?review=true">JSONL для ИИ</a>
             </div>
           </div>
           <div class="quick-filters review-quick-filters" aria-label="Быстрые фильтры требующих решения">
@@ -756,6 +767,7 @@
           </div>
           <div id="reviewSummary" class="summary-line"></div>
           <div id="reviewList" class="cards"></div>
+          <div id="reviewPagination" class="pagination"></div>
         </section>
       </section>
 
@@ -784,7 +796,6 @@
                 <option value="auto_reply">Автоответ</option>
               </select>
               <label class="check"><input id="conversationReviewOnly" type="checkbox" /> Только решения</label>
-              <a id="conversationExportLink" class="button" href="/api/outreach/conversations/export.jsonl">JSONL для ИИ</a>
             </div>
           </div>
           <div class="quick-filters conversation-presets" aria-label="Быстрые фильтры диалогов">
@@ -795,6 +806,7 @@
           </div>
           <div id="conversationSummary" class="summary-line"></div>
           <div id="conversationList" class="cards"></div>
+          <div id="conversationPagination" class="pagination"></div>
         </section>
       </section>
 

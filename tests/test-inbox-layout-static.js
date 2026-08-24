@@ -89,7 +89,7 @@ for (const expected of [
   "function normalizeInboundReplyText",
   "function publicMessageRow",
   "function replyLinkInfo",
-  "result.rows.map(publicMessageRow)",
+  "return publicMessageRow(publicRow)",
   "chain_messages: (row.chain_messages || []).map(publicMessageRow)",
   "raw_headers: _rawHeaders",
 ]) {

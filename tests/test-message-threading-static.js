@@ -2,6 +2,10 @@ import fs from "node:fs";
 
 const migration = fs.readFileSync("db/migrations/005_message_threading.sql", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
+
+if (!worker.includes("$31,$32,$33,$34)")) {
+  throw new Error("inbound INSERT should have the same number of values as message columns");
+}
 const server = fs.readFileSync("src/server.js", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
 
