@@ -2688,6 +2688,56 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
         SELECT DISTINCT lead_id
         FROM messages
         WHERE run_id = $1 AND lead_id IS NOT NULL
+      ), filtered_recipients AS (
+        SELECT r.lead_id
+        FROM recipients r
+        LEFT JOIN LATERAL (
+          SELECT oc.status
+          FROM outreach_conversations oc
+          WHERE oc.lead_id = r.lead_id
+          ORDER BY oc.updated_at DESC
+          LIMIT 1
+        ) filter_conv ON true
+        WHERE (
+          $3 = 'all'
+          OR ($3 = 'replied' AND EXISTS (
+            SELECT 1 FROM messages reply
+            WHERE reply.direction = 'inbound'
+              AND reply.type <> 'warmup'
+              AND reply.lead_id = r.lead_id
+              AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
+          ))
+          OR ($3 = 'waiting' AND NOT EXISTS (
+            SELECT 1 FROM messages reply
+            WHERE reply.direction = 'inbound'
+              AND reply.type <> 'warmup'
+              AND reply.lead_id = r.lead_id
+              AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
+          ))
+          OR ($3 = 'decision' AND filter_conv.status IN ('waiting_reply_review','manual_reply_needed'))
+          OR ($3 = 'stopped' AND EXISTS (
+            SELECT 1
+            FROM sending_queue stopped_queue
+            LEFT JOIN campaign_steps stopped_campaign_step ON stopped_campaign_step.id = stopped_queue.campaign_step_id
+            LEFT JOIN outreach_draft_steps stopped_draft_step ON stopped_draft_step.id = stopped_queue.outreach_step_id
+            WHERE stopped_queue.run_id = $1
+              AND stopped_queue.lead_id = r.lead_id
+              AND stopped_queue.status = 'cancelled'
+              AND COALESCE(stopped_campaign_step.position, stopped_draft_step.position, 1) > 1
+          ))
+          OR ($3 = 'errors' AND EXISTS (
+            SELECT 1 FROM sending_queue failed_queue
+            WHERE failed_queue.run_id = $1
+              AND failed_queue.lead_id = r.lead_id
+              AND failed_queue.status = 'failed'
+          ))
+        )
+      ), paged_recipients AS (
+        SELECT filtered.lead_id
+        FROM filtered_recipients filtered
+        JOIN leads page_lead ON page_lead.id = filtered.lead_id
+        ORDER BY page_lead.company NULLS LAST, page_lead.email
+        LIMIT $4 OFFSET $5
       )
       SELECT
         l.id AS lead_id,
@@ -2704,7 +2754,7 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
         conv.next_action,
         COALESCE(queue.items, '[]'::json) AS queue_items,
         COALESCE(history.messages, '[]'::json) AS messages
-      FROM recipients r
+      FROM paged_recipients r
       JOIN leads l ON l.id = r.lead_id
       LEFT JOIN LATERAL (
         SELECT q.mailbox_id
@@ -2796,42 +2846,7 @@ app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
             )
           )
       ) history ON true
-      WHERE (
-        $3 = 'all'
-        OR ($3 = 'replied' AND EXISTS (
-          SELECT 1 FROM messages reply
-          WHERE reply.direction = 'inbound'
-            AND reply.type <> 'warmup'
-            AND reply.lead_id = l.id
-            AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
-        ))
-        OR ($3 = 'waiting' AND NOT EXISTS (
-          SELECT 1 FROM messages reply
-          WHERE reply.direction = 'inbound'
-            AND reply.type <> 'warmup'
-            AND reply.lead_id = l.id
-            AND COALESCE(reply.received_at, reply.created_at) >= $2::timestamptz
-        ))
-        OR ($3 = 'decision' AND conv.status IN ('waiting_reply_review','manual_reply_needed'))
-        OR ($3 = 'stopped' AND EXISTS (
-          SELECT 1
-          FROM sending_queue stopped_queue
-          LEFT JOIN campaign_steps stopped_campaign_step ON stopped_campaign_step.id = stopped_queue.campaign_step_id
-          LEFT JOIN outreach_draft_steps stopped_draft_step ON stopped_draft_step.id = stopped_queue.outreach_step_id
-          WHERE stopped_queue.run_id = $1
-            AND stopped_queue.lead_id = l.id
-            AND stopped_queue.status = 'cancelled'
-            AND COALESCE(stopped_campaign_step.position, stopped_draft_step.position, 1) > 1
-        ))
-        OR ($3 = 'errors' AND EXISTS (
-          SELECT 1 FROM sending_queue failed_queue
-          WHERE failed_queue.run_id = $1
-            AND failed_queue.lead_id = l.id
-            AND failed_queue.status = 'failed'
-        ))
-      )
       ORDER BY l.company NULLS LAST, l.email
-      LIMIT $4 OFFSET $5
     `,
     [req.params.id, run.created_at, filter, pagination.pageSize, pagination.offset],
   );
