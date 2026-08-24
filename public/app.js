@@ -1720,12 +1720,12 @@ function renderParticipationTable() {
         const rowKey = participationRowKey(row);
         const expanded = state.expandedParticipationRows.has(rowKey);
         return `
-          <tr class="participation-row">
+          <tr class="participation-row" data-participation-row-toggle="${esc(rowKey)}">
             <td><div class="participation-contact">${participationPill(row)}<strong>${esc(row.company || "Без компании")}</strong><span>${esc(row.lead_email || "")}</span><em>${esc(row.domain || "")}</em></div></td>
             <td><div class="participation-source"><strong>${esc(participationSourceTitle(row))}</strong><span>${esc(participationSourceLabel(row.source_type))}${row.source_type === "import" ? ` · ${esc(row.source_title || "")}` : ""}</span></div></td>
             <td><div class="participation-progress"><strong>${esc(participationProgressText(row))}</strong><span>${Number(row.sent_messages || 0)} отправлено · ${Number(row.pending_queue || 0)} ожидают${Number(row.failed_queue || 0) ? ` · <em>${Number(row.failed_queue)} ошибок</em>` : ""}</span></div></td>
             <td><div class="participation-mailbox"><strong>${esc(row.mailbox_email || "Не выбрана")}</strong><span>${Number(row.followup_pending || 0)} активных follow-up</span></div></td>
-            <td><div class="participation-row-actions">${row.run_id ? `<button class="small-button" data-open-participation-run="${esc(row.run_id)}">Открыть запуск</button>` : ""}<button class="icon-button participation-more-button" data-participation-row-toggle="${esc(rowKey)}" aria-label="Подробности участия" title="Подробности участия" aria-expanded="${expanded}">⋯</button></div></td>
+            <td><div class="participation-row-actions">${row.run_id ? `<button class="small-button" data-open-participation-run="${esc(row.run_id)}" aria-label="Открыть запуск" title="Открыть запуск">Запуск →</button>` : ""}<button class="icon-button participation-more-button" data-participation-row-toggle="${esc(rowKey)}" aria-label="Подробности участия" title="Подробности участия" aria-expanded="${expanded}">⋯</button></div></td>
           </tr>
           ${expanded ? `<tr class="participation-details-row"><td colspan="5"><div class="participation-details"><strong>Подробности участия</strong><dl><div><dt>Первое касание</dt><dd>${esc(fmtDate(row.first_touch_at))}</dd></div><div><dt>Последнее касание</dt><dd>${esc(fmtDate(row.last_touch_at))}</dd></div><div><dt>Ответы</dt><dd>${Number(row.replies || 0)}${row.last_reply_at ? ` · ${esc(fmtDate(row.last_reply_at))}` : ""}</dd></div><div><dt>Follow-up</dt><dd>${Number(row.followup_pending || 0)} активны · ${Number(row.followup_cancelled || 0)} остановлены</dd></div></dl></div></td></tr>` : ""}
         `;
@@ -5850,7 +5850,7 @@ document.body.addEventListener("click", async (event) => {
   const cancelSendId = event.target.dataset.cancelSend;
   const selectRunId = event.target.closest("[data-select-run]")?.dataset.selectRun;
   const participationRunId = event.target.dataset.openParticipationRun;
-  const participationRowToggle = event.target.dataset.participationRowToggle;
+  const participationRowToggle = event.target.closest("[data-participation-row-toggle]")?.dataset.participationRowToggle;
   const runRowToggle = event.target.dataset.runRowToggle;
   const runActionsToggle = event.target.dataset.runActionsToggle;
   const runStopLeadId = event.target.dataset.runStopFollowups;

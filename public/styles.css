@@ -2764,15 +2764,15 @@ th {
 }
 
 #participationTable {
-  min-width: 1110px;
+  min-width: 1025px;
   table-layout: fixed;
 }
 
-#participationTable .participation-col-contact { width: 240px; }
-#participationTable .participation-col-source { width: 270px; }
-#participationTable .participation-col-progress { width: 250px; }
+#participationTable .participation-col-contact { width: 225px; }
+#participationTable .participation-col-source { width: 240px; }
+#participationTable .participation-col-progress { width: 230px; }
 #participationTable .participation-col-mailbox { width: 210px; }
-#participationTable .participation-col-actions { width: 140px; }
+#participationTable .participation-col-actions { width: 120px; }
 
 .participation-contact,
 .participation-source,
@@ -2799,6 +2799,10 @@ th {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.participation-mailbox strong {
+  overflow-wrap: anywhere;
 }
 
 .participation-progress em {
