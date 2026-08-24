@@ -1503,7 +1503,7 @@ function renderRunsList() {
   const quickSelect = $("#runQuickSelect");
   if (quickSelect) {
     quickSelect.innerHTML = state.runs.map((run) => (
-      `<option value="${esc(run.id)}" ${run.id === state.activeRunId ? "selected" : ""}>${esc(runListTitle(run))} · ${esc(runOperationalStatusLabel(run))}</option>`
+      `<option value="${esc(run.id)}" ${run.id === state.activeRunId ? "selected" : ""}>${esc(runListTitle(run))}</option>`
     )).join("");
     quickSelect.disabled = state.runs.length === 0;
   }
