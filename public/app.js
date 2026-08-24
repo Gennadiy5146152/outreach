@@ -29,6 +29,9 @@ const state = {
   runPagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
   selectedRunLeadIds: new Set(),
   expandedRunRows: new Set(),
+  expandedRunActions: new Set(),
+  runDetailCache: new Map(),
+  runDetailRequestId: 0,
   participationRows: [],
   participationSummary: null,
   participationPagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
@@ -102,7 +105,7 @@ function renderPagination(targetId, pagination, scope) {
 function paginationScope(scope) {
   return {
     queue: [state.queuePagination, loadQueue],
-    runs: [state.runPagination, () => loadRuns(state.activeRunId)],
+    runs: [state.runPagination, () => loadRunDetail(state.activeRunId)],
     participation: [state.participationPagination, loadParticipation],
     inbox: [state.inboxPagination, loadInbox],
     conversations: [state.conversationPagination, loadConversations],
@@ -1261,10 +1264,10 @@ function runStepCell(row, position) {
   const item = runStepItem(row, position);
   const sent = runOutboundMessage(row, position);
   const subject = sent?.subject || item?.subject || stepName(position);
+  const tone = sent ? "is-sent" : item?.status === "failed" ? "is-error" : item?.status === "cancelled" ? "is-stopped" : ["pending", "retrying", "running"].includes(item?.status) ? "is-running" : "is-empty";
   return `
     <div class="run-step">
-      <strong>${esc(stepName(position))}</strong>
-      <span>${esc(runStatusText(item, sent))}</span>
+      <span class="run-step-state ${tone}">${esc(runStatusText(item, sent))}</span>
       <em>${esc(subject || "")}</em>
     </div>
   `;
@@ -1318,12 +1321,29 @@ function activeRunHasActiveQueue() {
   return Number(state.runs.find((run) => run.id === state.activeRunId)?.active_queue || 0) > 0;
 }
 
+function runOperationalStatus(run) {
+  if (!run) return "empty";
+  if (run.status === "stopped") return "stopped";
+  if (Number(run.active_queue || 0) > 0) return "running";
+  if (run.status === "empty" || Number(run.recipients || run.total_recipients || 0) === 0) return "empty";
+  return "completed";
+}
+
+function runOperationalStatusLabel(run) {
+  return {
+    running: "В процессе",
+    completed: "Завершен",
+    stopped: "Остановлен",
+    empty: "Пустой запуск",
+  }[runOperationalStatus(run)];
+}
+
 function activeRunStatus() {
-  return state.runs.find((run) => run.id === state.activeRunId)?.status || "";
+  return runOperationalStatus(state.runs.find((run) => run.id === state.activeRunId));
 }
 
 function activeRunCanBeStopped() {
-  return activeRunStatus() === "active" || activeRunHasActiveQueue();
+  return activeRunStatus() === "running" && activeRunHasActiveQueue();
 }
 
 function runTimeline(row) {
@@ -1349,35 +1369,47 @@ function renderRunRows() {
   const visibleRows = visibleRunRows();
   const stats = runRowsStats(rows);
   const pagination = detail?.pagination || state.runPagination;
+  const activeRun = state.runs.find((run) => run.id === state.activeRunId) || detail?.run;
+  const operationalStatus = runOperationalStatus(activeRun);
   state.selectedRunLeadIds = new Set([...state.selectedRunLeadIds].filter((id) => visibleRows.some((row) => row.lead_id === id)));
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => state.selectedRunLeadIds.has(row.lead_id));
 
   $("#runDetailTitle").textContent = detail?.run?.title || "Таблица запуска";
   $("#runDetailMeta").textContent = detail?.run
-    ? `${runModeLabel(detail.run.mode)} · ${statusLabel(detail.run.status)} · ${fmtDate(detail.run.created_at)}`
+    ? `${runModeLabel(detail.run.mode)} · ${fmtDate(detail.run.created_at)} · ${Number(activeRun?.recipients || detail.run.total_recipients || 0)} получателей · ${Number(activeRun?.sent_messages || 0)} писем отправлено`
     : "Выбери запуск выше.";
+  const statusBadge = $("#runStatusBadge");
+  statusBadge.textContent = activeRun ? runOperationalStatusLabel(activeRun) : "Статус не выбран";
+  statusBadge.className = `run-status-badge is-${operationalStatus}`;
   $("#runRowsSummary").innerHTML = `
     <span>По фильтру: <strong>${Number(pagination.total || 0)}</strong></span>
     <span>На странице: <strong>${stats.total}</strong></span>
-    <span>Выбрано: <strong>${state.selectedRunLeadIds.size}</strong></span>
+    <span>Ответов за запуск: <strong>${Number(activeRun?.replies || 0)}</strong></span>
+    <span>Ошибок за запуск: <strong>${Number(activeRun?.failed_queue || 0)}</strong></span>
   `;
   $$("[data-run-filter]").forEach((button) => button.classList.toggle("active", button.dataset.runFilter === state.runFilter));
   $("#runRowsSelectVisible").checked = allVisibleSelected;
   $("#runRowsSelectVisible").disabled = visibleRows.length === 0;
-  $("#runBulkSelection").textContent = `Выбрано: ${state.selectedRunLeadIds.size} из ${visibleRows.length} на экране`;
+  $("#runBulkSelection").textContent = state.selectedRunLeadIds.size
+    ? `Выбрано: ${state.selectedRunLeadIds.size} из ${visibleRows.length}`
+    : "Ничего не выбрано";
+  $("#runSelectionActions").hidden = state.selectedRunLeadIds.size === 0;
   const stopActiveRunBtn = $("#stopActiveRunBtn");
   if (stopActiveRunBtn) {
     const canBeStopped = activeRunCanBeStopped();
-    stopActiveRunBtn.disabled = !state.activeRunId || !canBeStopped;
-    stopActiveRunBtn.textContent = canBeStopped
-      ? "Остановить весь запуск"
-      : activeRunStatus() === "stopped" ? "Запуск остановлен" : "Нет активной очереди";
+    stopActiveRunBtn.hidden = !canBeStopped;
+    stopActiveRunBtn.disabled = !canBeStopped;
+    stopActiveRunBtn.textContent = "Остановить запуск";
   }
   ["runBulkStopBtn", "runBulkContinueBtn", "runBulkSuppressBtn"].forEach((id) => {
     const button = $(`#${id}`);
     if (button) button.disabled = state.selectedRunLeadIds.size === 0;
   });
   $("#runRowsTable").innerHTML = `
+    <colgroup>
+      <col class="run-col-select"><col class="run-col-recipient"><col class="run-col-step"><col class="run-col-reply">
+      <col class="run-col-step"><col class="run-col-step"><col class="run-col-step"><col class="run-col-next"><col class="run-col-actions">
+    </colgroup>
     <thead>
       <tr>
         <th><input id="runRowsSelectAll" class="compact-check" type="checkbox" ${allVisibleSelected ? "checked" : ""} /></th>
@@ -1394,6 +1426,7 @@ function renderRunRows() {
     <tbody>
       ${visibleRows.length ? visibleRows.map((row) => {
         const expanded = state.expandedRunRows.has(row.lead_id);
+        const actionsExpanded = state.expandedRunActions.has(row.lead_id);
         return `
           <tr class="run-row ${runNeedsDecision(row) ? "needs-decision" : ""}">
             <td><input class="compact-check" type="checkbox" data-run-lead-select="${row.lead_id}" ${state.selectedRunLeadIds.has(row.lead_id) ? "checked" : ""} /></td>
@@ -1413,13 +1446,11 @@ function renderRunRows() {
             <td>
               <div class="run-row-actions">
                 <button class="small-button" data-run-row-toggle="${row.lead_id}">${expanded ? "Скрыть" : "История"}</button>
-                <button class="small-button" data-run-stop-followups="${row.lead_id}">Остановить follow-up</button>
-                <button class="small-button" data-run-continue-followups="${row.lead_id}">Продолжить</button>
-                <button class="small-button" data-run-suppress="${row.lead_id}">В стоп-лист</button>
-                ${row.conversation_id ? `<button class="small-button" data-open-conversation="${row.conversation_id}">Диалог</button>` : ""}
+                <button class="icon-button run-more-button" data-run-actions-toggle="${row.lead_id}" aria-label="Действия с получателем" title="Действия с получателем" aria-expanded="${actionsExpanded}">⋯</button>
               </div>
             </td>
           </tr>
+          ${actionsExpanded ? `<tr class="run-actions-row"><td colspan="9"><div class="run-expanded-actions"><strong>Действия с получателем</strong><button class="small-button" data-run-stop-followups="${row.lead_id}">Остановить follow-up</button><button class="small-button" data-run-continue-followups="${row.lead_id}">Продолжить follow-up</button><button class="small-button" data-run-suppress="${row.lead_id}">В стоп-лист</button>${row.conversation_id ? `<button class="small-button" data-open-conversation="${row.conversation_id}">Открыть диалог</button>` : ""}</div></td></tr>` : ""}
           ${expanded ? `<tr class="run-history-row"><td colspan="9"><div class="run-timeline">${runTimeline(row) || "<p class=\"muted\">Истории пока нет.</p>"}</div></td></tr>` : ""}
         `;
       }).join("") : `<tr><td colspan="9" class="muted">По выбранному фильтру строк нет.</td></tr>`}
@@ -1428,36 +1459,96 @@ function renderRunRows() {
   renderPagination("runRowsPagination", pagination, "runs");
 }
 
-async function loadRuns(preferredRunId = state.activeRunId) {
+function runListTitle(run) {
+  if (/^Запуск персональных писем:/i.test(run.title || "")) {
+    return `Персональная рассылка · ${Number(run.recipients || run.total_recipients || 0)}`;
+  }
+  return run.title || "Запуск без названия";
+}
+
+function renderRunsList() {
+  const statusCounts = state.runs.reduce((counts, run) => {
+    const status = runOperationalStatus(run);
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
+  $("#runsSummary").innerHTML = state.runs.length ? `
+    <span>Всего: <strong>${state.runs.length}</strong></span>
+    <span class="run-summary-running">В процессе: <strong>${statusCounts.running || 0}</strong></span>
+    <span>Завершено: <strong>${statusCounts.completed || 0}</strong></span>
+    <span>Остановлено: <strong>${statusCounts.stopped || 0}</strong></span>
+  ` : "";
+  $("#runsList").innerHTML = state.runs.length
+    ? state.runs.map((run) => `
+      <button class="run-tab ${run.id === state.activeRunId ? "active" : ""}" data-select-run="${run.id}">
+        <span class="run-tab-head"><strong>${esc(runListTitle(run))}</strong><span class="run-status-badge is-${runOperationalStatus(run)}">${esc(runOperationalStatusLabel(run))}</span></span>
+        <span class="run-tab-date">${esc(fmtDate(run.created_at))}</span>
+        <span class="run-tab-metrics">${Number(run.sent_messages || 0)} отправлено · ${Number(run.replies || 0)} ответов · ${Number(run.failed_queue || 0)} ошибок</span>
+      </button>
+    `).join("")
+    : `<p class="muted">Запусков пока нет. Запусти кампанию или выбранные черновики.</p>`;
+}
+
+function runDetailCacheKey(runId) {
+  return `${runId}:${state.runFilter}:${state.runPagination.page}:${state.runPagination.pageSize}`;
+}
+
+function setRunDetailLoading(loading) {
+  $("#runDetailPanel")?.classList.toggle("is-loading", loading);
+  if ($("#runDetailLoading")) $("#runDetailLoading").hidden = !loading;
+}
+
+async function loadRunDetail(runId, { force = false } = {}) {
+  if (!runId) {
+    state.runDetail = null;
+    renderRunRows();
+    return;
+  }
+  const requestId = ++state.runDetailRequestId;
+  const cacheKey = runDetailCacheKey(runId);
+  const cached = state.runDetailCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.savedAt < 60000) {
+    state.runDetail = cached.detail;
+    state.runPagination = cached.detail.pagination || state.runPagination;
+    setRunDetailLoading(false);
+    renderRunRows();
+    return;
+  }
+  state.runDetail = { run: state.runs.find((run) => run.id === runId), rows: [], pagination: state.runPagination };
+  renderRunRows();
+  setRunDetailLoading(true);
+  try {
+    const params = new URLSearchParams({ filter: state.runFilter, ...paginationQuery(state.runPagination) });
+    const detail = await api(`/api/outreach/runs/${runId}?${params}`);
+    if (requestId !== state.runDetailRequestId || runId !== state.activeRunId) return;
+    state.runDetail = detail;
+    state.runPagination = detail.pagination || state.runPagination;
+    state.runDetailCache.set(cacheKey, { detail, savedAt: Date.now() });
+    renderRunRows();
+  } finally {
+    if (requestId === state.runDetailRequestId) setRunDetailLoading(false);
+  }
+}
+
+async function selectRun(runId, { force = false } = {}) {
+  if (!runId) return;
+  state.activeRunId = runId;
+  state.runPagination.page = 1;
+  state.selectedRunLeadIds = new Set();
+  state.expandedRunRows = new Set();
+  state.expandedRunActions = new Set();
+  renderRunsList();
+  await loadRunDetail(runId, { force });
+}
+
+async function loadRuns(preferredRunId = state.activeRunId, { forceDetail = false } = {}) {
   if (!$("#runsList")) return;
   state.runs = await api("/api/outreach/runs");
   if (preferredRunId) state.activeRunId = preferredRunId;
   if (!state.activeRunId && state.runs.length) state.activeRunId = state.runs[0].id;
-  const activeExists = state.runs.some((run) => run.id === state.activeRunId);
-  if (!activeExists) state.activeRunId = state.runs[0]?.id || null;
-  $("#runsSummary").innerHTML = `
-    <span>Запусков: <strong>${state.runs.length}</strong></span>
-    <span>Выбран: <strong>${esc(state.runs.find((run) => run.id === state.activeRunId)?.title || "не выбран")}</strong></span>
-  `;
-  $("#runsList").innerHTML = state.runs.length
-    ? state.runs.map((run) => `
-      <button class="run-tab ${run.id === state.activeRunId ? "active" : ""}" data-select-run="${run.id}">
-        <strong>${esc(run.title)}</strong>
-        <span>${esc(statusLabel(run.status))} · ${esc(fmtDate(run.created_at))} · ${Number(run.recipients || run.total_recipients || 0)} получателей · ${Number(run.replies || 0)} ответов · ${Number(run.active_queue || 0)} в работе</span>
-      </button>
-    `).join("")
-    : `<p class="muted">Запусков пока нет. Запусти кампанию или выбранные черновики.</p>`;
-  if (state.activeRunId) {
-    const params = new URLSearchParams({
-      filter: state.runFilter,
-      ...paginationQuery(state.runPagination),
-    });
-    state.runDetail = await api(`/api/outreach/runs/${state.activeRunId}?${params}`);
-    state.runPagination = state.runDetail.pagination || state.runPagination;
-  } else {
-    state.runDetail = null;
-  }
-  renderRunRows();
+  if (!state.runs.some((run) => run.id === state.activeRunId)) state.activeRunId = state.runs[0]?.id || null;
+  renderRunsList();
+  await loadRunDetail(state.activeRunId, { force: forceDetail });
 }
 
 function participationStatusLabel(value) {
@@ -1636,7 +1727,8 @@ async function runActionForLeads(endpoint, leadIds, title, message) {
     body: JSON.stringify({ lead_ids: leadIds }),
   });
   state.selectedRunLeadIds = new Set();
-  await Promise.all([loadRuns(state.activeRunId), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations(), loadSuppressions()]);
+  state.runDetailCache.clear();
+  await Promise.all([loadRuns(state.activeRunId, { forceDetail: true }), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations(), loadSuppressions()]);
   setActionResult({ status: "success", title, message: message(result), details: result });
 }
 
@@ -1652,7 +1744,8 @@ async function stopRun(runId, button) {
   }, async () => {
     const result = await api(`/api/outreach/runs/${runId}/stop`, { method: "POST" });
     state.selectedRunLeadIds = new Set();
-    await Promise.all([loadRuns(runId), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations()]);
+    state.runDetailCache.clear();
+    await Promise.all([loadRuns(runId, { forceDetail: true }), loadParticipation(), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations()]);
     setActionResult({
       status: "success",
       title: "Остановка запуска",
@@ -4384,13 +4477,15 @@ $$("[data-queue-filter]").forEach((button) => button.addEventListener("click", (
 $$("[data-run-filter]").forEach((button) => button.addEventListener("click", () => {
   state.runFilter = button.dataset.runFilter || "all";
   state.runPagination.page = 1;
-  loadRuns(state.activeRunId);
+  state.selectedRunLeadIds = new Set();
+  loadRunDetail(state.activeRunId);
 }));
 $("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
   title: "Обновление запусков",
   button: event.currentTarget,
 }, async () => {
-  await loadRuns(state.activeRunId);
+  state.runDetailCache.clear();
+  await loadRuns(state.activeRunId, { forceDetail: true });
   setActionResult({ status: "success", title: "Обновление запусков", message: "Таблица запусков обновлена." });
 }));
 $("#stopActiveRunBtn")?.addEventListener("click", (event) => stopRun(state.activeRunId, event.currentTarget));
@@ -5706,6 +5801,7 @@ document.body.addEventListener("click", async (event) => {
   const selectRunId = event.target.closest("[data-select-run]")?.dataset.selectRun;
   const participationRunId = event.target.dataset.openParticipationRun;
   const runRowToggle = event.target.dataset.runRowToggle;
+  const runActionsToggle = event.target.dataset.runActionsToggle;
   const runStopLeadId = event.target.dataset.runStopFollowups;
   const runContinueLeadId = event.target.dataset.runContinueFollowups;
   const runSuppressLeadId = event.target.dataset.runSuppress;
@@ -5719,11 +5815,7 @@ document.body.addEventListener("click", async (event) => {
     return;
   }
   if (selectRunId) {
-    state.activeRunId = selectRunId;
-    state.runPagination.page = 1;
-    state.selectedRunLeadIds = new Set();
-    state.expandedRunRows = new Set();
-    await loadRuns(selectRunId);
+    await selectRun(selectRunId);
     return;
   }
   if (participationRunId) {
@@ -5736,6 +5828,12 @@ document.body.addEventListener("click", async (event) => {
   if (runRowToggle) {
     if (state.expandedRunRows.has(runRowToggle)) state.expandedRunRows.delete(runRowToggle);
     else state.expandedRunRows.add(runRowToggle);
+    renderRunRows();
+    return;
+  }
+  if (runActionsToggle) {
+    if (state.expandedRunActions.has(runActionsToggle)) state.expandedRunActions.delete(runActionsToggle);
+    else state.expandedRunActions.add(runActionsToggle);
     renderRunRows();
     return;
   }

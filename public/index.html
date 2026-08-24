@@ -654,19 +654,18 @@
           <div id="runsList" class="run-list"></div>
         </section>
 
-        <section class="panel">
+        <section id="runDetailPanel" class="panel run-detail-panel">
           <div class="panel-head">
             <div>
               <h2 id="runDetailTitle">Таблица запуска</h2>
               <p id="runDetailMeta" class="muted">Выбери запуск выше.</p>
             </div>
-            <div class="run-bulk-actions">
-              <button id="stopActiveRunBtn" class="danger-button">Остановить весь запуск</button>
-              <button id="runBulkStopBtn" class="small-button">Остановить выбранные follow-up</button>
-              <button id="runBulkContinueBtn" class="small-button">Продолжить выбранные follow-up</button>
-              <button id="runBulkSuppressBtn" class="small-button">В стоп-лист выбранные</button>
+            <div class="run-header-actions">
+              <span id="runStatusBadge" class="run-status-badge is-empty">Статус не выбран</span>
+              <button id="stopActiveRunBtn" class="danger-button" hidden>Остановить запуск</button>
             </div>
           </div>
+          <div id="runDetailLoading" class="run-detail-loading" hidden><span></span>Загружаю запуск...</div>
           <div class="quick-filters" aria-label="Фильтр строк запуска">
             <button class="small-button active" data-run-filter="all">Все</button>
             <button class="small-button" data-run-filter="waiting">Молчат</button>
@@ -677,8 +676,15 @@
           </div>
           <div id="runRowsSummary" class="summary-line"></div>
           <div class="run-bulkbar">
-            <label class="check"><input id="runRowsSelectVisible" type="checkbox" /> Выбрать все строки по фильтру</label>
-            <span id="runBulkSelection" class="muted">Выбрано: 0</span>
+            <div class="run-selection-summary">
+              <label class="check"><input id="runRowsSelectVisible" type="checkbox" /> Выбрать строки на странице</label>
+              <span id="runBulkSelection" class="muted">Ничего не выбрано</span>
+            </div>
+            <div id="runSelectionActions" class="run-selection-actions" hidden>
+              <button id="runBulkStopBtn" class="small-button">Остановить follow-up</button>
+              <button id="runBulkContinueBtn" class="small-button">Продолжить follow-up</button>
+              <button id="runBulkSuppressBtn" class="small-button">В стоп-лист</button>
+            </div>
           </div>
           <div class="table-wrap operational-table"><table id="runRowsTable"></table></div>
           <div id="runRowsPagination" class="pagination"></div>
