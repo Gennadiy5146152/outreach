@@ -49,6 +49,7 @@ for (const expected of [
   "function paginationMeta",
   "pagination: paginationMeta",
   "WITH latest_conversations AS",
+  "AND ($3 = false OR status IN ('waiting_reply_review','manual_reply_needed'))",
   "WITH ranked AS",
   "LIMIT $2 OFFSET $3",
   "first_reply_at >= first_sent_at",

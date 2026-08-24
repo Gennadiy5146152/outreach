@@ -3478,6 +3478,9 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
       WITH latest_conversations AS (
         SELECT DISTINCT ON (lead_id) *
         FROM outreach_conversations
+        WHERE ($1 = '' OR status = $1)
+          AND ($2 = '' OR classification = $2)
+          AND ($3 = false OR status IN ('waiting_reply_review','manual_reply_needed'))
         ORDER BY lead_id, COALESCE(last_message_at, updated_at, created_at) DESC
       )
       SELECT oc.*,
@@ -3537,10 +3540,7 @@ app.get("/api/outreach/conversations", asyncHandler(async (req, res) => {
         WHERE q.lead_id = oc.lead_id
           AND q.outreach_draft_id IS NOT NULL
       ) queue ON true
-      WHERE ($1 = '' OR oc.status = $1)
-        AND ($2 = '' OR oc.classification = $2)
-        AND ($3 = false OR oc.status IN ('waiting_reply_review','manual_reply_needed'))
-        AND (
+      WHERE (
           $4 = ''
           OR ($4 = 'hot' AND (
             COALESCE(oc.classification, latest.reply_classification, latest.ai_classification, '') = 'positive_reply'
