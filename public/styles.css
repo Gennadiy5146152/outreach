@@ -2638,6 +2638,263 @@ th {
   font-weight: 800;
 }
 
+.participation-panel {
+  position: relative;
+}
+
+.participation-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.participation-toolbar > input[type="search"] {
+  width: min(620px, 100%);
+}
+
+.participation-status-filters {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.participation-status-filters .small-button {
+  border-color: transparent;
+  background: transparent;
+}
+
+.participation-status-filters .small-button.active {
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(15, 30, 24, 0.08);
+}
+
+.participation-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.participation-filter-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.participation-filter-grid select {
+  min-width: 0;
+}
+
+.participation-run-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f7fbff;
+}
+
+.participation-run-context > div:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.participation-run-context strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participation-run-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.participation-run-actions button {
+  white-space: nowrap;
+}
+
+.participation-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(90px, 1fr));
+  margin: 14px 0 10px;
+  border-block: 1px solid var(--line);
+}
+
+.participation-summary > span {
+  display: grid;
+  gap: 3px;
+  padding: 9px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.participation-summary > span:last-child {
+  border-right: 0;
+}
+
+.participation-summary small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.participation-summary strong {
+  font-size: 18px;
+}
+
+.participation-summary .is-running strong {
+  color: #1d4ed8;
+}
+
+.participation-summary .is-error strong {
+  color: var(--danger);
+}
+
+#participationTable {
+  min-width: 1110px;
+  table-layout: fixed;
+}
+
+#participationTable .participation-col-contact { width: 240px; }
+#participationTable .participation-col-source { width: 270px; }
+#participationTable .participation-col-progress { width: 250px; }
+#participationTable .participation-col-mailbox { width: 210px; }
+#participationTable .participation-col-actions { width: 140px; }
+
+.participation-contact,
+.participation-source,
+.participation-progress,
+.participation-mailbox {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.participation-contact span,
+.participation-contact em,
+.participation-source span,
+.participation-progress span,
+.participation-mailbox span {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.participation-source strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.participation-progress em {
+  color: var(--danger);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.participation-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.participation-status::before {
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.participation-status.is-active { background: #eff6ff; color: #1d4ed8; }
+.participation-status.is-replied { background: #ecfdf5; color: #047857; }
+.participation-status.is-stopped { background: #f3f4f6; color: #6b7280; }
+.participation-status.is-sent { background: #edf9f2; color: #18794e; }
+.participation-status.is-completed_with_errors { background: #fff7ed; color: #c2410c; }
+.participation-status.is-error { background: #fef2f2; color: #b42318; }
+
+.participation-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.participation-row-actions .small-button {
+  min-height: 32px;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.participation-more-button {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.participation-details-row td {
+  padding: 8px 10px;
+  background: #f7faf8;
+}
+
+.participation-details {
+  position: sticky;
+  left: 10px;
+  display: grid;
+  width: min(840px, calc(100vw - 360px));
+  gap: 8px;
+}
+
+.participation-details > strong {
+  font-size: 12px;
+}
+
+.participation-details dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.participation-details dl > div {
+  display: grid;
+  gap: 3px;
+}
+
+.participation-details dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.participation-details dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .run-list {
   display: grid;
   gap: 8px;
@@ -3582,6 +3839,46 @@ input[type="file"]::file-selector-button {
 
   .run-list {
     max-height: 230px;
+  }
+
+  .participation-filter-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .participation-run-context,
+  .participation-run-context > div:first-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .participation-run-context strong {
+    white-space: normal;
+  }
+
+  .participation-run-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .participation-summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .participation-summary > span:nth-child(3) {
+    border-right: 0;
+  }
+
+  .participation-summary > span:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .participation-details {
+    left: 10px;
+    width: calc(100vw - 72px);
+  }
+
+  .participation-details dl {
+    grid-template-columns: 1fr 1fr;
   }
 
   .operational-table {

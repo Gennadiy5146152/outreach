@@ -2925,6 +2925,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
   const runId = isUuid(req.query.run_id) ? req.query.run_id : "";
   const campaignId = isUuid(req.query.campaign_id) ? req.query.campaign_id : "";
   const importId = isUuid(req.query.import_id) ? req.query.import_id : "";
+  const includeFilters = req.query.include_filters === "1";
 
   const result = await query(
     `
@@ -3060,6 +3061,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
         count(*) FILTER (WHERE participation_status = 'replied') OVER()::int AS filtered_replied,
         count(*) FILTER (WHERE participation_status = 'active') OVER()::int AS filtered_active,
         count(*) FILTER (WHERE participation_status = 'stopped') OVER()::int AS filtered_stopped,
+        count(*) FILTER (WHERE participation_status = 'sent') OVER()::int AS filtered_completed,
         count(*) FILTER (WHERE participation_status = 'error') OVER()::int AS filtered_errors
       FROM participation
       WHERE ($1 = '' OR lower(COALESCE(company, '') || ' ' || COALESCE(lead_email, '') || ' ' || COALESCE(mailbox_email, '') || ' ' || COALESCE(source_title, '') || ' ' || COALESCE(import_file_name, '') || ' ' || COALESCE(run_title, '') || ' ' || COALESCE(campaign_name, '')) LIKE '%' || $1 || '%')
@@ -3074,13 +3076,28 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
     [search, status, mailboxId, runId, campaignId, importId, pagination.pageSize, pagination.offset],
   );
 
-  const filters = await query(`
+  const filters = includeFilters ? await query(`
     SELECT
       COALESCE((SELECT json_agg(json_build_object('id', id, 'email', email) ORDER BY email) FROM mailboxes), '[]'::json) AS mailboxes,
       COALESCE((SELECT json_agg(json_build_object('id', id, 'file_name', file_name) ORDER BY created_at DESC) FROM outreach_imports LIMIT 100), '[]'::json) AS imports,
-      COALESCE((SELECT json_agg(json_build_object('id', id, 'title', title, 'status', status) ORDER BY created_at DESC) FROM outreach_runs LIMIT 100), '[]'::json) AS runs,
+      COALESCE((
+        SELECT json_agg(json_build_object(
+          'id', run_option.id,
+          'title', run_option.title,
+          'status', run_option.status,
+          'active_queue', run_option.active_queue,
+          'total_recipients', run_option.total_recipients
+        ) ORDER BY run_option.created_at DESC)
+        FROM (
+          SELECT r.*,
+            (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status IN ('pending','retrying','running')) AS active_queue
+          FROM outreach_runs r
+          ORDER BY r.created_at DESC
+          LIMIT 100
+        ) run_option
+      ), '[]'::json) AS runs,
       COALESCE((SELECT json_agg(json_build_object('id', id, 'name', name) ORDER BY created_at DESC) FROM campaigns LIMIT 100), '[]'::json) AS campaigns
-  `);
+  `) : null;
 
   const first = result.rows[0] || {};
   res.json({
@@ -3089,9 +3106,10 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
       replied: Number(first.filtered_replied || 0),
       active: Number(first.filtered_active || 0),
       stopped: Number(first.filtered_stopped || 0),
+      completed: Number(first.filtered_completed || 0),
       errors: Number(first.filtered_errors || 0),
     },
-    filters: filters.rows[0] || { mailboxes: [], imports: [], runs: [], campaigns: [] },
+    ...(filters ? { filters: filters.rows[0] || { mailboxes: [], imports: [], runs: [], campaigns: [] } } : {}),
     pagination: paginationMeta(pagination, first.filtered_total),
     rows: result.rows.map((row) => {
       const {
@@ -3099,6 +3117,7 @@ app.get("/api/outreach/participation", asyncHandler(async (req, res) => {
         filtered_replied,
         filtered_active,
         filtered_stopped,
+        filtered_completed,
         filtered_errors,
         ...publicRow
       } = row;
