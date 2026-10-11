@@ -14,7 +14,7 @@ import { sendMail, verifyImap, verifySmtp } from "./services/mail.js";
 import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
-import { cancelOutreachForScope } from "./services/outreach-stop.js";
+import { affectedLeadIds, cancelOutreachForScope } from "./services/outreach-stop.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
@@ -949,11 +949,13 @@ app.get("/api/dashboard", asyncHandler(async (_req, res) => {
 }));
 
 app.get("/api/leads", asyncHandler(async (req, res) => {
+  const paged = req.query.page !== undefined || req.query.pageSize !== undefined;
+  const pagination = paginationParams(req, { defaultPageSize: 50, maxPageSize: 100 });
   const search = `%${String(req.query.search || "").toLowerCase()}%`;
   const status = req.query.status || "";
   const validation = req.query.validation || "";
   const segment = cleanText(req.query.segment);
-  const result = await query(
+  const [result, totalResult] = await Promise.all([query(
     `
       SELECT *
       FROM leads
@@ -962,11 +964,16 @@ app.get("/api/leads", asyncHandler(async (req, res) => {
         AND ($3 = '' OR validation_status = $3)
         AND ($4 = '' OR segment = $4)
       ORDER BY created_at DESC
-      LIMIT 500
+      LIMIT $5 OFFSET $6
     `,
+    [search, status, validation, segment, paged ? pagination.pageSize : 500, paged ? pagination.offset : 0],
+  ), paged ? query(
+    `SELECT count(*)::int AS total FROM leads
+     WHERE ($1 = '%%' OR lower(company || ' ' || email || ' ' || coalesce(segment,'') || ' ' || coalesce(contact_name,'')) LIKE $1)
+       AND ($2 = '' OR status = $2) AND ($3 = '' OR validation_status = $3) AND ($4 = '' OR segment = $4)`,
     [search, status, validation, segment],
-  );
-  res.json(result.rows);
+  ) : Promise.resolve(null)]);
+  res.json(paged ? { rows: result.rows, pagination: paginationMeta(pagination, totalResult.rows[0].total) } : result.rows);
 }));
 
 app.get("/api/segments", asyncHandler(async (_req, res) => {
@@ -1219,9 +1226,11 @@ app.get("/api/outreach/imports/:id/errors.csv", asyncHandler(async (req, res) =>
 }));
 
 app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
+  const paged = req.query.page !== undefined || req.query.pageSize !== undefined;
+  const pagination = paginationParams(req, { defaultPageSize: 50, maxPageSize: 100 });
   const status = req.query.status || "";
   const importId = req.query.import_id || "";
-  const result = await query(
+  const [result, totalResult] = await Promise.all([query(
     `
       SELECT d.*, i.file_name, m.email AS mailbox_email,
              COALESCE(
@@ -1260,10 +1269,57 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
         AND ($2 = '' OR d.import_id = $2::uuid)
       GROUP BY d.id, i.file_name, m.email
       ORDER BY d.created_at DESC
+      LIMIT $3 OFFSET $4
     `,
+    [status, importId, paged ? pagination.pageSize : 100000, paged ? pagination.offset : 0],
+  ), paged ? query(
+    `SELECT count(*)::int AS total FROM outreach_drafts d WHERE ($1 = '' OR d.status = $1) AND ($2 = '' OR d.import_id = $2::uuid)`,
     [status, importId],
-  );
-  res.json(result.rows);
+  ) : Promise.resolve(null)]);
+  const rows = paged ? result.rows.map((row) => {
+    const { body_text: bodyText, body_html: _bodyHtml, steps = [], ...draft } = row;
+    return {
+      ...draft,
+      body_preview: String(bodyText || "").slice(0, 500),
+      steps: steps.map((step) => {
+        const { body_text: stepBodyText, body_html: _stepBodyHtml, ...publicStep } = step;
+        return { ...publicStep, body_preview: String(stepBodyText || "").slice(0, 500) };
+      }),
+    };
+  }) : result.rows;
+  res.json(paged ? { rows, pagination: paginationMeta(pagination, totalResult.rows[0].total) } : rows);
+}));
+
+app.get("/api/outreach/drafts/:id/review", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_draft" });
+  const draft = (await query(
+    `
+      SELECT d.*, i.file_name, m.email AS mailbox_email
+      FROM outreach_drafts d
+      LEFT JOIN outreach_imports i ON i.id = d.import_id
+      LEFT JOIN mailboxes m ON m.id = d.mailbox_id
+      WHERE d.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!draft) return res.status(404).json({ error: "not_found" });
+  const steps = (await query(
+    `
+      SELECT ods.*,
+             COALESCE((
+               SELECT json_agg(json_build_object(
+                 'id', a.id, 'file_name', a.file_name, 'mime_type', a.mime_type,
+                 'size_bytes', a.size_bytes, 'content_id', a.content_id, 'created_at', a.created_at
+               ) ORDER BY a.created_at)
+               FROM attachments a WHERE a.outreach_step_id = ods.id
+             ), '[]'::json) AS attachments
+      FROM outreach_draft_steps ods
+      WHERE ods.draft_id = $1
+      ORDER BY ods.position
+    `,
+    [req.params.id],
+  )).rows;
+  res.json({ ...draft, steps });
 }));
 
 app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler(async (req, res) => {
@@ -2529,8 +2585,10 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   res.json(summary);
 }));
 
-app.get("/api/outreach/runs", asyncHandler(async (_req, res) => {
-  const result = await query(`
+app.get("/api/outreach/runs", asyncHandler(async (req, res) => {
+  const paged = req.query.page !== undefined || req.query.pageSize !== undefined;
+  const pagination = paginationParams(req, { defaultPageSize: 50, maxPageSize: 100 });
+  const [result, totalResult] = await Promise.all([query(`
     SELECT r.*,
       (SELECT count(DISTINCT q.lead_id)::int FROM sending_queue q WHERE q.run_id = r.id AND q.lead_id IS NOT NULL) AS recipients,
       (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'sent') AS sent_messages,
@@ -2575,9 +2633,11 @@ app.get("/api/outreach/runs", asyncHandler(async (_req, res) => {
       (SELECT count(*)::int FROM sending_queue q WHERE q.run_id = r.id AND q.status = 'failed') AS failed_queue
     FROM outreach_runs r
     ORDER BY r.created_at DESC
-    LIMIT 50
-  `);
-  res.json(result.rows);
+    LIMIT $1 OFFSET $2
+  `, [paged ? pagination.pageSize : 50, paged ? pagination.offset : 0]), paged
+    ? query("SELECT count(*)::int AS total FROM outreach_runs")
+    : Promise.resolve(null)]);
+  res.json(paged ? { rows: result.rows, pagination: paginationMeta(pagination, totalResult.rows[0].total) } : result.rows);
 }));
 
 app.get("/api/outreach/runs/:id", asyncHandler(async (req, res) => {
@@ -3856,6 +3916,22 @@ app.get("/api/outreach/conversations/:id", asyncHandler(async (req, res) => {
   res.json({ conversation, messages: messages.rows.map(publicMessageRow), drafts: drafts.rows, queue: queue.rows, events: events.rows });
 }));
 
+app.get("/api/outreach/conversations/:id/classification-impact", asyncHandler(async (req, res) => {
+  const classification = cleanText(req.query.classification);
+  if (!STOPPING_REPLY_CLASSIFICATIONS.has(classification)) return res.status(400).json({ error: "stopping_classification_required" });
+  const conversation = (await query(
+    `SELECT oc.*, l.email AS lead_email, l.domain AS lead_domain, l.company AS lead_company FROM outreach_conversations oc LEFT JOIN leads l ON l.id = oc.lead_id WHERE oc.id = $1`,
+    [req.params.id],
+  )).rows[0];
+  if (!conversation) return res.status(404).json({ error: "not_found" });
+  const runtime = await getRuntimeSettings();
+  const leadIds = await affectedLeadIds(query, conversation.lead_id, runtime.outreachStopScope);
+  const leads = leadIds.length
+    ? (await query("SELECT id, email, domain, company, status FROM leads WHERE id = ANY($1::uuid[]) ORDER BY id", [leadIds])).rows
+    : [];
+  res.json({ classification, stop_scope: runtime.outreachStopScope, affected_count: leads.length, leads, conversation });
+}));
+
 app.patch("/api/outreach/conversations/:id/classification", asyncHandler(async (req, res) => {
   const classification = cleanText(req.body.classification);
   if (!REPLY_CLASSIFICATIONS.has(classification)) {
@@ -5036,9 +5112,21 @@ app.get("/api/suppressions", asyncHandler(async (_req, res) => {
   res.json(result.rows);
 }));
 
+app.get("/api/suppressions/impact", asyncHandler(async (req, res) => {
+  const scope = req.query.scope === "domain" ? "domain" : req.query.scope === "email" ? "email" : "";
+  const target = cleanText(req.query.target).toLowerCase();
+  if (!scope || !target) return res.status(400).json({ error: "scope_and_target_required" });
+  const column = scope === "email" ? "email" : "domain";
+  const result = await query(
+    `SELECT id, email, domain, company, status FROM leads WHERE lower(${column}) = $1 ORDER BY id`,
+    [target],
+  );
+  res.json({ scope, target, affected_count: result.rowCount, leads: result.rows });
+}));
+
 app.post("/api/suppressions", asyncHandler(async (req, res) => {
   const email = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
-  const domain = req.body.domain ? String(req.body.domain).trim().toLowerCase() : email?.split("@")[1] || null;
+  const domain = req.body.domain ? String(req.body.domain).trim().toLowerCase() : null;
   const result = await query(
     `
       INSERT INTO suppressions(email, domain, reason, source)
@@ -5078,6 +5166,47 @@ app.get("/api/campaigns", asyncHandler(async (_req, res) => {
       .filter((step) => step.campaign_id === campaign.id)
       .map((step) => ({ ...step, attachments: attachments.filter((item) => item.campaign_step_id === step.id) })),
   })));
+}));
+
+app.get("/api/campaigns/:id/review", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "campaign_required" });
+  const campaign = (await query("SELECT * FROM campaigns WHERE id = $1", [req.params.id])).rows[0];
+  if (!campaign) return res.status(404).json({ error: "campaign_not_found" });
+  const [steps, enrollments] = await Promise.all([
+    query(
+      `
+        SELECT s.*,
+               COALESCE((
+                 SELECT json_agg(json_build_object(
+                   'id', a.id, 'file_name', a.file_name, 'mime_type', a.mime_type,
+                   'size_bytes', a.size_bytes, 'content_id', a.content_id, 'created_at', a.created_at
+                 ) ORDER BY a.created_at)
+                 FROM attachments a WHERE a.campaign_step_id = s.id
+               ), '[]'::json) AS attachments
+        FROM campaign_steps s WHERE s.campaign_id = $1 ORDER BY s.position
+      `,
+      [req.params.id],
+    ),
+    query(
+      `
+        SELECT e.id AS enrollment_id, e.lead_id, e.mailbox_id, e.status AS enrollment_status,
+               e.current_step, e.next_send_at, e.started_at,
+               l.email, l.company, l.contact_name, l.segment, l.status AS lead_status,
+               l.validation_status, l.validation_reason, m.email AS mailbox_email
+        FROM enrollments e
+        JOIN leads l ON l.id = e.lead_id
+        LEFT JOIN mailboxes m ON m.id = e.mailbox_id
+        WHERE e.campaign_id = $1
+        ORDER BY e.id
+      `,
+      [req.params.id],
+    ),
+  ]);
+  res.json({
+    campaign: { ...campaign, steps: steps.rows },
+    enrollments: enrollments.rows,
+    active_enrollments: enrollments.rows.filter((item) => item.enrollment_status === "active"),
+  });
 }));
 
 app.post("/api/campaigns", asyncHandler(async (req, res) => {
@@ -5503,6 +5632,37 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
   res.json({ queued: result.queued, mode, requiresApproval, launchPlan, preflight, runId: result.runId });
 }));
 
+app.get("/api/sending/:id/review", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(400).json({ error: "invalid_queue_item" });
+  const item = (await query(
+    `
+      SELECT q.*, l.email, l.company, l.contact_name, m.email AS mailbox_email,
+             c.name AS campaign_name, c.tracking_enabled, c.manual_approval_required,
+             cs.position AS campaign_step_position, cs.subject_template, cs.body_template_text, cs.body_template_html,
+             ods.position AS outreach_step_position, ods.subject AS outreach_subject,
+             ods.body_text AS outreach_body_text, ods.body_html AS outreach_body_html,
+             COALESCE((
+               SELECT json_agg(json_build_object(
+                 'id', a.id, 'file_name', a.file_name, 'mime_type', a.mime_type,
+                 'size_bytes', a.size_bytes, 'content_id', a.content_id
+               ) ORDER BY a.created_at)
+               FROM attachments a
+               WHERE a.campaign_step_id = q.campaign_step_id OR a.outreach_step_id = q.outreach_step_id
+             ), '[]'::json) AS attachments
+      FROM sending_queue q
+      JOIN leads l ON l.id = q.lead_id
+      LEFT JOIN mailboxes m ON m.id = q.mailbox_id
+      LEFT JOIN campaigns c ON c.id = q.campaign_id
+      LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
+      LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+      WHERE q.id = $1
+    `,
+    [req.params.id],
+  )).rows[0];
+  if (!item) return res.status(404).json({ error: "not_found" });
+  res.json(item);
+}));
+
 app.post("/api/sending/:id/approve", asyncHandler(async (req, res) => {
   const result = await query(
     `
@@ -5914,9 +6074,14 @@ app.patch("/api/inbox/:id/classification", asyncHandler(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
-app.get("/api/events", asyncHandler(async (_req, res) => {
-  const result = await query("SELECT * FROM events ORDER BY created_at DESC LIMIT 200");
-  res.json(result.rows);
+app.get("/api/events", asyncHandler(async (req, res) => {
+  const paged = req.query.page !== undefined || req.query.pageSize !== undefined;
+  const pagination = paginationParams(req, { defaultPageSize: 50, maxPageSize: 100 });
+  const [result, totalResult] = await Promise.all([
+    query("SELECT * FROM events ORDER BY created_at DESC LIMIT $1 OFFSET $2", [paged ? pagination.pageSize : 200, paged ? pagination.offset : 0]),
+    paged ? query("SELECT count(*)::int AS total FROM events") : Promise.resolve(null),
+  ]);
+  res.json(paged ? { rows: result.rows, pagination: paginationMeta(pagination, totalResult.rows[0].total) } : result.rows);
 }));
 
 app.get("/api/warmup", asyncHandler(async (req, res) => {

@@ -32,6 +32,10 @@ test("a prepared plan can be consumed once with exact operation and snapshot", (
     summary: "Send one draft",
     expires_at: "1970-01-01T00:10:01.000Z",
     requires_confirmation: true,
+    preview: {
+      request: { ids: ["draft-1"], mode: "auto" },
+      current_state: { updatedAt: "2026-10-11T10:00:00Z", items: [{ id: "draft-1" }] },
+    },
   });
   const plan = store.consume({
     token: prepared.confirmation_token,
@@ -114,4 +118,14 @@ test("inspect reveals a cloned payload for authoritative re-read without consumi
   inspected.payload.ids.push("draft-2");
   const consumed = store.consume({ token: "inspect-token", operation: "launch", currentSnapshot: { status: "ready" }, confirm: true });
   assert.deepEqual(consumed.payload, { ids: ["draft-1"] });
+});
+
+test("claim invalidates a token before downstream state reads", () => {
+  const store = createConfirmationStore({ now: () => 1_000, randomUUID: () => "claim-token" });
+  store.prepare({ operation: "launch", payload: { id: "one" }, snapshot: { ready: true }, summary: "Launch" });
+  const plan = store.claim({ token: "claim-token", operation: "launch", confirm: true });
+  assert.deepEqual(plan.payload, { id: "one" });
+  assert.throws(() => store.claim({ token: "claim-token", operation: "launch", confirm: true }),
+    (error) => error.code === "confirmation_not_found");
+  assert.doesNotThrow(() => store.verify({ plan, currentSnapshot: { ready: true } }));
 });

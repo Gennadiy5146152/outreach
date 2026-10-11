@@ -40,10 +40,12 @@ async function decodeResponse(response) {
     try {
       return JSON.parse(text);
     } catch {
-      return { error: "invalid_json_response", message: text.slice(0, 500) };
+      if (!response.ok) return { error: "invalid_json_response" };
+      throw new OutreachApiError("Outreach Desk returned malformed JSON", { code: "invalid_api_response" });
     }
   }
-  return text;
+  if (!response.ok) return text.slice(0, 500);
+  throw new OutreachApiError("Outreach Desk returned an unexpected non-JSON response", { code: "invalid_api_response" });
 }
 
 function safeErrorDetails(value, token) {
@@ -97,7 +99,17 @@ export function createOutreachClient({
       );
     }
 
-    const decoded = await decodeResponse(response);
+    let decoded;
+    try {
+      decoded = await decodeResponse(response);
+    } catch (error) {
+      if (error instanceof OutreachApiError) throw error;
+      const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
+      throw new OutreachApiError(
+        timedOut ? `Outreach Desk response timed out after ${normalizedTimeoutMs} ms` : "Could not read the Outreach Desk response",
+        { code: timedOut ? "request_timeout" : "response_read_failed", secrets: [token], cause: error },
+      );
+    }
     if (!response.ok) {
       const code = typeof decoded === "object" && decoded?.error ? String(decoded.error) : "http_error";
       const detailText = typeof decoded === "string"

@@ -38,7 +38,7 @@ export function createConfirmationStore({
   const ttlMs = Math.min(Math.max(Number(ttlSeconds) || 600, 60), 3_600) * 1_000;
   const plans = new Map();
 
-  function prepare({ operation, payload, snapshot, summary }) {
+  function prepare({ operation, payload, snapshot, summary, preview }) {
     const token = randomUUID();
     const expiresAt = now() + ttlMs;
     plans.set(token, {
@@ -46,6 +46,7 @@ export function createConfirmationStore({
       payload: structuredClone(payload),
       snapshotFingerprint: fingerprint(snapshot),
       summary: String(summary || ""),
+      preview: structuredClone(preview ?? { request: payload, current_state: snapshot }),
       expiresAt,
     });
     return {
@@ -54,10 +55,11 @@ export function createConfirmationStore({
       summary: String(summary || ""),
       expires_at: new Date(expiresAt).toISOString(),
       requires_confirmation: true,
+      preview: structuredClone(preview ?? { request: payload, current_state: snapshot }),
     };
   }
 
-  function consume({ token, operation, currentSnapshot, confirm }) {
+  function claim({ token, operation, confirm }) {
     const plan = plans.get(token);
     if (!plan) throw confirmationError("confirmation_not_found", "Confirmation plan was not found or was already used");
     plans.delete(token);
@@ -66,15 +68,24 @@ export function createConfirmationStore({
     if (operation !== plan.operation) {
       throw confirmationError("confirmation_operation_mismatch", "Confirmation plan does not match this operation");
     }
-    if (fingerprint(currentSnapshot) !== plan.snapshotFingerprint) {
-      throw confirmationError("confirmation_state_changed", "Outreach data changed after preparation; prepare a new plan");
-    }
     return {
       operation: plan.operation,
       payload: structuredClone(plan.payload),
+      snapshotFingerprint: plan.snapshotFingerprint,
       summary: plan.summary,
       expiresAt: plan.expiresAt,
     };
+  }
+
+  function verify({ plan, currentSnapshot }) {
+    if (fingerprint(currentSnapshot) !== plan.snapshotFingerprint) {
+      throw confirmationError("confirmation_state_changed", "Outreach data changed after preparation; prepare a new plan");
+    }
+    return plan;
+  }
+
+  function consume({ token, operation, currentSnapshot, confirm }) {
+    return verify({ plan: claim({ token, operation, confirm }), currentSnapshot });
   }
 
   function inspect({ token, operation }) {
@@ -95,5 +106,5 @@ export function createConfirmationStore({
     };
   }
 
-  return { prepare, inspect, consume };
+  return { prepare, inspect, claim, verify, consume };
 }

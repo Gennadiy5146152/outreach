@@ -74,17 +74,19 @@ Every tool returns:
 ### Campaigns and queue
 
 - `campaigns_list`: campaigns and their operational state.
-- `campaign_manage`: create or update a campaign, steps, and enrollment selection using explicit actions.
+- `campaign_manage`: create or update campaign and step configuration using explicit, field-scoped actions.
+- `campaign_enrollment_prepare` and `campaign_enrollment_execute`: add, keep, pause, or resume exact participants only after reviewing and confirming the affected recipients.
 - `queue_list`: waiting, sent, or all queue items with pagination.
 - `queue_approval_prepare` and `queue_approval_execute`: prepare and approve exact manual queue items.
-- `queue_cancel`: cancel one exact queue item; bulk cancellation uses confirmation planning.
+- `queue_cancel_prepare` and `queue_cancel_execute`: preview and cancel exact queue items and any linked chains only after confirmation.
 
 ### Runs and conversations
 
 - `runs_list` and `run_get`: launches, progress, recipients, and errors.
 - `run_control`: prepare or execute stop/continue operations for a run.
 - `conversations_list` and `conversation_get`: review queue, message history, classification, link quality, and next action.
-- `conversation_classify`: update a classification.
+- `conversation_classify`: update only non-stopping classifications.
+- `conversation_classify_prepare` and `conversation_classify_execute`: preview and confirm classifications that stop outreach for one or more leads.
 - `conversation_action`: prepare or execute stop, continue, delay, close, thread assignment, or suppression-related actions.
 - `reply_prepare` and `reply_execute`: preview and send one manual reply with confirmation.
 

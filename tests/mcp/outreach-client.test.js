@@ -114,6 +114,42 @@ test("non-JSON HTTP failures are capped and never reveal the token", async () =>
   });
 });
 
+test("malformed or non-JSON success responses are rejected without echoing bodies", async () => {
+  for (const response of [
+    new Response('{"password":"secret-value"', { status: 200, headers: { "content-type": "application/json" } }),
+    new Response("password=secret-value", { status: 200, headers: { "content-type": "text/plain" } }),
+  ]) {
+    const client = createOutreachClient({
+      baseUrl: "http://127.0.0.1:3000",
+      token: "mcp-secret",
+      fetchImpl: async () => response,
+    });
+    await assert.rejects(() => client.get("/api/dashboard"), (error) => {
+      assert.equal(error.code, "invalid_api_response");
+      assert.equal(JSON.stringify(error).includes("secret-value"), false);
+      return true;
+    });
+  }
+});
+
+test("response body read failures become bounded safe errors", async () => {
+  const client = createOutreachClient({
+    baseUrl: "http://127.0.0.1:3000",
+    token: "mcp-secret",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => { throw new Error("password=secret-value"); },
+    }),
+  });
+  await assert.rejects(() => client.get("/api/dashboard"), (error) => {
+    assert.equal(error.code, "response_read_failed");
+    assert.equal(error.message.includes("secret-value"), false);
+    return true;
+  });
+});
+
 test("client and upload validation reject unsafe inputs before fetch", async () => {
   assert.throws(() => createOutreachClient({ baseUrl: "file:///tmp/outreach", token: "token" }), /http/);
   assert.throws(() => createOutreachClient({ baseUrl: "http://127.0.0.1:3000", token: "" }), /token/i);

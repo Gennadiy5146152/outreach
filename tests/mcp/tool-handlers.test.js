@@ -41,10 +41,10 @@ test("catalog exposes the approved domain tools with bounded schemas", () => {
     "leads_list", "lead_upsert", "leads_import",
     "drafts_list", "draft_update", "drafts_preflight", "draft_bulk_action_prepare", "draft_bulk_action_execute",
     "attachment_upload", "attachment_delete_prepare", "attachment_delete_execute",
-    "launch_prepare", "launch_execute", "campaigns_list", "campaign_manage",
-    "queue_list", "queue_approval_prepare", "queue_approval_execute", "queue_cancel",
+    "launch_prepare", "launch_execute", "campaigns_list", "campaign_manage", "campaign_enrollment_prepare", "campaign_enrollment_execute",
+    "queue_list", "queue_approval_prepare", "queue_approval_execute", "queue_cancel_prepare", "queue_cancel_execute",
     "runs_list", "run_get", "run_control", "conversations_list", "conversation_get",
-    "conversation_classify", "conversation_action", "reply_prepare", "reply_execute",
+    "conversation_classify", "conversation_classify_prepare", "conversation_classify_execute", "conversation_action", "reply_prepare", "reply_execute",
     "suppressions_list", "suppression_prepare", "suppression_execute",
     "mailboxes_list", "mailbox_check", "inbox_sync",
     "delivery_mode_prepare", "delivery_mode_execute",
@@ -52,6 +52,16 @@ test("catalog exposes the approved domain tools with bounded schemas", () => {
 
   assert.equal(TOOL_DEFINITIONS.every((item) => item.inputSchema && item.description && item.annotations), true);
   assert.equal(TOOL_DEFINITIONS.filter((item) => item.name.endsWith("_execute")).every((item) => item.annotations.destructiveHint === true), true);
+});
+
+test("entity identifiers reject URL path injection", () => {
+  const campaign = TOOL_DEFINITIONS.find((item) => item.name === "campaign_manage");
+  const result = campaign.inputSchema.safeParse({
+    action: "update",
+    campaign_id: "11111111-1111-4111-8111-111111111111/start#",
+    values: { mode: "auto", force: true },
+  });
+  assert.equal(result.success, false);
 });
 
 test("read handlers map to the existing Outreach API and cap pagination", async () => {
@@ -117,26 +127,46 @@ test("ordinary mutation handlers map exact actions to HTTP methods and bodies", 
   const cases = [
     ["lead_upsert", { lead: { company: "A", email: "a@example.com" } }, "post", "/api/leads", { company: "A", email: "a@example.com" }],
     ["lead_upsert", { lead_id: "lead-1", lead: { company: "B" } }, "patch", "/api/leads/lead-1", { company: "B" }],
-    ["draft_update", { action: "draft", draft_id: "draft-1", values: { subject: "Hello" } }, "patch", "/api/outreach/drafts/draft-1", { subject: "Hello" }],
-    ["draft_update", { action: "step", draft_id: "draft-1", position: 2, values: { subject: "Follow-up" } }, "put", "/api/outreach/drafts/draft-1/steps/2", { subject: "Follow-up" }],
     ["drafts_preflight", { draft_ids: ["draft-1"] }, "post", "/api/outreach/drafts/preflight", { draft_ids: ["draft-1"] }],
     ["campaign_manage", { action: "create", values: { name: "Campaign" } }, "post", "/api/campaigns", { name: "Campaign" }],
-    ["campaign_manage", { action: "update", campaign_id: "campaign-1", values: { name: "Renamed" } }, "patch", "/api/campaigns/campaign-1", { name: "Renamed" }],
     ["campaign_manage", { action: "add_step", campaign_id: "campaign-1", values: { name: "Step" } }, "post", "/api/campaigns/campaign-1/steps", { name: "Step" }],
-    ["campaign_manage", { action: "update_step", step_id: "step-1", values: { name: "Step 2" } }, "patch", "/api/steps/step-1", { name: "Step 2" }],
-    ["campaign_manage", { action: "enroll", campaign_id: "campaign-1", values: { lead_ids: ["lead-1"] } }, "post", "/api/campaigns/campaign-1/enroll", { lead_ids: ["lead-1"] }],
-    ["campaign_manage", { action: "pause_enrollment", enrollment_id: "enrollment-1", values: {} }, "post", "/api/enrollments/enrollment-1/pause", {}],
-    ["campaign_manage", { action: "resume_enrollment", enrollment_id: "enrollment-1", values: {} }, "post", "/api/enrollments/enrollment-1/resume", {}],
-    ["conversation_classify", { conversation_id: "conversation-1", classification: "positive_reply" }, "patch", "/api/outreach/conversations/conversation-1/classification", { classification: "positive_reply" }],
+    ["conversation_classify", { conversation_id: "conversation-1", classification: "neutral_reply" }, "patch", "/api/outreach/conversations/conversation-1/classification", { classification: "neutral_reply" }],
     ["mailbox_check", { mailbox_id: "mailbox-1" }, "post", "/api/mailboxes/mailbox-1/check", {}],
     ["inbox_sync", {}, "post", "/api/inbox/sync", {}],
-    ["queue_cancel", { queue_id: "queue-1" }, "post", "/api/sending/queue-1/cancel", {}],
   ];
 
   for (const [name, input, method, endpoint, body] of cases) {
     await handlers[name](input);
     assert.deepEqual(calls.at(-1), { method, args: [endpoint, body] }, name);
   }
+});
+
+test("partial draft and campaign updates merge current state before replacement APIs", async () => {
+  const calls = [];
+  const client = {
+    async get(endpoint) {
+      calls.push({ method: "get", endpoint });
+      if (endpoint === "/api/outreach/drafts/draft-1/review") {
+        return { id: "draft-1", to_email: "lead@example.com", company: "A", contact_name: "Ann", segment: "S", subject: "Old", body_text: "Body", body_html: "<p>Body</p>", mailbox_id: "mailbox-1", send_after: null, steps: [{ position: 2, subject: "FU", body_text: "Follow", body_html: "", delay_days: 3 }] };
+      }
+      if (endpoint === "/api/campaigns/campaign-1/review") {
+        return { campaign: { id: "campaign-1", name: "Old", description: "Description", segment: "S", tracking_enabled: true, manual_approval_required: false, steps: [{ id: "step-1", name: "FU", delay_days: 2, subject_template: "Old", body_template_text: "Body", body_template_html: "" }] }, active_enrollments: [] };
+      }
+      throw new Error(endpoint);
+    },
+    async patch(endpoint, body) { calls.push({ method: "patch", endpoint, body }); return body; },
+    async put(endpoint, body) { calls.push({ method: "put", endpoint, body }); return body; },
+  };
+  const handlers = createToolHandlers({ client, confirmations: {} });
+
+  await handlers.draft_update({ action: "draft", draft_id: "draft-1", values: { subject: "New" } });
+  assert.deepEqual(calls.at(-1).body, { to_email: "lead@example.com", company: "A", contact_name: "Ann", segment: "S", subject: "New", body_text: "Body", body_html: "<p>Body</p>", mailbox_id: "mailbox-1", send_after: null });
+  await handlers.draft_update({ action: "step", draft_id: "draft-1", position: 2, values: { subject: "New FU" } });
+  assert.deepEqual(calls.at(-1).body, { subject: "New FU", body_text: "Follow", body_html: "", delay_days: 3 });
+  await handlers.campaign_manage({ action: "update", campaign_id: "campaign-1", values: { name: "New" } });
+  assert.deepEqual(calls.at(-1).body, { name: "New", description: "Description", segment: "S", tracking_enabled: true, manual_approval_required: false });
+  await handlers.campaign_manage({ action: "update_step", step_id: "step-1", campaign_id: "campaign-1", values: { subject_template: "New subject" } });
+  assert.deepEqual(calls.at(-1).body, { name: "FU", delay_days: 2, subject_template: "New subject", body_template_text: "Body", body_template_html: "" });
 });
 
 test("file tools validate intent and use the correct upload endpoint", async () => {
@@ -156,6 +186,7 @@ test("file tools validate intent and use the correct upload endpoint", async () 
 
   await handlers.leads_import({ kind: "leads", file_path: "/tmp/leads.csv" });
   assert.equal(calls.at(-1).args[0], "/api/leads/import");
+  assert.deepEqual(calls.at(-1).args[1].allowedExtensions, [".csv"]);
 
   await handlers.attachment_upload({ target: "outreach_step", target_id: "step-1", file_path: "/tmp/proposal.pdf" });
   assert.equal(calls.at(-1).args[0], "/api/outreach/draft-steps/step-1/attachments");
