@@ -53,6 +53,7 @@ Every tool returns:
 - `outreach_status`: health, dry-run state, readiness, and safe runtime settings.
 - `outreach_dashboard`: outreach-only metrics and funnel summary.
 - `events_list`: recent audit events with pagination.
+- `delivery_mode_prepare` and `delivery_mode_execute`: switch between dry-run and real delivery with confirmation when enabling real delivery.
 
 ### Leads and imports
 
@@ -65,6 +66,8 @@ Every tool returns:
 - `drafts_list`: filtered drafts with concise previews.
 - `draft_update`: recipient, subject, bodies, mailbox, schedule, and follow-up changes supported by the existing API.
 - `drafts_preflight`: existing preflight results for an exact set of draft IDs.
+- `draft_bulk_action_prepare` and `draft_bulk_action_execute`: cancel or delete an exact displayed set after confirmation.
+- `attachment_upload`, `attachment_delete_prepare`, and `attachment_delete_execute`: manage existing campaign-step and outreach-step attachment endpoints using validated local paths.
 - `launch_prepare`: validate either an exact draft set or one campaign plus its active enrollments and launch parameters, then create an expiring confirmation plan.
 - `launch_execute`: consume the corresponding draft or campaign launch plan after explicit human approval.
 
