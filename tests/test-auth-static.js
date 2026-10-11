@@ -1,6 +1,7 @@
 import fs from "node:fs";
 
 const server = fs.readFileSync("src/server.js", "utf8");
+const auth = fs.readFileSync("src/http/auth.js", "utf8");
 const env = fs.readFileSync("src/config/env.js", "utf8");
 const login = fs.readFileSync("public/login.html", "utf8");
 
@@ -12,7 +13,7 @@ for (const expected of [
   "HttpOnly; SameSite=Lax",
   "startsWith(\"/t/open/\")",
 ]) {
-  if (!server.includes(expected)) throw new Error(`auth server code missing ${expected}`);
+  if (!`${server}\n${auth}`.includes(expected)) throw new Error(`auth server code missing ${expected}`);
 }
 
 if (server.indexOf("app.use(requireAuth)") > server.indexOf("app.use(express.static")) {

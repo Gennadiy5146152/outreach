@@ -12,6 +12,7 @@ export const env = {
   authPassword: process.env.AUTH_PASSWORD || "",
   authSessionSecret: process.env.AUTH_SESSION_SECRET || "",
   authCookieSecure: String(process.env.AUTH_COOKIE_SECURE || "false").toLowerCase() === "true",
+  mcpApiToken: process.env.MCP_API_TOKEN || "",
   databaseUrl: process.env.DATABASE_URL || "postgres://outreach:outreach@localhost:5432/outreach",
   publicTrackingUrl: process.env.PUBLIC_TRACKING_URL || "",
   appTimeZone: process.env.APP_TIME_ZONE || process.env.TZ || "Europe/Moscow",
