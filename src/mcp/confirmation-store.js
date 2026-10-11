@@ -77,5 +77,23 @@ export function createConfirmationStore({
     };
   }
 
-  return { prepare, consume };
+  function inspect({ token, operation }) {
+    const plan = plans.get(token);
+    if (!plan) throw confirmationError("confirmation_not_found", "Confirmation plan was not found or was already used");
+    if (now() > plan.expiresAt) {
+      plans.delete(token);
+      throw confirmationError("confirmation_expired", "Confirmation plan has expired");
+    }
+    if (operation !== plan.operation) {
+      throw confirmationError("confirmation_operation_mismatch", "Confirmation plan does not match this operation");
+    }
+    return {
+      operation: plan.operation,
+      payload: structuredClone(plan.payload),
+      summary: plan.summary,
+      expiresAt: plan.expiresAt,
+    };
+  }
+
+  return { prepare, inspect, consume };
 }

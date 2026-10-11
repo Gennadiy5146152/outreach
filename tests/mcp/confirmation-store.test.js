@@ -105,3 +105,13 @@ test("unknown tokens are rejected", () => {
   assert.throws(() => store.consume({ token: "missing", operation: "launch", currentSnapshot: {}, confirm: true }),
     (error) => error.code === "confirmation_not_found");
 });
+
+test("inspect reveals a cloned payload for authoritative re-read without consuming the plan", () => {
+  const store = createConfirmationStore({ now: () => 0, randomUUID: () => "inspect-token" });
+  store.prepare({ operation: "launch", payload: { ids: ["draft-1"] }, snapshot: { status: "ready" }, summary: "Launch" });
+  const inspected = store.inspect({ token: "inspect-token", operation: "launch" });
+  assert.deepEqual(inspected.payload, { ids: ["draft-1"] });
+  inspected.payload.ids.push("draft-2");
+  const consumed = store.consume({ token: "inspect-token", operation: "launch", currentSnapshot: { status: "ready" }, confirm: true });
+  assert.deepEqual(consumed.payload, { ids: ["draft-1"] });
+});

@@ -8,7 +8,7 @@ export function redactData(value, seen = new WeakSet()) {
   if (value instanceof Date) return value.toISOString();
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => !SENSITIVE_KEY.test(key))
+      .filter(([key]) => key === "confirmation_token" || !SENSITIVE_KEY.test(key))
       .map(([key, item]) => [key, redactData(item, seen)]),
   );
 }
