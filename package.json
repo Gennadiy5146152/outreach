@@ -20,6 +20,7 @@
     "multer": "^2.0.2",
     "nodemailer": "^9.0.3",
     "pg": "^8.13.1",
-    "read-excel-file": "^9.3.1"
+    "read-excel-file": "^9.3.1",
+    "zod": "^4.6.6"
   }
 }
