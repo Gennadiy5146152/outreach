@@ -112,9 +112,70 @@ Runtime-настройки хранятся в PostgreSQL и применяют�
 npm run dev       # локальный backend без Docker
 npm run worker    # локальный worker без Docker
 npm run migrate   # применить миграции
+npm run mcp       # локальный MCP-сервер для Codex через stdio
+npm run test:mcp  # тесты MCP без реальной отправки писем
 npm run check     # проверка синтаксиса JS
 npm run check:smoke # smoke-проверка запущенного сервиса
 ```
+
+## MCP для управления аутричем из Codex
+
+MCP работает локально через `stdio` и обращается к уже запущенному Outreach Desk по HTTP. Поэтому сначала запустите приложение и PostgreSQL:
+
+```bash
+docker compose up -d
+```
+
+Создайте длинный случайный `MCP_API_TOKEN` и укажите одно и то же значение:
+
+- в локальном `.env`, который читает Outreach Desk;
+- в окружении процесса Codex, который запускает MCP.
+
+Минимальные настройки:
+
+```dotenv
+MCP_API_TOKEN=длинное-случайное-значение
+OUTREACH_BASE_URL=http://127.0.0.1:3000
+MCP_CONFIRMATION_TTL_SECONDS=600
+MCP_REQUEST_TIMEOUT_MS=15000
+```
+
+### Подключение в Codex
+
+Codex хранит локальные MCP-серверы в `~/.codex/config.toml` или в доверенном проектном `.codex/config.toml`. Используйте абсолютные пути:
+
+```toml
+[mcp_servers.outreach]
+command = "node"
+args = ["/absolute/path/to/outreach/src/mcp/server.js"]
+cwd = "/absolute/path/to/outreach"
+env_vars = ["MCP_API_TOKEN"]
+env = { OUTREACH_BASE_URL = "http://127.0.0.1:3000" }
+required = true
+default_tools_approval_mode = "writes"
+```
+
+Перезапустите Codex и проверьте подключение командой `codex mcp list` или `/mcp`. Поля `command`, `args`, `cwd`, `env`, `env_vars` и режим подтверждения соответствуют [официальной документации Codex MCP](https://learn.chatgpt.com/docs/extend/mcp).
+
+Для ручной проверки протокола:
+
+```bash
+npx @modelcontextprotocol/inspector node src/mcp/server.js
+```
+
+### Правило подтверждения отправки
+
+Отправка и другие существенные действия разделены на два инструмента:
+
+1. `*_prepare` повторно читает состояние Outreach Desk, выполняет preflight и показывает точный план.
+2. Codex обязан показать план и спросить ваше разрешение.
+3. Только после явного ответа можно вызвать `*_execute` с одноразовым токеном.
+
+Токен действует 10 минут. Если черновики, кампания, очередь или диалог изменились, выполнение блокируется и требуется новый план. Эта защита действует для запуска, ручных ответов, подтверждения очереди, stop-list, массовых действий, управления цепочками и включения реальной отправки.
+
+Для первой проверки оставьте `MAIL_DRY_RUN=true`, вызовите `outreach_status` и убедитесь, что `dryRun` включён. Затем можно импортировать тестовый файл, выполнить `drafts_preflight`, `launch_prepare` и разрешить `launch_execute`: письма пройдут через обычную очередь приложения, но не уйдут наружу.
+
+Пароли mailbox через MCP не добавляются и не возвращаются. Их нужно вводить в веб-интерфейсе Outreach Desk.
 
 ## Резервная копия PostgreSQL
 
