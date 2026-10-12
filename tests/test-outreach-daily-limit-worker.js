@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const worker = fs.readFileSync(new URL("../src/worker/index.js", import.meta.url), "utf8");
+const mail = fs.readFileSync(new URL("../src/services/mail.js", import.meta.url), "utf8");
 const migration = fs.readFileSync(new URL("../db/migrations/014_outreach_quota_reservations.sql", import.meta.url), "utf8");
 
 for (const required of [
-  'import { quotaRemaining } from "../services/outreach-quota.js"',
+  'import { effectiveOutreachDryRun, quotaRemaining } from "../services/outreach-quota.js"',
   "pg_advisory_xact_lock(hashtext('outreach_daily_quota'))",
   "runtime.outreachDailyLimit",
   "msg.type = 'outreach'",
@@ -35,11 +36,20 @@ for (const required of [
   "q.mode = 'test'",
   "withOutreachDeliveryLock",
   "lockOutreachQueueMutation",
-  "WHEN c.test_mode THEN 'test'",
+  "previous_queue.mode <> 'test'",
   "queueItemStatus",
   '["sent", "cancelled"]',
+  "item.delivery_dry_run",
+  "deliveryDryRun",
+  "dryRun: deliveryDryRun",
+  "AND status = 'running'",
+  "item.mode === \"test\" && nextStep",
 ]) {
   assert.ok(worker.includes(required), `worker aggregate quota should include ${required}`);
+}
+
+for (const required of ["options.dryRun", "Boolean(options.dryRun)"]) {
+  assert.ok(mail.includes(required), `mail delivery should support a pinned dry-run decision: ${required}`);
 }
 
 const priorityIndex = worker.indexOf("COALESCE(ods.position, s.position, 1) > 1 THEN 0");

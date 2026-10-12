@@ -39,16 +39,15 @@ export async function outreachStopAllImpact(client) {
         FROM enrollments enrollment
         JOIN campaigns campaign ON campaign.id = enrollment.campaign_id
         WHERE enrollment.status = 'active'
-          AND COALESCE(
-            (
-              SELECT enrollment_queue.mode
+          AND (
+            campaign.test_mode = false
+            OR EXISTS (
+              SELECT 1
               FROM sending_queue enrollment_queue
               WHERE enrollment_queue.enrollment_id = enrollment.id
-              ORDER BY enrollment_queue.created_at DESC, enrollment_queue.id DESC
-              LIMIT 1
-            ),
-            CASE WHEN campaign.test_mode THEN 'test' ELSE 'auto' END
-          ) <> 'test'
+                AND enrollment_queue.mode <> 'test'
+            )
+          )
       ),
       active_drafts AS (
         SELECT draft.id
@@ -125,16 +124,15 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
         FROM campaigns campaign
         WHERE enrollment.status = 'active'
           AND campaign.id = enrollment.campaign_id
-          AND COALESCE(
-            (
-              SELECT enrollment_queue.mode
+          AND (
+            campaign.test_mode = false
+            OR EXISTS (
+              SELECT 1
               FROM sending_queue enrollment_queue
               WHERE enrollment_queue.enrollment_id = enrollment.id
-              ORDER BY enrollment_queue.created_at DESC, enrollment_queue.id DESC
-              LIMIT 1
-            ),
-            CASE WHEN campaign.test_mode THEN 'test' ELSE 'auto' END
-          ) <> 'test'
+                AND enrollment_queue.mode <> 'test'
+            )
+          )
       `,
     );
     const cancelledDrafts = await client.query(

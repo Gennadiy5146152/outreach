@@ -33,7 +33,7 @@ export async function verifySmtp(mailbox) {
   return { ok: true, dryRun: false };
 }
 
-export async function sendMail(mailbox, message, attachments = []) {
+export async function sendMail(mailbox, message, attachments = [], options = {}) {
   const from = mailbox.from_name ? `"${mailbox.from_name}" <${mailbox.email}>` : mailbox.email;
   const preparedAttachments = [];
 
@@ -49,8 +49,10 @@ export async function sendMail(mailbox, message, attachments = []) {
     });
   }
 
-  const runtime = await getRuntimeSettings();
-  if (runtime.dryRun) {
+  const dryRun = options.dryRun === undefined
+    ? (await getRuntimeSettings()).dryRun
+    : Boolean(options.dryRun);
+  if (dryRun) {
     console.log(`[DRY-RUN] ${from} -> ${message.to}: ${message.subject}`);
     return {
       messageId: `<dry-run-${crypto.randomUUID()}@outreach.local>`,

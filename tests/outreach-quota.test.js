@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { quotaRemaining, shouldReserveOutreachQuota } from "../src/services/outreach-quota.js";
+import { effectiveOutreachDryRun, quotaRemaining, shouldReserveOutreachQuota } from "../src/services/outreach-quota.js";
 
 test("global quota counts every outreach reservation", () => {
   assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 70 }), 30);
@@ -38,4 +38,10 @@ test("dry-run and test sends never reserve real outreach quota", () => {
   assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "auto" }), true);
   assert.equal(shouldReserveOutreachQuota({ dryRun: true, mode: "auto" }), false);
   assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "test" }), false);
+});
+
+test("a send selected during dry-run can never escalate to real SMTP", () => {
+  assert.equal(effectiveOutreachDryRun({ selectedDryRun: true, currentDryRun: false }), true);
+  assert.equal(effectiveOutreachDryRun({ selectedDryRun: false, currentDryRun: true }), true);
+  assert.equal(effectiveOutreachDryRun({ selectedDryRun: false, currentDryRun: false }), false);
 });

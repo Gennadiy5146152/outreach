@@ -21,3 +21,7 @@ export function quotaRemaining({
 export function shouldReserveOutreachQuota({ dryRun, mode }) {
   return !dryRun && mode !== "test";
 }
+
+export function effectiveOutreachDryRun({ selectedDryRun, currentDryRun }) {
+  return Boolean(selectedDryRun || currentDryRun);
+}

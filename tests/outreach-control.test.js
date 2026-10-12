@@ -11,10 +11,8 @@ function stopClient({ failOnCancel = false } = {}) {
       if (String(sql).includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
       if (String(sql).includes("SELECT") && String(sql).includes("first_touches")) {
         assert.match(sql, /run\.mode <> 'test'/);
-        assert.match(sql, /CASE WHEN campaign\.test_mode THEN 'test' ELSE 'auto' END/);
+        assert.match(sql, /campaign\.test_mode = false/);
         assert.match(sql, /'queue:' \|\| id::text \|\| ':step:' \|\| step_position::text/);
-        assert.match(sql, /ORDER BY enrollment_queue\.created_at DESC/);
-        assert.match(sql, /LIMIT 1/);
         return {
           rows: [{
             active_queue: 5,
@@ -36,9 +34,7 @@ function stopClient({ failOnCancel = false } = {}) {
         return { rows: [{ outreach_step_id: "step-1" }, { outreach_step_id: "step-2" }, { outreach_step_id: null }], rowCount: 3 };
       }
       if (String(sql).includes("UPDATE enrollments")) {
-        assert.match(sql, /CASE WHEN campaign\.test_mode THEN 'test' ELSE 'auto' END/);
-        assert.match(sql, /ORDER BY enrollment_queue\.created_at DESC/);
-        assert.match(sql, /LIMIT 1/);
+        assert.match(sql, /campaign\.test_mode = false/);
         return { rows: [], rowCount: 2 };
       }
       if (String(sql).includes("UPDATE outreach_drafts")) {

@@ -6,7 +6,7 @@ import { analyzeInboundReplyWithAi, suggestThreadMatchWithAi } from "../services
 import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
-import { quotaRemaining } from "../services/outreach-quota.js";
+import { effectiveOutreachDryRun, quotaRemaining } from "../services/outreach-quota.js";
 import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
 import { lockOutreachQueueMutation, OUTREACH_MIN_SPACING_MINUTES, withOutreachDeliveryLock } from "../services/outreach-control.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
@@ -421,18 +421,19 @@ async function scheduleDueEnrollments() {
         `
       INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at, run_id)
       SELECT e.id, e.lead_id, e.campaign_id, s.id, e.mailbox_id,
-             CASE WHEN c.test_mode THEN 'test' WHEN c.manual_approval_required THEN 'manual' ELSE 'auto' END,
-             CASE WHEN c.test_mode THEN false ELSE c.manual_approval_required END,
+             COALESCE(latest_queue.mode, CASE WHEN c.manual_approval_required THEN 'manual' ELSE 'auto' END),
+             COALESCE(latest_queue.mode, CASE WHEN c.manual_approval_required THEN 'manual' ELSE 'auto' END) = 'manual',
              e.next_send_at,
              latest_queue.run_id
       FROM enrollments e
       JOIN campaigns c ON c.id = e.campaign_id
       JOIN campaign_steps s ON s.campaign_id = e.campaign_id AND s.position = e.current_step
       LEFT JOIN LATERAL (
-        SELECT run_id
+        SELECT run_id, mode
         FROM sending_queue previous_queue
         WHERE previous_queue.enrollment_id = e.id
           AND previous_queue.run_id IS NOT NULL
+          AND previous_queue.mode <> 'test'
         ORDER BY previous_queue.created_at DESC
         LIMIT 1
       ) latest_queue ON true
@@ -444,6 +445,7 @@ async function scheduleDueEnrollments() {
           SELECT 1 FROM sending_queue q
           WHERE q.enrollment_id = e.id
             AND q.campaign_step_id = s.id
+            AND q.mode <> 'test'
             AND q.status IN ('pending','running','retrying','sent')
         )
         `,
@@ -630,6 +632,7 @@ async function lockNextSend() {
         return null;
       }
       const item = result.rows[0];
+      item.delivery_dry_run = runtime.dryRun;
       const reserveQuota = shouldReserveOutreachQuota({ dryRun: runtime.dryRun, mode: item.mode });
       await client.query(
         `
@@ -671,6 +674,10 @@ async function processSendUnlocked(item) {
   }
 
   const runtime = await getRuntimeSettings();
+  const deliveryDryRun = effectiveOutreachDryRun({
+    selectedDryRun: item.delivery_dry_run,
+    currentDryRun: runtime.dryRun,
+  });
   if (!isWithinWindow(item, runtime.timeZone)) {
     const nextAt = nextSendWindowAt(item, new Date(), runtime.timeZone);
     await query(
@@ -715,7 +722,7 @@ async function processSendUnlocked(item) {
   const text = renderTemplate(textTemplate, lead, mailbox, settings);
   const trackingId = crypto.randomUUID();
   const pixel =
-    item.tracking_enabled && runtime.publicTrackingUrl
+    item.tracking_enabled && !deliveryDryRun && runtime.publicTrackingUrl
       ? `<img src="${runtime.publicTrackingUrl.replace(/\/$/, "")}/t/open/${trackingId}.gif" width="1" height="1" alt="" style="display:none" />`
       : "";
   const html = `${renderTemplateHtml(htmlTemplate, lead, mailbox, settings)}${pixel}`;
@@ -812,7 +819,7 @@ async function processSendUnlocked(item) {
     headers: { "X-Outreach-Message-ID": message.id },
     inReplyTo: inReplyTo || undefined,
     references: references || undefined,
-  }, attachments);
+  }, attachments, { dryRun: deliveryDryRun });
 
   await query(
     `
@@ -911,7 +918,7 @@ async function processSendUnlocked(item) {
       leadId: item.lead_id,
       mailboxId: item.mailbox_id,
       messageId: message.id,
-      payload: { mode: item.mode, to, dryRun: runtime.dryRun, outreachDraftId: item.outreach_draft_id },
+      payload: { mode: item.mode, to, dryRun: deliveryDryRun, outreachDraftId: item.outreach_draft_id },
     });
     return;
   }
@@ -927,7 +934,21 @@ async function processSendUnlocked(item) {
     )
   ).rows[0];
 
-  if (nextStep) {
+  if (item.mode === "test" && nextStep) {
+    const delay = randomDelayMinutes(item.min_delay_minutes, item.max_delay_minutes);
+    await query(
+      `
+        INSERT INTO sending_queue(
+          enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id,
+          mode, requires_approval, scheduled_at, run_id
+        )
+        VALUES ($1,$2,$3,$4,$5,'test',false,now() + (($6 || ' days')::interval) + (($7 || ' minutes')::interval),$8)
+      `,
+      [item.enrollment_id, item.lead_id, item.campaign_id, nextStep.id, item.mailbox_id, nextStep.delay_days, delay, item.run_id || null],
+    );
+  } else if (item.mode === "test") {
+    // Test runs do not mutate the shared real enrollment lifecycle.
+  } else if (nextStep) {
     const delay = randomDelayMinutes(item.min_delay_minutes, item.max_delay_minutes);
     await query(
       `
@@ -947,7 +968,7 @@ async function processSendUnlocked(item) {
     campaignId: item.campaign_id,
     mailboxId: item.mailbox_id,
     messageId: message.id,
-    payload: { mode: item.mode, to, dryRun: runtime.dryRun },
+    payload: { mode: item.mode, to, dryRun: deliveryDryRun },
   });
 }
 
@@ -980,6 +1001,22 @@ async function failSend(item, error) {
   let pauseUntil = null;
   let errorCount = Number(item.error_count || 0);
   let throttleMinutes = 0;
+  const queue = await query(
+    `
+      UPDATE sending_queue
+      SET status = $2,
+          scheduled_at = now() + (($3 * 10) || ' minutes')::interval,
+          last_error = $4,
+          quota_reservation_active = false,
+          quota_reserved_at = NULL,
+          updated_at = now()
+      WHERE id = $1
+        AND status = 'running'
+      RETURNING id
+    `,
+    [item.id, retry ? "retrying" : "failed", item.attempts + 1, error.message],
+  );
+  if (!queue.rowCount) return false;
   if (!error.nonMailbox) {
     const mailbox = await query(
       `
@@ -1001,22 +1038,6 @@ async function failSend(item, error) {
     throttleMinutes = throttleDelayMinutes(errorCount);
     pauseUntil = mailbox.rows[0]?.paused_until || null;
   }
-  await query(
-    `
-      UPDATE sending_queue
-      SET status = $2,
-          scheduled_at = CASE
-            WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz
-            ELSE now() + (($3 * 10) || ' minutes')::interval
-          END,
-          last_error = $4,
-          quota_reservation_active = false,
-          quota_reserved_at = NULL,
-          updated_at = now()
-      WHERE id = $1
-    `,
-    [item.id, retry ? "retrying" : "failed", item.attempts + 1, error.message, retry ? pauseUntil : null],
-  );
   if (retry && pauseUntil) {
     await query(
       `
@@ -1043,6 +1064,7 @@ async function failSend(item, error) {
       reason: throttleMinutes ? "adaptive_throttle" : "send_error",
     },
   });
+  return true;
 }
 
 async function recoverInterruptedQueues({ staleOnly = false } = {}) {
