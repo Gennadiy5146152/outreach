@@ -15,7 +15,7 @@ import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { affectedLeadIds, cancelOutreachForScope } from "./services/outreach-stop.js";
-import { outreachStopAllImpact, stopAllOutreach } from "./services/outreach-control.js";
+import { lockOutreachQueueMutation, outreachStopAllImpact, stopAllOutreach } from "./services/outreach-control.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
 import { saveSecretToDotenv } from "./services/secret-file.js";
@@ -626,8 +626,8 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
   if (!Number.isFinite(inboxSyncIntervalSeconds) || inboxSyncIntervalSeconds < 1 || inboxSyncIntervalSeconds > 3600) {
     return res.status(400).json({ error: "inbox_sync_interval_must_be_between_1_and_3600_seconds" });
   }
-  if (!Number.isInteger(outreachDailyLimit) || outreachDailyLimit < 1 || outreachDailyLimit > 10_000) {
-    return res.status(400).json({ error: "outreach_daily_limit_must_be_between_1_and_10000" });
+  if (!Number.isInteger(outreachDailyLimit) || outreachDailyLimit < 1 || outreachDailyLimit > 100) {
+    return res.status(400).json({ error: "outreach_daily_limit_must_be_between_1_and_100" });
   }
   if (!isValidTimeZone(timeZone)) {
     return res.status(400).json({ error: "invalid_time_zone" });
@@ -2421,6 +2421,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   const summary = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
+      await lockOutreachQueueMutation(client);
       const drafts = (await client.query(
         `
           SELECT d.*, s.id AS step_id, s.subject AS step_subject, s.body_text AS step_body_text, s.body_html AS step_body_html
@@ -3171,8 +3172,10 @@ app.get("/api/outreach/stop-all/impact", asyncHandler(async (_req, res) => {
   res.json(await outreachStopAllImpact({ query }));
 }));
 
-app.post("/api/outreach/stop-all", asyncHandler(async (_req, res) => {
-  const result = await withClient((client) => stopAllOutreach(client));
+app.post("/api/outreach/stop-all", asyncHandler(async (req, res) => {
+  const snapshotToken = String(req.body.snapshot_token || "").trim();
+  if (!snapshotToken) return res.status(400).json({ error: "outreach_stop_snapshot_required" });
+  const result = await withClient((client) => stopAllOutreach(client, snapshotToken));
   await logEvent("all_outreach_stopped", { payload: result });
   res.json(result);
 }));
@@ -5577,6 +5580,7 @@ app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
+      await lockOutreachQueueMutation(client);
       const run = (await client.query(
         `
           INSERT INTO outreach_runs(source_type, source_id, title, mode)

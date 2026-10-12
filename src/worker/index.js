@@ -8,7 +8,7 @@ import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
 import { quotaRemaining } from "../services/outreach-quota.js";
 import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
-import { OUTREACH_MIN_SPACING_MINUTES } from "../services/outreach-control.js";
+import { lockOutreachQueueMutation, OUTREACH_MIN_SPACING_MINUTES, withOutreachDeliveryLock } from "../services/outreach-control.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
 import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
@@ -409,12 +409,16 @@ async function handleJob(job) {
 }
 
 async function scheduleDueEnrollments() {
-  await query(
-    `
+  await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await lockOutreachQueueMutation(client);
+      await client.query(
+        `
       INSERT INTO sending_queue(enrollment_id, lead_id, campaign_id, campaign_step_id, mailbox_id, mode, requires_approval, scheduled_at, run_id)
       SELECT e.id, e.lead_id, e.campaign_id, s.id, e.mailbox_id,
-             CASE WHEN c.manual_approval_required THEN 'manual' ELSE 'auto' END,
-             c.manual_approval_required,
+             CASE WHEN c.test_mode THEN 'test' WHEN c.manual_approval_required THEN 'manual' ELSE 'auto' END,
+             CASE WHEN c.test_mode THEN false ELSE c.manual_approval_required END,
              e.next_send_at,
              latest_queue.run_id
       FROM enrollments e
@@ -438,8 +442,14 @@ async function scheduleDueEnrollments() {
             AND q.campaign_step_id = s.id
             AND q.status IN ('pending','running','retrying','sent')
         )
-    `,
-  );
+        `,
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
 }
 
 async function lockNextSend() {
@@ -527,17 +537,26 @@ async function lockNextSend() {
           )
           AND (
             q.mode = 'test'
-            OR NOT EXISTS (
-              SELECT 1
-              FROM messages spacing_msg
-              WHERE spacing_msg.mailbox_id = q.mailbox_id
-                AND spacing_msg.type = 'outreach'
-                AND spacing_msg.direction = 'outbound'
-                AND spacing_msg.status = 'sent'
-                AND COALESCE(spacing_msg.provider_message_id, '') <> 'dry-run'
-                AND spacing_msg.sent_at > now() - make_interval(
-                  mins => GREATEST($4::int, COALESCE(m.min_delay_minutes, 0))
-                )
+            OR (
+              NOT EXISTS (
+                SELECT 1
+                FROM messages spacing_msg
+                WHERE spacing_msg.mailbox_id = q.mailbox_id
+                  AND spacing_msg.type = 'outreach'
+                  AND spacing_msg.direction = 'outbound'
+                  AND spacing_msg.status = 'sent'
+                  AND COALESCE(spacing_msg.provider_message_id, '') <> 'dry-run'
+                  AND spacing_msg.sent_at > now() - make_interval(
+                    mins => GREATEST($4::int, COALESCE(m.min_delay_minutes, 0))
+                  )
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM sending_queue spacing_queue
+                WHERE spacing_queue.mailbox_id = q.mailbox_id
+                  AND spacing_queue.quota_reservation_active = true
+                  AND spacing_queue.mode <> 'test'
+              )
             )
           )
           AND (m.paused_until IS NULL OR m.paused_until <= now())
@@ -642,7 +661,7 @@ async function releaseQueueQuotaReservation(queueId) {
   );
 }
 
-async function processSend(item) {
+async function processSendUnlocked(item) {
   if (item.validation_status === "invalid" || item.suppressed_at) {
     throw nonMailboxError("Lead is invalid or suppressed");
   }
@@ -926,6 +945,24 @@ async function processSend(item) {
     messageId: message.id,
     payload: { mode: item.mode, to, dryRun: runtime.dryRun },
   });
+}
+
+async function processSend(item) {
+  const execute = async () => {
+    if (await queueItemCancelled(item.id)) {
+      await releaseQueueQuotaReservation(item.id);
+      return;
+    }
+    try {
+      await processSendUnlocked(item);
+    } catch (error) {
+      console.error(error);
+      await failSend(item, error);
+    }
+  };
+
+  if (item.mode === "test") return execute();
+  return withClient((client) => withOutreachDeliveryLock(client, execute));
 }
 
 async function failSend(item, error) {
@@ -2000,12 +2037,7 @@ async function tick() {
 
   const sendItem = await lockNextSend();
   if (sendItem) {
-    try {
-      await processSend(sendItem);
-    } catch (error) {
-      console.error(error);
-      await failSend(sendItem, error);
-    }
+    await processSend(sendItem);
   }
 
   const job = await lockNextJob();

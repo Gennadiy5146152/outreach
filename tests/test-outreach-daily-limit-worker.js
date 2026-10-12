@@ -29,7 +29,13 @@ for (const required of [
   "spacing_msg.type = 'outreach'",
   "spacing_msg.status = 'sent'",
   "spacing_msg.sent_at > now() - make_interval",
+  "spacing_queue.mailbox_id = q.mailbox_id",
+  "spacing_queue.quota_reservation_active = true",
+  "spacing_queue.mode <> 'test'",
   "q.mode = 'test'",
+  "withOutreachDeliveryLock",
+  "lockOutreachQueueMutation",
+  "WHEN c.test_mode THEN 'test'",
 ]) {
   assert.ok(worker.includes(required), `worker aggregate quota should include ${required}`);
 }

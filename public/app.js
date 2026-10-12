@@ -1823,7 +1823,7 @@ async function stopRun(runId, button) {
 
 async function stopAllOutreach(button) {
   const impact = await api("/api/outreach/stop-all/impact");
-  if (Number(impact.active_queue || 0) === 0 && Number(impact.active_enrollments || 0) === 0 && Number(impact.active_drafts || 0) === 0) {
+  if (Number(impact.active_queue || 0) === 0 && Number(impact.active_runs || 0) === 0 && Number(impact.active_enrollments || 0) === 0 && Number(impact.active_drafts || 0) === 0) {
     setActionResult({
       status: "success",
       title: "Остановка всей рассылки",
@@ -1841,7 +1841,10 @@ async function stopAllOutreach(button) {
     pending: "Останавливаю все первые письма и follow-up...",
     button,
   }, async () => {
-    const result = await api("/api/outreach/stop-all", { method: "POST" });
+    const result = await api("/api/outreach/stop-all", {
+      method: "POST",
+      body: { snapshot_token: impact.snapshot_token },
+    });
     state.selectedRunLeadIds = new Set();
     state.runDetailCache.clear();
     await Promise.all([loadRuns(null, { forceDetail: true }), loadParticipation({ reloadFilters: true }), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations()]);
@@ -4415,7 +4418,7 @@ async function loadSettings() {
       </label>
       <label class="settings-row">
         <span>Общий лимит outreach в сутки</span>
-        <input name="outreachDailyLimit" type="number" min="1" max="10000" step="1" value="${Number(settings.runtime.outreachDailyLimit || 100)}" />
+        <input name="outreachDailyLimit" type="number" min="1" max="100" step="1" value="${Number(settings.runtime.outreachDailyLimit || 100)}" />
       </label>
       <label class="settings-row">
         <span>Лимит вложений</span>

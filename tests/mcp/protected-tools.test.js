@@ -22,7 +22,7 @@ function createProtectedFixture() {
     conversation: { conversation: { id: "conversation-1", status: "needs_review", updated_at: "2026-10-11T10:00:00Z", email: "lead@example.com", last_message_at: "2026-10-11T09:00:00Z" }, messages: [] },
     suppressions: [],
     run: { id: "run-1", status: "active", updated_at: "2026-10-11T10:00:00Z", total_recipients: 4 },
-    stopAllImpact: { active_queue: 5, first_touches: 3, followups: 2, active_runs: 2, active_enrollments: 4, active_drafts: 5 },
+    stopAllImpact: { active_queue: 5, first_touches: 3, followups: 2, active_runs: 2, active_enrollments: 4, active_drafts: 5, snapshot_token: "snapshot-1" },
     settings: { runtime: { dryRun: false, publicTrackingUrl: "https://track.example.com", maxAttachmentMb: 50, outreachStopScope: "company", timeZone: "Europe/Moscow", inboxSyncIntervalSeconds: 60 } },
     mailboxes: [{ id: "mailbox-1", email: "sales@example.com", is_active: true, smtp_verified_at: "2026-10-11T08:00:00Z" }],
     failNextMutation: false,
@@ -183,7 +183,7 @@ test("protected workflows prepare authoritative state and execute only with conf
     },
     {
       prepare: "run_control", prepareInput: { phase: "prepare", action: "stop_all" },
-      execute: "run_control", executeInput: { phase: "execute" }, mutation: { method: "post", endpoint: "/api/outreach/stop-all", body: {} },
+      execute: "run_control", executeInput: { phase: "execute" }, mutation: { method: "post", endpoint: "/api/outreach/stop-all", body: { snapshot_token: "snapshot-1" } },
     },
     {
       prepare: "conversation_action", prepareInput: { phase: "prepare", action: "delay", conversation_id: "conversation-1", values: { until: "2026-10-20T09:00:00Z" } },

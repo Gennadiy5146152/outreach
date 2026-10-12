@@ -1,4 +1,18 @@
 export const OUTREACH_MIN_SPACING_MINUTES = 2;
+export const OUTREACH_DELIVERY_LOCK = "outreach_delivery_control";
+
+export async function lockOutreachQueueMutation(client) {
+  await client.query("SELECT pg_advisory_xact_lock_shared(hashtext($1))", [OUTREACH_DELIVERY_LOCK]);
+}
+
+export async function withOutreachDeliveryLock(client, callback) {
+  await client.query("SELECT pg_advisory_lock_shared(hashtext($1))", [OUTREACH_DELIVERY_LOCK]);
+  try {
+    return await callback(client);
+  } finally {
+    await client.query("SELECT pg_advisory_unlock_shared(hashtext($1))", [OUTREACH_DELIVERY_LOCK]);
+  }
+}
 
 export async function outreachStopAllImpact(client) {
   const result = await client.query(
@@ -6,43 +20,65 @@ export async function outreachStopAllImpact(client) {
       WITH active_queue AS (
         SELECT
           q.id,
-          COALESCE(cs.position, ods.position, 1) AS step_position
+          COALESCE(cs.position, ods.position, 1) AS step_position,
+          COALESCE(
+            'draft:' || q.outreach_draft_id::text,
+            'enrollment:' || q.enrollment_id::text,
+            'run:' || q.run_id::text,
+            'queue:' || q.id::text
+          ) AS owner_key
         FROM sending_queue q
         LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
         LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
         WHERE q.status IN ('pending','retrying','running')
           AND q.mode <> 'test'
+      ),
+      active_runs AS (
+        SELECT run.id
+        FROM outreach_runs run
+        WHERE run.status = 'active'
+          AND run.mode <> 'test'
+      ),
+      active_enrollments AS (
+        SELECT enrollment.id
+        FROM enrollments enrollment
+        JOIN campaigns campaign ON campaign.id = enrollment.campaign_id
+        WHERE enrollment.status = 'active'
+          AND (
+            campaign.test_mode = false
+            OR EXISTS (
+              SELECT 1
+              FROM sending_queue enrollment_queue
+              WHERE enrollment_queue.enrollment_id = enrollment.id
+                AND enrollment_queue.mode <> 'test'
+            )
+          )
+      ),
+      active_drafts AS (
+        SELECT draft.id
+        FROM outreach_drafts draft
+        WHERE draft.status IN ('queued','active_sequence','paused')
+      ),
+      affected_entities AS (
+        SELECT 'queue-owner:' || owner_key AS entity_key FROM active_queue
+        UNION
+        SELECT 'run:' || id::text FROM active_runs
+        UNION
+        SELECT 'enrollment:' || id::text FROM active_enrollments
+        UNION
+        SELECT 'draft:' || id::text FROM active_drafts
       )
       SELECT
         (SELECT count(*)::int FROM active_queue) AS active_queue,
         (SELECT count(*)::int FROM active_queue WHERE step_position <= 1) AS first_touches,
         (SELECT count(*)::int FROM active_queue WHERE step_position > 1) AS followups,
-        (
-          SELECT count(*)::int
-          FROM outreach_runs run
-          WHERE run.status = 'active'
-            AND run.mode <> 'test'
-        ) AS active_runs,
-        (
-          SELECT count(*)::int
-          FROM enrollments enrollment
-          JOIN campaigns campaign ON campaign.id = enrollment.campaign_id
-          WHERE enrollment.status = 'active'
-            AND (
-              campaign.test_mode = false
-              OR EXISTS (
-                SELECT 1
-                FROM sending_queue enrollment_queue
-                WHERE enrollment_queue.enrollment_id = enrollment.id
-                  AND enrollment_queue.mode <> 'test'
-              )
-            )
-        ) AS active_enrollments,
-        (
-          SELECT count(*)::int
-          FROM outreach_drafts
-          WHERE status IN ('queued','active_sequence','paused')
-        ) AS active_drafts
+        (SELECT count(*)::int FROM active_runs) AS active_runs,
+        (SELECT count(*)::int FROM active_enrollments) AS active_enrollments,
+        (SELECT count(*)::int FROM active_drafts) AS active_drafts,
+        md5(COALESCE(
+          (SELECT string_agg(entity_key, ',' ORDER BY entity_key) FROM affected_entities),
+          ''
+        )) AS snapshot_token
     `,
   );
   return result.rows[0] || {
@@ -52,12 +88,25 @@ export async function outreachStopAllImpact(client) {
     active_runs: 0,
     active_enrollments: 0,
     active_drafts: 0,
+    snapshot_token: "d41d8cd98f00b204e9800998ecf8427e",
   };
 }
 
-export async function stopAllOutreach(client) {
+export async function stopAllOutreach(client, expectedSnapshotToken) {
+  if (!expectedSnapshotToken) {
+    const error = new Error("outreach_stop_snapshot_required");
+    error.status = 400;
+    throw error;
+  }
   await client.query("BEGIN");
   try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [OUTREACH_DELIVERY_LOCK]);
+    const impact = await outreachStopAllImpact(client);
+    if (impact.snapshot_token !== expectedSnapshotToken) {
+      const error = new Error("outreach_stop_snapshot_changed");
+      error.status = 409;
+      throw error;
+    }
     const cancelled = await client.query(
       `
         UPDATE sending_queue

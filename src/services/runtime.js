@@ -9,7 +9,7 @@ function toNumber(value, fallback) {
 
 export function normalizeOutreachDailyLimit(value) {
   const limit = Math.round(Number(value));
-  if (!Number.isFinite(limit) || limit < 1 || limit > 10_000) return 100;
+  if (!Number.isFinite(limit) || limit < 1 || limit > 100) return 100;
   return limit;
 }
 

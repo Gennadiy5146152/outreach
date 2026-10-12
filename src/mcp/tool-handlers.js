@@ -464,7 +464,7 @@ export function createToolHandlers({ client, confirmations }) {
       if (plan.payload.action === "stop_all") {
         const impact = await client.get("/api/outreach/stop-all/impact");
         verify(plan, impact);
-        return success("Вся рассылка остановлена.", await client.post("/api/outreach/stop-all", {}), ["runs_list", "queue_list"]);
+        return success("Вся рассылка остановлена.", await client.post("/api/outreach/stop-all", { snapshot_token: impact.snapshot_token }), ["runs_list", "queue_list"]);
       }
       const state = await runControlState(plan.payload.run_id, plan.payload.lead_ids || []);
       verify(plan, state);
