@@ -6,7 +6,7 @@ import { analyzeInboundReplyWithAi, suggestThreadMatchWithAi } from "../services
 import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
-import { effectiveOutreachDryRun, quotaRemaining } from "../services/outreach-quota.js";
+import { effectiveOutreachDryRun } from "../services/outreach-quota.js";
 import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
 import { lockOutreachQueueMutation, OUTREACH_MIN_SPACING_MINUTES, withOutreachDeliveryLock } from "../services/outreach-control.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
@@ -473,41 +473,6 @@ async function lockNextSend() {
     await client.query("BEGIN");
     try {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('outreach_daily_quota'))");
-      const usage = (
-        await client.query(
-          `
-            WITH day_bounds AS (
-              SELECT
-                ((now() AT TIME ZONE $1)::date::timestamp AT TIME ZONE $1) AS day_start,
-                (((now() AT TIME ZONE $1)::date + 1)::timestamp AT TIME ZONE $1) AS day_end
-            )
-            SELECT
-              (
-                SELECT count(*)::int
-                FROM messages msg, day_bounds bounds
-                WHERE msg.type = 'outreach'
-                  AND msg.direction = 'outbound'
-                  AND msg.status = 'sent'
-                  AND COALESCE(msg.provider_message_id, '') <> 'dry-run'
-                  AND msg.sent_at >= bounds.day_start
-                  AND msg.sent_at < bounds.day_end
-              ) AS sent_count,
-              (
-                SELECT count(*)::int
-                FROM sending_queue reserved_queue
-                WHERE reserved_queue.quota_reservation_active = true
-                  AND reserved_queue.mode <> 'test'
-              ) AS running_count
-          `,
-          [runtime.timeZone],
-        )
-      ).rows[0];
-      const globalUsed = Number(usage?.sent_count || 0) + Number(usage?.running_count || 0);
-      const globalQuotaAvailable = runtime.dryRun || quotaRemaining({
-        globalLimit: runtime.outreachDailyLimit,
-        globalUsed,
-      }) > 0;
-
       const result = await client.query(
         `
         WITH day_bounds AS (
@@ -578,31 +543,27 @@ async function lockNextSend() {
           AND (
             q.mode = 'test' OR $2::boolean
             OR (
-              $3::boolean
-              AND (
-                m.daily_send_limit IS NULL
-                OR (
-                  (
-                    SELECT count(*)
-                    FROM messages mailbox_msg, day_bounds bounds
-                    WHERE mailbox_msg.mailbox_id = q.mailbox_id
-                      AND mailbox_msg.type = 'outreach'
-                      AND mailbox_msg.direction = 'outbound'
-                      AND mailbox_msg.status = 'sent'
-                      AND COALESCE(mailbox_msg.provider_message_id, '') <> 'dry-run'
-                      AND mailbox_msg.sent_at >= bounds.day_start
-                      AND mailbox_msg.sent_at < bounds.day_end
-                  )
-                  +
-                  (
-                    SELECT count(*)
-                    FROM sending_queue reserved_queue
-                    WHERE reserved_queue.mailbox_id = q.mailbox_id
-                      AND reserved_queue.quota_reservation_active = true
-                      AND reserved_queue.mode <> 'test'
-                  )
-                ) < m.daily_send_limit
-              )
+              (
+                (
+                  SELECT count(*)
+                  FROM messages mailbox_msg, day_bounds bounds
+                  WHERE mailbox_msg.mailbox_id = q.mailbox_id
+                    AND mailbox_msg.type = 'outreach'
+                    AND mailbox_msg.direction = 'outbound'
+                    AND mailbox_msg.status = 'sent'
+                    AND COALESCE(mailbox_msg.provider_message_id, '') <> 'dry-run'
+                    AND mailbox_msg.sent_at >= bounds.day_start
+                    AND mailbox_msg.sent_at < bounds.day_end
+                )
+                +
+                (
+                  SELECT count(*)
+                  FROM sending_queue reserved_queue
+                  WHERE reserved_queue.mailbox_id = q.mailbox_id
+                    AND reserved_queue.quota_reservation_active = true
+                    AND reserved_queue.mode <> 'test'
+                )
+              ) < COALESCE(m.daily_send_limit, $3::int)
               AND (
                 c.daily_limit IS NULL
                 OR (
@@ -634,7 +595,7 @@ async function lockNextSend() {
         FOR UPDATE OF q SKIP LOCKED
         LIMIT 1
       `,
-        [runtime.timeZone, runtime.dryRun, globalQuotaAvailable, OUTREACH_MIN_SPACING_MINUTES],
+        [runtime.timeZone, runtime.dryRun, runtime.outreachDailyLimit, OUTREACH_MIN_SPACING_MINUTES],
       );
       if (!result.rowCount) {
         await client.query("COMMIT");

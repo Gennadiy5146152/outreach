@@ -4418,7 +4418,7 @@ async function loadSettings() {
         <input name="publicTrackingUrl" value="${esc(settings.runtime.publicTrackingUrl || "")}" placeholder="https://your-public-tunnel.example" />
       </label>
       <label class="settings-row">
-        <span>Общий лимит outreach в сутки</span>
+        <span>Лимит outreach на один ящик в сутки</span>
         <input name="outreachDailyLimit" type="number" min="1" max="100" step="1" value="${Number(settings.runtime.outreachDailyLimit || 100)}" />
       </label>
       <label class="settings-row">

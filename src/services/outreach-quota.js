@@ -4,16 +4,17 @@ function remaining(limit, used) {
 }
 
 export function quotaRemaining({
-  globalLimit,
-  globalUsed,
+  mailboxDefaultLimit,
   mailboxLimit = null,
   mailboxUsed = 0,
   campaignLimit = null,
   campaignUsed = 0,
 }) {
+  const effectiveMailboxLimit = mailboxLimit === null || mailboxLimit === undefined
+    ? mailboxDefaultLimit
+    : mailboxLimit;
   return Math.max(0, Math.min(
-    remaining(globalLimit, globalUsed),
-    remaining(mailboxLimit, mailboxUsed),
+    remaining(effectiveMailboxLimit, mailboxUsed),
     remaining(campaignLimit, campaignUsed),
   ));
 }

@@ -4,7 +4,7 @@ import { normalizeOutreachDailyLimit } from "../src/services/runtime.js";
 
 assert.equal(normalizeOutreachDailyLimit(undefined), 100, "missing limit should default to 100");
 assert.equal(normalizeOutreachDailyLimit("100"), 100, "numeric form values should normalize");
-assert.equal(normalizeOutreachDailyLimit("250"), 100, "the aggregate limit must never exceed 100");
+assert.equal(normalizeOutreachDailyLimit("250"), 100, "the per-mailbox limit must never exceed 100");
 assert.equal(normalizeOutreachDailyLimit(0), 100, "zero should fall back to the safe default");
 assert.equal(normalizeOutreachDailyLimit(10001), 100, "values above the supported maximum should fall back");
 
@@ -20,9 +20,10 @@ for (const required of [
   assert.ok(server.includes(required), `server runtime API should include ${required}`);
 }
 
-assert.ok(app.includes('name="outreachDailyLimit"'), "settings UI should expose the aggregate outreach limit");
-assert.ok(app.includes('max="100"'), "settings UI should not accept an aggregate limit above 100");
+assert.ok(app.includes('name="outreachDailyLimit"'), "settings UI should expose the per-mailbox outreach limit");
+assert.ok(app.includes("Лимит outreach на один ящик в сутки"), "settings UI should explain that the limit applies to each mailbox");
+assert.ok(app.includes('max="100"'), "settings UI should not accept a per-mailbox limit above 100");
 assert.ok(app.includes("payload.outreachDailyLimit = Number(payload.outreachDailyLimit)"), "settings form should submit a numeric limit");
 assert.ok(handlers.includes("outreachDailyLimit: runtime.outreachDailyLimit || 100"), "MCP delivery-mode update should preserve the limit");
 
-console.log("OK: aggregate outreach daily limit settings are wired through runtime, API, UI, and MCP");
+console.log("OK: per-mailbox outreach daily limit settings are wired through runtime, API, UI, and MCP");

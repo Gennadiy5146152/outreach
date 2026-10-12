@@ -6,7 +6,7 @@ const mail = fs.readFileSync(new URL("../src/services/mail.js", import.meta.url)
 const migration = fs.readFileSync(new URL("../db/migrations/014_outreach_quota_reservations.sql", import.meta.url), "utf8");
 
 for (const required of [
-  'import { effectiveOutreachDryRun, quotaRemaining } from "../services/outreach-quota.js"',
+  'import { effectiveOutreachDryRun } from "../services/outreach-quota.js"',
   "pg_advisory_xact_lock(hashtext('outreach_daily_quota'))",
   "runtime.outreachDailyLimit",
   "msg.type = 'outreach'",
@@ -16,10 +16,9 @@ for (const required of [
   "::timestamp AT TIME ZONE $1",
   "reserved_queue.quota_reservation_active = true",
   "reserved_queue.mode <> 'test'",
-  "COALESCE(msg.provider_message_id, '') <> 'dry-run'",
-  "m.daily_send_limit",
+  "COALESCE(mailbox_msg.provider_message_id, '') <> 'dry-run'",
+  "COALESCE(m.daily_send_limit, $3::int)",
   "c.daily_limit",
-  "quotaRemaining({",
   "shouldReserveOutreachQuota({ dryRun: runtime.dryRun, mode: item.mode })",
   "q.mode = 'test' OR $2::boolean",
   "status <> 'running'",
@@ -47,8 +46,10 @@ for (const required of [
   "AND status = 'running'",
   "item.mode === \"test\" && nextStep",
 ]) {
-  assert.ok(worker.includes(required), `worker aggregate quota should include ${required}`);
+  assert.ok(worker.includes(required), `worker per-mailbox quota should include ${required}`);
 }
+
+assert.ok(!worker.includes("globalQuotaAvailable"), "worker must not share one quota across all mailboxes");
 
 for (const required of ["options.dryRun", "Boolean(options.dryRun)"]) {
   assert.ok(mail.includes(required), `mail delivery should support a pinned dry-run decision: ${required}`);
@@ -61,4 +62,4 @@ assert.match(worker, /console\.log\("Outreach worker started"\);\s*await recover
 assert.ok(migration.includes("quota_reservation_active boolean NOT NULL DEFAULT false"), "migration should persist reservation ownership across queue status changes");
 assert.ok(migration.includes("quota_reserved_at timestamptz"), "migration should timestamp quota leases for stale recovery");
 
-console.log("OK: worker enforces aggregate outreach quota and prioritizes follow-ups");
+console.log("OK: worker enforces a separate outreach quota per mailbox and prioritizes follow-ups");

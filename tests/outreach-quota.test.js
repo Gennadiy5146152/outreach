@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { effectiveOutreachDryRun, quotaRemaining, shouldReserveOutreachQuota } from "../src/services/outreach-quota.js";
 
-test("global quota counts every outreach reservation", () => {
-  assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 70 }), 30);
-  assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 100 }), 0);
+test("each mailbox receives its own default daily quota", () => {
+  assert.equal(quotaRemaining({ mailboxDefaultLimit: 100, mailboxUsed: 100 }), 0);
+  assert.equal(quotaRemaining({ mailboxDefaultLimit: 100, mailboxUsed: 0 }), 100);
 });
 
-test("mailbox and campaign limits can only reduce remaining capacity", () => {
+test("an explicit mailbox limit overrides the default and campaign limits can only reduce it", () => {
   assert.equal(quotaRemaining({
-    globalLimit: 100,
-    globalUsed: 40,
+    mailboxDefaultLimit: 100,
     mailboxLimit: 20,
     mailboxUsed: 15,
     campaignLimit: 10,
@@ -18,20 +17,19 @@ test("mailbox and campaign limits can only reduce remaining capacity", () => {
   }), 1);
 });
 
-test("null local limits leave the global quota authoritative", () => {
+test("a missing explicit mailbox limit falls back to the per-mailbox default", () => {
   assert.equal(quotaRemaining({
-    globalLimit: 100,
-    globalUsed: 40,
+    mailboxDefaultLimit: 100,
     mailboxLimit: null,
-    mailboxUsed: 500,
+    mailboxUsed: 40,
     campaignLimit: null,
     campaignUsed: 500,
   }), 60);
 });
 
 test("released running reservation restores one slot", () => {
-  assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 100 }), 0);
-  assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 99 }), 1);
+  assert.equal(quotaRemaining({ mailboxDefaultLimit: 100, mailboxUsed: 100 }), 0);
+  assert.equal(quotaRemaining({ mailboxDefaultLimit: 100, mailboxUsed: 99 }), 1);
 });
 
 test("dry-run and test sends never reserve real outreach quota", () => {
