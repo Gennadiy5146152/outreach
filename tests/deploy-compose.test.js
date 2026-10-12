@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const runtimeEnvPath = path.join(os.tmpdir(), `outreach-runtime-${process.pid}.env`);
+fs.writeFileSync(runtimeEnvPath, "MAILBOX_PERSISTENCE_TEST=runtime-file\n");
 
 function productionConfig() {
   const output = execFileSync(
@@ -17,6 +20,7 @@ function productionConfig() {
       env: {
         ...process.env,
         OUTREACH_ENV_FILE: ".env.example",
+        OUTREACH_RUNTIME_ENV_FILE: runtimeEnvPath,
         OUTREACH_STORAGE_DIR: path.join(root, "storage"),
         OUTREACH_IMAGE_TAG: "test-sha",
       },
@@ -71,5 +75,14 @@ test("Docker build excludes runtime data", () => {
   assert.match(dockerfile, /USER node/);
   for (const entry of [".git", ".env*", "node_modules", "storage", "tests", "docs"]) {
     assert.ok(ignored.has(entry), `expected ${entry} in .dockerignore`);
+  }
+});
+
+test("mailbox secret updates use a persistent runtime env file", () => {
+  const config = productionConfig();
+  for (const serviceName of ["web", "worker"]) {
+    const environment = config.services[serviceName].environment;
+    assert.equal(environment.MAILBOX_PERSISTENCE_TEST, "runtime-file");
+    assert.equal(environment.OUTREACH_SECRETS_FILE, "/app/storage/runtime.env");
   }
 });

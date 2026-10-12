@@ -17,6 +17,7 @@ import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./serv
 import { affectedLeadIds, cancelOutreachForScope } from "./services/outreach-stop.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
+import { saveSecretToDotenv } from "./services/secret-file.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 import { createAuth, timingSafeEqualText } from "./http/auth.js";
 
@@ -40,7 +41,6 @@ const attachmentUpload = multer({
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const DOTENV_PATH = path.resolve(process.cwd(), ".env");
 const {
   authConfigured,
   isAuthenticated,
@@ -271,38 +271,6 @@ function mailboxPasswordEnvKey(email) {
     .replace(/^_+|_+$/g, "")
     .toUpperCase() || "MAILBOX";
   return `MAILBOX_${mailboxKey}_PASSWORD`;
-}
-
-function formatDotenvValue(value) {
-  return `"${String(value || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")}"`;
-}
-
-async function saveSecretToDotenv(key, value) {
-  const normalizedKey = String(key || "").trim();
-  if (!/^[A-Z_][A-Z0-9_]*$/.test(normalizedKey)) {
-    throw new Error("invalid_password_env_key");
-  }
-
-  const line = `${normalizedKey}=${formatDotenvValue(value)}`;
-  let current = "";
-  try {
-    current = await fs.readFile(DOTENV_PATH, "utf8");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-
-  const lines = current ? current.split(/\r?\n/) : [];
-  const index = lines.findIndex((item) => item.trim().startsWith(`${normalizedKey}=`));
-  if (index >= 0) lines[index] = line;
-  else lines.push(line);
-
-  const body = lines.filter((item, idx) => item || idx < lines.length - 1).join("\n");
-  await fs.writeFile(DOTENV_PATH, `${body}\n`);
-  process.env[normalizedKey] = String(value || "");
-  return normalizedKey;
 }
 
 function withTimeout(promise, ms, label) {

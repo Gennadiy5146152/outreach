@@ -13,6 +13,7 @@ database dump automatically, and never copies application secrets to GitHub.
 | --- | --- |
 | Git checkout and server `.env` | `/root/outreach` |
 | Attachment storage | `/root/outreach/storage` |
+| Mailbox secrets written by the web UI | `/root/outreach/storage/runtime.env` |
 | Root-owned deploy entry point | `/usr/local/sbin/outreach-deploy` |
 | Current and previous SHA markers | `/var/lib/outreach-deploy` |
 | Compressed PostgreSQL backups | `/var/backups/outreach` |
@@ -20,6 +21,9 @@ database dump automatically, and never copies application secrets to GitHub.
 
 The Compose project name is fixed as `outreach-desk`, so the production stack
 continues to use the existing `outreach-desk_postgres_data` volume.
+The main `.env` remains root-managed. Passwords added or changed in the web UI
+are written to the persistent `runtime.env`, which is loaded after `.env` on
+every container start and is never copied into the image.
 
 ## One-time server bootstrap
 

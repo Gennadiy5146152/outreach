@@ -4,9 +4,11 @@ x-app: &app
   image: outreach-desk-app:${OUTREACH_IMAGE_TAG:-local}
   env_file:
     - ${OUTREACH_ENV_FILE:-/root/outreach/.env}
+    - ${OUTREACH_RUNTIME_ENV_FILE:-/root/outreach/storage/runtime.env}
   environment:
     NODE_ENV: production
     DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+    OUTREACH_SECRETS_FILE: /app/storage/runtime.env
   volumes:
     - type: bind
       source: ${OUTREACH_STORAGE_DIR:-/root/outreach/storage}

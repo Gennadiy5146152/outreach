@@ -11,6 +11,7 @@ OUTREACH_STATE_DIR=${OUTREACH_STATE_DIR:-/var/lib/outreach-deploy}
 OUTREACH_LOCK_FILE=${OUTREACH_LOCK_FILE:-/var/lock/outreach-deploy.lock}
 OUTREACH_ENV_FILE=${OUTREACH_ENV_FILE:-$OUTREACH_DIR/.env}
 OUTREACH_STORAGE_DIR=${OUTREACH_STORAGE_DIR:-$OUTREACH_DIR/storage}
+OUTREACH_RUNTIME_ENV_FILE=${OUTREACH_RUNTIME_ENV_FILE:-$OUTREACH_STORAGE_DIR/runtime.env}
 OUTREACH_HEALTH_URL=${OUTREACH_HEALTH_URL:-http://127.0.0.1:3000/api/health}
 OUTREACH_PROJECT=${OUTREACH_PROJECT:-outreach-desk}
 OUTREACH_POSTGRES_CONTAINER=${OUTREACH_POSTGRES_CONTAINER:-outreach-desk-postgres-1}
@@ -46,6 +47,7 @@ parse_requested_sha() {
 compose() {
   OUTREACH_IMAGE_TAG=${OUTREACH_IMAGE_TAG:?OUTREACH_IMAGE_TAG is required} \
   OUTREACH_ENV_FILE="$OUTREACH_ENV_FILE" \
+  OUTREACH_RUNTIME_ENV_FILE="$OUTREACH_RUNTIME_ENV_FILE" \
   OUTREACH_STORAGE_DIR="$OUTREACH_STORAGE_DIR" \
     docker compose \
       -p "$OUTREACH_PROJECT" \
@@ -114,17 +116,31 @@ backup_database() {
 
   log "creating PostgreSQL backup"
   rm -f "$temporary"
-  docker exec "$OUTREACH_POSTGRES_CONTAINER" \
+  if ! docker exec "$OUTREACH_POSTGRES_CONTAINER" \
     sh -ceu 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
-    | gzip -c > "$temporary"
-  [[ -s "$temporary" ]] || die "database backup is empty"
-  gzip -t "$temporary" || die "database backup is corrupt"
+    | gzip -c > "$temporary"; then
+    rm -f "$temporary"
+    die "database backup command failed"
+    return 1
+  fi
+  if [[ ! -s "$temporary" ]]; then
+    rm -f "$temporary"
+    die "database backup is empty"
+    return 1
+  fi
+  if ! gzip -t "$temporary"; then
+    rm -f "$temporary"
+    die "database backup is corrupt"
+    return 1
+  fi
   mv "$temporary" "$destination"
   log "database backup created at $destination"
 }
 
 prepare_storage_permissions() {
+  touch "$OUTREACH_RUNTIME_ENV_FILE"
   chown -R 1000:1000 "$OUTREACH_STORAGE_DIR"
+  chmod 0600 "$OUTREACH_RUNTIME_ENV_FILE"
 }
 
 stop_web() {
@@ -155,11 +171,13 @@ start_web() {
 }
 
 wait_for_health() {
-  local attempt container_status
+  local attempt container_health container_state
 
   for attempt in $(seq 1 24); do
-    container_status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$OUTREACH_WEB_CONTAINER" 2>/dev/null || true)
-    if [[ "$container_status" == healthy ]] && curl -fsS --max-time 5 "$OUTREACH_HEALTH_URL" >/dev/null; then
+    container_health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$OUTREACH_WEB_CONTAINER" 2>/dev/null || true)
+    container_state=$(docker inspect -f '{{.State.Status}}' "$OUTREACH_WEB_CONTAINER" 2>/dev/null || true)
+    if { [[ "$container_health" == healthy ]] || { [[ -z "$container_health" ]] && [[ "$container_state" == running ]]; }; } \
+      && curl -fsS --max-time 5 "$OUTREACH_HEALTH_URL" >/dev/null; then
       log "web health check passed"
       return 0
     fi
@@ -185,25 +203,26 @@ rollback_application() {
 
   [[ -n "$previous_sha" ]] || die "previous application commit is unknown"
   log "rolling application back to $previous_sha"
-  git -C "$OUTREACH_DIR" checkout --detach "$previous_sha"
+  git -C "$OUTREACH_DIR" checkout --detach "$previous_sha" || return $?
 
   if [[ -f "$OUTREACH_COMPOSE_FILE" ]]; then
     if ! docker image inspect "outreach-desk-app:${previous_sha}" >/dev/null 2>&1; then
-      build_commit "$previous_sha"
+      build_commit "$previous_sha" || return $?
     fi
-    start_web "$previous_sha"
+    start_web "$previous_sha" || return $?
   elif [[ -f "$OUTREACH_LEGACY_COMPOSE_FILE" ]]; then
     docker compose \
       -p "$OUTREACH_PROJECT" \
       --env-file "$OUTREACH_ENV_FILE" \
       -f "$OUTREACH_LEGACY_COMPOSE_FILE" \
-      up -d --no-deps web
+      up -d --no-deps web || return $?
   else
     die "neither production nor legacy Compose file exists for rollback"
+    return 1
   fi
 
-  wait_for_health
-  record_deployed_sha "$previous_sha"
+  wait_for_health || return $?
+  record_deployed_sha "$previous_sha" || return $?
   log "application rollback completed"
 }
 
@@ -224,6 +243,26 @@ prune_artifacts() {
   done < <(docker image ls outreach-desk-app --format '{{.Repository}}:{{.Tag}}')
 }
 
+DEPLOY_TRANSACTION_ACTIVE=0
+DEPLOY_PREVIOUS_SHA=""
+
+handle_deploy_signal() {
+  local signal_name=$1
+  local exit_code=$2
+  local rollback_status=0
+
+  trap - HUP INT TERM
+  log "deployment interrupted by $signal_name" >&2
+  if (( DEPLOY_TRANSACTION_ACTIVE != 0 )); then
+    rollback_application "$DEPLOY_PREVIOUS_SHA" || rollback_status=$?
+    if (( rollback_status != 0 )); then
+      log "ERROR: rollback after $signal_name failed with status $rollback_status" >&2
+    fi
+    prune_artifacts || true
+  fi
+  exit "$exit_code"
+}
+
 deploy_sha() {
   local requested_sha=$1
   local previous_sha deploy_status rollback_status
@@ -234,6 +273,11 @@ deploy_sha() {
   previous_sha=$(current_deployed_sha)
   backup_database
   prepare_storage_permissions
+  DEPLOY_PREVIOUS_SHA=$previous_sha
+  DEPLOY_TRANSACTION_ACTIVE=1
+  trap 'handle_deploy_signal HUP 129' HUP
+  trap 'handle_deploy_signal INT 130' INT
+  trap 'handle_deploy_signal TERM 143' TERM
   stop_web
 
   deploy_status=0
@@ -245,15 +289,20 @@ deploy_sha() {
     || deploy_status=$?
 
   if (( deploy_status != 0 )); then
+    trap - HUP INT TERM
     log "deployment failed; attempting application rollback" >&2
     rollback_status=0
     rollback_application "$previous_sha" || rollback_status=$?
     if (( rollback_status != 0 )); then
       log "ERROR: rollback also failed with status $rollback_status" >&2
     fi
+    DEPLOY_TRANSACTION_ACTIVE=0
+    prune_artifacts || true
     return "$deploy_status"
   fi
 
+  trap - HUP INT TERM
+  DEPLOY_TRANSACTION_ACTIVE=0
   record_deployed_sha "$requested_sha" "$previous_sha"
   prune_artifacts
   log "deployed $requested_sha"

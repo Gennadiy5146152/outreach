@@ -167,8 +167,96 @@ test("failed health check rolls back application without restoring database", ()
     "start",
     "health",
     "rollback",
+    "prune",
   ]);
   assert.doesNotMatch(fs.readFileSync(trace, "utf8"), /restore/i);
+});
+
+test("rollback_application propagates checkout failure and never writes a marker", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "outreach-rollback-test-"));
+  const trace = path.join(temp, "trace");
+  const harness = `
+    source "$1"
+    trace="$2"
+    git() { printf 'checkout\\n' >> "$trace"; return 1; }
+    record_deployed_sha() { printf 'marker\\n' >> "$trace"; }
+    wait_for_health() { printf 'health\\n' >> "$trace"; return 1; }
+    set +e
+    rollback_application "$3"
+    rollback_status=$?
+    set -e
+    printf '%s\\n' "$rollback_status"
+  `;
+  const result = runBash(harness, [trace, sha40]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(Number(result.stdout.trim().split("\n").at(-1)), 0);
+  assert.deepEqual(fs.readFileSync(trace, "utf8").trim().split("\n"), ["checkout"]);
+});
+
+test("wait_for_health accepts a running legacy container with healthy HTTP", () => {
+  const harness = `
+    source "$1"
+    docker() {
+      if [[ "$*" == *'.State.Health'* ]]; then printf '\\n'; else printf 'running\\n'; fi
+    }
+    curl() { return 0; }
+    sleep() { return 0; }
+    wait_for_health
+  `;
+  const result = runBash(harness);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("termination after web stop invokes rollback and retention", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "outreach-signal-test-"));
+  const trace = path.join(temp, "trace");
+  const harness = `
+    source "$1"
+    trace="$2"
+    record() { printf '%s\\n' "$1" >> "$trace"; }
+    acquire_lock() { record lock; }
+    verify_preconditions() { record preflight; }
+    verify_main_ancestry() { record ancestry; }
+    current_deployed_sha() { printf '%s\\n' "fedcba9876543210fedcba9876543210fedcba98"; }
+    backup_database() { record backup; }
+    prepare_storage_permissions() { record permissions; }
+    stop_web() { record stop; }
+    checkout_commit() { record checkout; kill -TERM "$$"; }
+    rollback_application() { record rollback; }
+    prune_artifacts() { record prune; }
+    deploy_sha "$3"
+  `;
+  const result = runBash(harness, [trace, sha40]);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(fs.readFileSync(trace, "utf8").trim().split("\n"), [
+    "lock",
+    "preflight",
+    "ancestry",
+    "backup",
+    "permissions",
+    "stop",
+    "checkout",
+    "rollback",
+    "prune",
+  ]);
+});
+
+test("failed database backup removes its incomplete temporary file", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "outreach-backup-test-"));
+  const harness = `
+    source "$1"
+    OUTREACH_BACKUP_DIR="$2"
+    docker() { return 1; }
+    set +e
+    backup_database
+    backup_status=$?
+    set -e
+    printf '%s\\n' "$backup_status"
+  `;
+  const result = runBash(harness, [temp]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(Number(result.stdout.trim().split("\n").at(-1)), 0);
+  assert.deepEqual(fs.readdirSync(temp), []);
 });
 
 test("prune_artifacts leaves unrelated files alone when no backups exist", () => {
