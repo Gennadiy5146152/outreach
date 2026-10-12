@@ -135,10 +135,11 @@ objects automatically.
 
 Automatic deployment deliberately leaves `worker` stopped. Starting it can
 send queued emails when real sending is enabled. Before activation, verify in
-`Настройки` that the aggregate outreach limit is set to the intended value
-(`100` by default), review the queue, and obtain explicit approval. The limit
-combines first-touch and follow-up messages across every mailbox and campaign,
-resets on the application-time-zone calendar day, and prioritizes follow-ups.
+`Настройки` that the per-mailbox outreach limit is set to the intended value
+(`100` by default), review the queue, and obtain explicit approval. Each mailbox
+has its own limit; first-touch and follow-up messages sent from that mailbox
+share it. The limit resets on the application-time-zone calendar day and
+follow-ups keep priority.
 Activate the worker separately only after those checks:
 
 ```bash
