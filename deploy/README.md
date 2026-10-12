@@ -25,6 +25,8 @@ The main `.env` remains root-managed. Passwords added or changed in the web UI
 are written to the persistent `runtime.env`, which is loaded after `.env` on
 every container start and is never copied into the image.
 
+Automatic deployment from `main` was verified in production on 2026-10-12.
+
 ## One-time server bootstrap
 
 Install the reviewed script from the checkout without displaying `.env`:
