@@ -183,6 +183,19 @@ npx @modelcontextprotocol/inspector node src/mcp/server.js
 docker compose exec postgres pg_dump -U outreach outreach > backup.sql
 ```
 
+## Production и автодеплой
+
+После настройки production-инфраструктуры каждый push в `main` сначала проходит
+полную проверку в GitHub Actions, а затем разворачивается на сервере по точному
+SHA коммита. Сервер перед миграциями создаёт резервную копию PostgreSQL,
+проверяет `/api/health` и откатывает приложение при неуспешном запуске.
+
+Подробная настройка, секреты, диагностика и восстановление описаны в
+[`deploy/README.md`](deploy/README.md).
+
+Автодеплой не запускает `worker`. Его включают отдельно только после явного
+разрешения и проверки очереди, потому что worker может отправлять письма.
+
 ## Важное
 
 - `.env` не коммитится.
