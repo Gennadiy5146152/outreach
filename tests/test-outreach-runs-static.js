@@ -3,6 +3,7 @@ import fs from "node:fs";
 const index = fs.readFileSync("public/index.html", "utf8");
 const app = fs.readFileSync("public/app.js", "utf8");
 const server = fs.readFileSync("src/server.js", "utf8");
+const outreachControl = fs.readFileSync("src/services/outreach-control.js", "utf8");
 const worker = fs.readFileSync("src/worker/index.js", "utf8");
 const migration = fs.readFileSync("db/migrations/010_outreach_runs.sql", "utf8");
 const css = fs.readFileSync("public/styles.css", "utf8");
@@ -16,6 +17,8 @@ for (const expected of [
   "runQuickSelect",
   "toggleRunsListBtn",
   "stopActiveRunBtn",
+  "stopAllOutreachBtn",
+  "Остановить всю рассылку",
   "Остановить follow-up",
   "Продолжить follow-up",
   "runStatusBadge",
@@ -53,6 +56,7 @@ for (const expected of [
   "stopActiveRunBtn",
   "stopParticipationRunBtn",
   "async function stopRun",
+  "async function stopAllOutreach",
   "function activeRunCanBeStopped()",
   "activeRunStatus() === \"running\" && activeRunHasActiveQueue()",
   "state.runDetailCache.clear()",
@@ -82,6 +86,8 @@ for (const expected of [
   "app.get(\"/api/outreach/runs\"",
   "app.get(\"/api/outreach/runs/:id\"",
   "app.post(\"/api/outreach/runs/:id/stop\"",
+  "app.get(\"/api/outreach/stop-all/impact\"",
+  "app.post(\"/api/outreach/stop-all\"",
   "app.post(\"/api/outreach/runs/:id/stop-followups\"",
   "app.post(\"/api/outreach/runs/:id/continue-followups\"",
   "app.post(\"/api/outreach/runs/:id/suppress\"",
@@ -102,6 +108,16 @@ for (const expected of [
 ]) {
   if (!server.includes(expected)) {
     throw new Error(`runs API should include ${expected}`);
+  }
+}
+
+for (const expected of [
+  "Вся рассылка остановлена пользователем",
+  "all_outreach_stopped_by_user",
+  "mode <> 'test'",
+]) {
+  if (!outreachControl.includes(expected)) {
+    throw new Error(`global outreach stop should include ${expected}`);
   }
 }
 

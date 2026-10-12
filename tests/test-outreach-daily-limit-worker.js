@@ -24,6 +24,12 @@ for (const required of [
   "status <> 'running'",
   "orphanedReservations",
   "COALESCE(ods.position, s.position, 1) > 1 THEN 0",
+  "OUTREACH_MIN_SPACING_MINUTES",
+  "spacing_msg.mailbox_id = q.mailbox_id",
+  "spacing_msg.type = 'outreach'",
+  "spacing_msg.status = 'sent'",
+  "spacing_msg.sent_at > now() - make_interval",
+  "q.mode = 'test'",
 ]) {
   assert.ok(worker.includes(required), `worker aggregate quota should include ${required}`);
 }

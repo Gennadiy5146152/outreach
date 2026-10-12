@@ -449,14 +449,23 @@ export function createToolHandlers({ client, confirmations }) {
     }),
     run_control: safeTool(async (input) => {
       if (input.phase === "prepare") {
-        const runId = required(input.run_id, "run_id");
         const action = required(input.action, "action");
+        if (action === "stop_all") {
+          const impact = await client.get("/api/outreach/stop-all/impact");
+          return prepareConfirmation(confirmations, "run_control", { action }, impact, `Подготовлена остановка всей рассылки: ${impact.active_queue || 0} писем в очереди, включая ${impact.followups || 0} follow-up.`, ["run_control"]);
+        }
+        const runId = required(input.run_id, "run_id");
         if (action !== "stop" && !input.lead_ids?.length) throw new OutreachApiError("lead_ids are required for follow-up control", { code: "lead_ids_required" });
         const state = await runControlState(runId, input.lead_ids || []);
         return prepareConfirmation(confirmations, "run_control", { run_id: runId, action, ...(input.lead_ids ? { lead_ids: input.lead_ids } : {}) }, state, `Подготовлено действие ${action} для запуска ${runId}.`, ["run_control"]);
       }
       const token = required(input.confirmation_token, "confirmation_token");
       const plan = claim(token, "run_control", input.confirm);
+      if (plan.payload.action === "stop_all") {
+        const impact = await client.get("/api/outreach/stop-all/impact");
+        verify(plan, impact);
+        return success("Вся рассылка остановлена.", await client.post("/api/outreach/stop-all", {}), ["runs_list", "queue_list"]);
+      }
       const state = await runControlState(plan.payload.run_id, plan.payload.lead_ids || []);
       verify(plan, state);
       const suffix = { stop: "stop", stop_followups: "stop-followups", continue_followups: "continue-followups" }[plan.payload.action];

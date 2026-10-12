@@ -1821,6 +1821,39 @@ async function stopRun(runId, button) {
   renderParticipationFilters();
 }
 
+async function stopAllOutreach(button) {
+  const impact = await api("/api/outreach/stop-all/impact");
+  if (Number(impact.active_queue || 0) === 0 && Number(impact.active_enrollments || 0) === 0 && Number(impact.active_drafts || 0) === 0) {
+    setActionResult({
+      status: "success",
+      title: "Остановка всей рассылки",
+      message: "Активных писем и цепочек нет.",
+      details: impact,
+    });
+    return;
+  }
+  const confirmed = window.confirm(
+    `Остановить всю рассылку? Будут отменены ${Number(impact.active_queue || 0)} писем: ${Number(impact.first_touches || 0)} первых и ${Number(impact.followups || 0)} follow-up. Уже отправленные письма останутся в истории.`,
+  );
+  if (!confirmed) return;
+  await runAction({
+    title: "Остановка всей рассылки",
+    pending: "Останавливаю все первые письма и follow-up...",
+    button,
+  }, async () => {
+    const result = await api("/api/outreach/stop-all", { method: "POST" });
+    state.selectedRunLeadIds = new Set();
+    state.runDetailCache.clear();
+    await Promise.all([loadRuns(null, { forceDetail: true }), loadParticipation({ reloadFilters: true }), loadQueue(), loadOutreachDrafts(), loadConversations(), loadReviewConversations()]);
+    setActionResult({
+      status: "success",
+      title: "Вся рассылка остановлена",
+      message: `Отменено писем: ${result.cancelled_queue}. Остановлено запусков: ${result.stopped_runs}.`,
+      details: result,
+    });
+  });
+}
+
 function stepName(position) {
   const number = Number(position || 0);
   if (number <= 1) return "Первое письмо";
@@ -4574,6 +4607,7 @@ $("#reloadRunsBtn")?.addEventListener("click", (event) => runAction({
   setActionResult({ status: "success", title: "Обновление запусков", message: "Таблица запусков обновлена." });
 }));
 $("#stopActiveRunBtn")?.addEventListener("click", (event) => stopRun(state.activeRunId, event.currentTarget));
+$("#stopAllOutreachBtn")?.addEventListener("click", (event) => stopAllOutreach(event.currentTarget));
 $("#reloadParticipationBtn")?.addEventListener("click", (event) => runAction({
   title: "Обновление участия",
   button: event.currentTarget,

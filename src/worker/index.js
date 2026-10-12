@@ -8,6 +8,7 @@ import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
 import { quotaRemaining } from "../services/outreach-quota.js";
 import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
+import { OUTREACH_MIN_SPACING_MINUTES } from "../services/outreach-control.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
 import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
@@ -524,6 +525,21 @@ async function lockNextSend() {
                 AND sent_msg.status = 'sent'
             )
           )
+          AND (
+            q.mode = 'test'
+            OR NOT EXISTS (
+              SELECT 1
+              FROM messages spacing_msg
+              WHERE spacing_msg.mailbox_id = q.mailbox_id
+                AND spacing_msg.type = 'outreach'
+                AND spacing_msg.direction = 'outbound'
+                AND spacing_msg.status = 'sent'
+                AND COALESCE(spacing_msg.provider_message_id, '') <> 'dry-run'
+                AND spacing_msg.sent_at > now() - make_interval(
+                  mins => GREATEST($4::int, COALESCE(m.min_delay_minutes, 0))
+                )
+            )
+          )
           AND (m.paused_until IS NULL OR m.paused_until <= now())
           AND (
             q.mode = 'test' OR $2::boolean
@@ -584,7 +600,7 @@ async function lockNextSend() {
         FOR UPDATE OF q SKIP LOCKED
         LIMIT 1
       `,
-        [runtime.timeZone, runtime.dryRun, globalQuotaAvailable],
+        [runtime.timeZone, runtime.dryRun, globalQuotaAvailable, OUTREACH_MIN_SPACING_MINUTES],
       );
       if (!result.rowCount) {
         await client.query("COMMIT");

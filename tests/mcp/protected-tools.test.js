@@ -22,6 +22,7 @@ function createProtectedFixture() {
     conversation: { conversation: { id: "conversation-1", status: "needs_review", updated_at: "2026-10-11T10:00:00Z", email: "lead@example.com", last_message_at: "2026-10-11T09:00:00Z" }, messages: [] },
     suppressions: [],
     run: { id: "run-1", status: "active", updated_at: "2026-10-11T10:00:00Z", total_recipients: 4 },
+    stopAllImpact: { active_queue: 5, first_touches: 3, followups: 2, active_runs: 2, active_enrollments: 4, active_drafts: 5 },
     settings: { runtime: { dryRun: false, publicTrackingUrl: "https://track.example.com", maxAttachmentMb: 50, outreachStopScope: "company", timeZone: "Europe/Moscow", inboxSyncIntervalSeconds: 60 } },
     mailboxes: [{ id: "mailbox-1", email: "sales@example.com", is_active: true, smtp_verified_at: "2026-10-11T08:00:00Z" }],
     failNextMutation: false,
@@ -43,6 +44,7 @@ function createProtectedFixture() {
     if (endpoint === "/api/suppressions") return structuredClone(state.suppressions);
     if (endpoint === "/api/suppressions/impact") return { scope: "email", target: "lead@example.com", affected_count: 1, leads: [{ id: "lead-1", email: "lead@example.com" }] };
     if (endpoint === "/api/outreach/runs/run-1") return structuredClone(state.run);
+    if (endpoint === "/api/outreach/stop-all/impact") return structuredClone(state.stopAllImpact);
     throw new Error(`unexpected GET ${endpoint}`);
   }
 
@@ -180,6 +182,10 @@ test("protected workflows prepare authoritative state and execute only with conf
       execute: "run_control", executeInput: { phase: "execute" }, mutation: { method: "post", endpoint: "/api/outreach/runs/run-1/stop-followups", body: { lead_ids: ["lead-1"] } },
     },
     {
+      prepare: "run_control", prepareInput: { phase: "prepare", action: "stop_all" },
+      execute: "run_control", executeInput: { phase: "execute" }, mutation: { method: "post", endpoint: "/api/outreach/stop-all", body: {} },
+    },
+    {
       prepare: "conversation_action", prepareInput: { phase: "prepare", action: "delay", conversation_id: "conversation-1", values: { until: "2026-10-20T09:00:00Z" } },
       execute: "conversation_action", executeInput: { phase: "execute", action: "delay" }, mutation: { method: "post", endpoint: "/api/outreach/conversations/conversation-1/delay", body: { until: "2026-10-20T09:00:00Z" } },
     },
@@ -230,6 +236,19 @@ test("failed launch revalidation consumes the confirmation token", async () => {
   state.draftPreflight.ok = true;
   const retry = await handlers.launch_execute({ confirmation_token: token, confirm: true });
   assert.equal(retry.structuredContent.data.code, "confirmation_not_found");
+});
+
+test("global stop requires unchanged impact after approval", async () => {
+  const { handlers, calls, state } = createProtectedFixture();
+  const prepared = await handlers.run_control({ phase: "prepare", action: "stop_all" });
+  const token = tokenOf(prepared);
+  state.stopAllImpact.followups += 1;
+  state.stopAllImpact.active_queue += 1;
+
+  const blocked = await handlers.run_control({ phase: "execute", confirmation_token: token, confirm: true });
+  assert.equal(blocked.isError, true);
+  assert.equal(blocked.structuredContent.data.code, "confirmation_state_changed");
+  assert.equal(calls.some((call) => call.endpoint === "/api/outreach/stop-all" && call.method === "post"), false);
 });
 
 test("campaign enrollment and queue cancellation require prepared confirmation", async () => {

@@ -15,6 +15,7 @@ import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { affectedLeadIds, cancelOutreachForScope } from "./services/outreach-stop.js";
+import { outreachStopAllImpact, stopAllOutreach } from "./services/outreach-control.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
 import { saveSecretToDotenv } from "./services/secret-file.js";
@@ -3163,6 +3164,16 @@ app.post("/api/outreach/runs/:id/stop", asyncHandler(async (req, res) => {
   await logEvent("outreach_run_stopped", {
     payload: { runId: req.params.id, ...result },
   });
+  res.json(result);
+}));
+
+app.get("/api/outreach/stop-all/impact", asyncHandler(async (_req, res) => {
+  res.json(await outreachStopAllImpact({ query }));
+}));
+
+app.post("/api/outreach/stop-all", asyncHandler(async (_req, res) => {
+  const result = await withClient((client) => stopAllOutreach(client));
+  await logEvent("all_outreach_stopped", { payload: result });
   res.json(result);
 }));
 
