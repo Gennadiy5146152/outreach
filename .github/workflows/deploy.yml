@@ -1,0 +1,74 @@
+name: Deploy Outreach
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out requested commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run repository checks
+        run: npm run check
+
+      - name: Validate production image build
+        run: docker build -t "outreach-desk-app:${GITHUB_SHA}" .
+
+  deploy:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ secrets.OUTREACH_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.OUTREACH_DEPLOY_USER }}
+      DEPLOY_KEY: ${{ secrets.OUTREACH_DEPLOY_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.OUTREACH_DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - name: Prepare restricted SSH credentials
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          install -d -m 700 "${RUNNER_TEMP}/outreach-ssh"
+          printf '%s\n' "${DEPLOY_KEY}" > "${RUNNER_TEMP}/outreach-ssh/id_ed25519"
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" > "${RUNNER_TEMP}/outreach-ssh/known_hosts"
+          chmod 600 "${RUNNER_TEMP}/outreach-ssh/id_ed25519" "${RUNNER_TEMP}/outreach-ssh/known_hosts"
+
+      - name: Deploy exact commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "${RUNNER_TEMP}/outreach-ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${RUNNER_TEMP}/outreach-ssh/known_hosts" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "deploy ${GITHUB_SHA}"
+
+      - name: Remove SSH credentials
+        if: always()
+        shell: bash
+        run: rm -rf -- "${RUNNER_TEMP}/outreach-ssh"
