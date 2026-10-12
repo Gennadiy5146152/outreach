@@ -7,6 +7,12 @@ function toNumber(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+export function normalizeOutreachDailyLimit(value) {
+  const limit = Math.round(Number(value));
+  if (!Number.isFinite(limit) || limit < 1 || limit > 10_000) return 100;
+  return limit;
+}
+
 function normalizeInboxSyncIntervalSeconds(value) {
   const fallback = Math.max(1, Math.round(Number(env.inboxSyncIntervalMinutes || 1) * 60));
   const seconds = Math.round(Number(value));
@@ -47,17 +53,19 @@ export async function getRuntimeSettings() {
     publicTrackingUrl: runtime.publicTrackingUrl ?? settings.tracking?.publicTrackingUrl ?? env.publicTrackingUrl,
     maxAttachmentMb: toNumber(runtime.maxAttachmentMb ?? settings.attachments?.maxAttachmentMb, env.maxAttachmentMb),
     outreachStopScope: normalizeOutreachStopScope(runtime.outreachStopScope ?? settings.outreach?.stopScope),
+    outreachDailyLimit: normalizeOutreachDailyLimit(runtime.outreachDailyLimit),
     timeZone: normalizeTimeZone(runtime.timeZone),
     inboxSyncIntervalSeconds: normalizeInboxSyncIntervalSeconds(runtime.inboxSyncIntervalSeconds),
   };
 }
 
-export async function saveRuntimeSettings({ dryRun, publicTrackingUrl, maxAttachmentMb, outreachStopScope, timeZone, inboxSyncIntervalSeconds }) {
+export async function saveRuntimeSettings({ dryRun, publicTrackingUrl, maxAttachmentMb, outreachStopScope, outreachDailyLimit, timeZone, inboxSyncIntervalSeconds }) {
   const runtime = {
     dryRun: Boolean(dryRun),
     publicTrackingUrl: String(publicTrackingUrl || "").trim(),
     maxAttachmentMb: toNumber(maxAttachmentMb, env.maxAttachmentMb),
     outreachStopScope: normalizeOutreachStopScope(outreachStopScope),
+    outreachDailyLimit: normalizeOutreachDailyLimit(outreachDailyLimit),
     timeZone: normalizeTimeZone(timeZone),
     inboxSyncIntervalSeconds: normalizeInboxSyncIntervalSeconds(inboxSyncIntervalSeconds),
   };

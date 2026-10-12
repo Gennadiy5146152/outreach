@@ -4381,6 +4381,10 @@ async function loadSettings() {
         <input name="publicTrackingUrl" value="${esc(settings.runtime.publicTrackingUrl || "")}" placeholder="https://your-public-tunnel.example" />
       </label>
       <label class="settings-row">
+        <span>Общий лимит outreach в сутки</span>
+        <input name="outreachDailyLimit" type="number" min="1" max="10000" step="1" value="${Number(settings.runtime.outreachDailyLimit || 100)}" />
+      </label>
+      <label class="settings-row">
         <span>Лимит вложений</span>
         <input name="maxAttachmentMb" type="number" min="1" max="200" step="1" value="${settings.runtime.maxAttachmentMb}" />
       </label>
@@ -6169,6 +6173,7 @@ document.body.addEventListener("submit", (event) => {
     const payload = formJson(event.target);
     payload.mailDryRun = payload.mailDryRun === "true";
     payload.maxAttachmentMb = Number(payload.maxAttachmentMb);
+    payload.outreachDailyLimit = Number(payload.outreachDailyLimit);
     payload.timeZone = payload.timeZone || currentTimeZone();
     const inboxSyncMinutes = Number(payload.inboxSyncMinutes || 0);
     const inboxSyncSeconds = Number(payload.inboxSyncSeconds || 0);

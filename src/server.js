@@ -584,6 +584,7 @@ app.get("/api/health", asyncHandler(async (_req, res) => {
     dryRun: runtime.dryRun,
     publicTrackingUrl: runtime.publicTrackingUrl,
     maxAttachmentMb: runtime.maxAttachmentMb,
+    outreachDailyLimit: runtime.outreachDailyLimit,
     timeZone: runtime.timeZone,
     inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
   });
@@ -601,6 +602,7 @@ app.get("/api/settings", asyncHandler(async (_req, res) => {
       attachmentDir: env.attachmentDir,
       maxAttachmentMb: runtime.maxAttachmentMb,
       outreachStopScope: runtime.outreachStopScope,
+      outreachDailyLimit: runtime.outreachDailyLimit,
       timeZone: runtime.timeZone,
       inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
     },
@@ -613,6 +615,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
   const publicTrackingUrl = String(req.body.publicTrackingUrl || "").trim();
   const maxAttachmentMb = Number(req.body.maxAttachmentMb || env.maxAttachmentMb);
   const outreachStopScope = cleanText(req.body.outreachStopScope);
+  const outreachDailyLimit = Number(req.body.outreachDailyLimit);
   const timeZone = cleanText(req.body.timeZone) || env.appTimeZone;
   const inboxSyncIntervalSeconds = Number(req.body.inboxSyncIntervalSeconds || 60);
 
@@ -621,6 +624,9 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
   }
   if (!Number.isFinite(inboxSyncIntervalSeconds) || inboxSyncIntervalSeconds < 1 || inboxSyncIntervalSeconds > 3600) {
     return res.status(400).json({ error: "inbox_sync_interval_must_be_between_1_and_3600_seconds" });
+  }
+  if (!Number.isInteger(outreachDailyLimit) || outreachDailyLimit < 1 || outreachDailyLimit > 10_000) {
+    return res.status(400).json({ error: "outreach_daily_limit_must_be_between_1_and_10000" });
   }
   if (!isValidTimeZone(timeZone)) {
     return res.status(400).json({ error: "invalid_time_zone" });
@@ -631,6 +637,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
     publicTrackingUrl,
     maxAttachmentMb,
     outreachStopScope,
+    outreachDailyLimit,
     timeZone,
     inboxSyncIntervalSeconds,
   });
@@ -642,6 +649,7 @@ app.put("/api/runtime-settings", asyncHandler(async (req, res) => {
       attachmentDir: env.attachmentDir,
       maxAttachmentMb: runtime.maxAttachmentMb,
       outreachStopScope: runtime.outreachStopScope,
+      outreachDailyLimit: runtime.outreachDailyLimit,
       timeZone: runtime.timeZone,
       inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
     },

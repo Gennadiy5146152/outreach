@@ -410,6 +410,7 @@ export function createToolHandlers({ client, confirmations }) {
         publicTrackingUrl: runtime.publicTrackingUrl || "",
         maxAttachmentMb: runtime.maxAttachmentMb || 50,
         outreachStopScope: runtime.outreachStopScope || "company",
+        outreachDailyLimit: runtime.outreachDailyLimit || 100,
         timeZone: runtime.timeZone || "Europe/Moscow",
         inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds || 60,
       };
