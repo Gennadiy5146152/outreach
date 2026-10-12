@@ -1843,7 +1843,8 @@ async function stopAllOutreach(button) {
   }, async () => {
     const result = await api("/api/outreach/stop-all", {
       method: "POST",
-      body: { snapshot_token: impact.snapshot_token },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ snapshot_token: impact.snapshot_token }),
     });
     state.selectedRunLeadIds = new Set();
     state.runDetailCache.clear();

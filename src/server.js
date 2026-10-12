@@ -3278,6 +3278,7 @@ app.post("/api/outreach/runs/:id/continue-followups", asyncHandler(async (req, r
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
+      await lockOutreachQueueMutation(client);
       const resumedEnrollments = await client.query(
         `
           UPDATE enrollments
@@ -5348,21 +5349,32 @@ app.post("/api/campaigns/:id/enroll", asyncHandler(async (req, res) => {
   const mailboxIds = parseArray(req.body.mailbox_ids);
   if (!leadIds.length || !mailboxIds.length) return res.status(400).json({ error: "lead_ids_and_mailbox_ids_required" });
 
-  let count = 0;
-  for (let index = 0; index < leadIds.length; index += 1) {
-    const mailboxId = mailboxIds[index % mailboxIds.length];
-    const insert = await query(
-      `
-        INSERT INTO enrollments(lead_id, campaign_id, mailbox_id, status, current_step, next_send_at)
-        VALUES ($1,$2,$3,'active',1,now())
-        ON CONFLICT (lead_id, campaign_id) DO NOTHING
-        RETURNING id
-      `,
-      [leadIds[index], req.params.id, mailboxId],
-    );
-    if (insert.rowCount) count += 1;
-  }
-  await query("UPDATE leads SET status = 'enrolled' WHERE id = ANY($1::uuid[])", [leadIds]);
+  const count = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await lockOutreachQueueMutation(client);
+      let enrolled = 0;
+      for (let index = 0; index < leadIds.length; index += 1) {
+        const mailboxId = mailboxIds[index % mailboxIds.length];
+        const insert = await client.query(
+          `
+            INSERT INTO enrollments(lead_id, campaign_id, mailbox_id, status, current_step, next_send_at)
+            VALUES ($1,$2,$3,'active',1,now())
+            ON CONFLICT (lead_id, campaign_id) DO NOTHING
+            RETURNING id
+          `,
+          [leadIds[index], req.params.id, mailboxId],
+        );
+        if (insert.rowCount) enrolled += 1;
+      }
+      await client.query("UPDATE leads SET status = 'enrolled' WHERE id = ANY($1::uuid[])", [leadIds]);
+      await client.query("COMMIT");
+      return enrolled;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
   res.json({ enrolled: count });
 }));
 
@@ -5468,19 +5480,30 @@ app.post("/api/enrollments/:id/pause", asyncHandler(async (req, res) => {
 
 app.post("/api/enrollments/:id/resume", asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(400).json({ error: "enrollment_required" });
-  const result = await query(
-    `
-      UPDATE enrollments
-      SET status = 'active',
-          stopped_at = NULL,
-          stop_reason = NULL,
-          next_send_at = COALESCE(next_send_at, now())
-      WHERE id = $1
-        AND status = 'paused'
-      RETURNING *
-    `,
-    [req.params.id],
-  );
+  const result = await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await lockOutreachQueueMutation(client);
+      const resumed = await client.query(
+        `
+          UPDATE enrollments
+          SET status = 'active',
+              stopped_at = NULL,
+              stop_reason = NULL,
+              next_send_at = COALESCE(next_send_at, now())
+          WHERE id = $1
+            AND status = 'paused'
+          RETURNING *
+        `,
+        [req.params.id],
+      );
+      await client.query("COMMIT");
+      return resumed;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
   if (!result.rows[0]) return res.status(404).json({ error: "paused_enrollment_not_found" });
   res.json(result.rows[0]);
 }));

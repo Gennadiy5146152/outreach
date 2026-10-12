@@ -40,9 +40,13 @@ function throttleDelayMinutes(errorCount) {
   return 0;
 }
 
-async function queueItemCancelled(queueId) {
+async function queueItemStatus(queueId) {
   const row = (await query("SELECT status FROM sending_queue WHERE id = $1", [queueId])).rows[0];
-  return row?.status === "cancelled";
+  return row?.status || null;
+}
+
+async function queueItemCancelled(queueId) {
+  return (await queueItemStatus(queueId)) === "cancelled";
 }
 
 function warmupDraft(from, to) {
@@ -953,16 +957,22 @@ async function processSend(item) {
       await releaseQueueQuotaReservation(item.id);
       return;
     }
-    try {
-      await processSendUnlocked(item);
-    } catch (error) {
-      console.error(error);
-      await failSend(item, error);
-    }
+    await processSendUnlocked(item);
   };
 
-  if (item.mode === "test") return execute();
-  return withClient((client) => withOutreachDeliveryLock(client, execute));
+  try {
+    if (item.mode === "test") return await execute();
+    return await withClient((client) => withOutreachDeliveryLock(client, execute));
+  } catch (error) {
+    console.error(error);
+    const status = await queueItemStatus(item.id).catch(() => null);
+    if (["sent", "cancelled"].includes(status)) {
+      await releaseQueueQuotaReservation(item.id).catch(() => {});
+      return;
+    }
+    if (status !== "running") return;
+    await failSend(item, error);
+  }
 }
 
 async function failSend(item, error) {

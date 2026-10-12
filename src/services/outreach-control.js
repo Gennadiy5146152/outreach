@@ -21,12 +21,7 @@ export async function outreachStopAllImpact(client) {
         SELECT
           q.id,
           COALESCE(cs.position, ods.position, 1) AS step_position,
-          COALESCE(
-            'draft:' || q.outreach_draft_id::text,
-            'enrollment:' || q.enrollment_id::text,
-            'run:' || q.run_id::text,
-            'queue:' || q.id::text
-          ) AS owner_key
+          q.mode
         FROM sending_queue q
         LEFT JOIN campaign_steps cs ON cs.id = q.campaign_step_id
         LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
@@ -44,15 +39,16 @@ export async function outreachStopAllImpact(client) {
         FROM enrollments enrollment
         JOIN campaigns campaign ON campaign.id = enrollment.campaign_id
         WHERE enrollment.status = 'active'
-          AND (
-            campaign.test_mode = false
-            OR EXISTS (
-              SELECT 1
+          AND COALESCE(
+            (
+              SELECT enrollment_queue.mode
               FROM sending_queue enrollment_queue
               WHERE enrollment_queue.enrollment_id = enrollment.id
-                AND enrollment_queue.mode <> 'test'
-            )
-          )
+              ORDER BY enrollment_queue.created_at DESC, enrollment_queue.id DESC
+              LIMIT 1
+            ),
+            CASE WHEN campaign.test_mode THEN 'test' ELSE 'auto' END
+          ) <> 'test'
       ),
       active_drafts AS (
         SELECT draft.id
@@ -60,7 +56,7 @@ export async function outreachStopAllImpact(client) {
         WHERE draft.status IN ('queued','active_sequence','paused')
       ),
       affected_entities AS (
-        SELECT 'queue-owner:' || owner_key AS entity_key FROM active_queue
+        SELECT 'queue:' || id::text || ':step:' || step_position::text AS entity_key FROM active_queue
         UNION
         SELECT 'run:' || id::text FROM active_runs
         UNION
@@ -129,15 +125,16 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
         FROM campaigns campaign
         WHERE enrollment.status = 'active'
           AND campaign.id = enrollment.campaign_id
-          AND (
-            campaign.test_mode = false
-            OR EXISTS (
-              SELECT 1
+          AND COALESCE(
+            (
+              SELECT enrollment_queue.mode
               FROM sending_queue enrollment_queue
               WHERE enrollment_queue.enrollment_id = enrollment.id
-                AND enrollment_queue.mode <> 'test'
-            )
-          )
+              ORDER BY enrollment_queue.created_at DESC, enrollment_queue.id DESC
+              LIMIT 1
+            ),
+            CASE WHEN campaign.test_mode THEN 'test' ELSE 'auto' END
+          ) <> 'test'
       `,
     );
     const cancelledDrafts = await client.query(

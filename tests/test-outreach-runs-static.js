@@ -58,6 +58,8 @@ for (const expected of [
   "async function stopRun",
   "async function stopAllOutreach",
   "snapshot_token: impact.snapshot_token",
+  "JSON.stringify({ snapshot_token: impact.snapshot_token })",
+  '"Content-Type": "application/json"',
   "impact.active_runs",
   "function activeRunCanBeStopped()",
   "activeRunStatus() === \"running\" && activeRunHasActiveQueue()",
@@ -71,6 +73,10 @@ for (const expected of [
   if (!app.includes(expected)) {
     throw new Error(`runs frontend should include ${expected}`);
   }
+}
+
+if ((server.match(/lockOutreachQueueMutation\(client\)/g) || []).length < 5) {
+  throw new Error("all queue creation and reactivation paths should share the global stop lock");
 }
 
 for (const expected of [

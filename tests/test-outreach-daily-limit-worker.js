@@ -36,6 +36,8 @@ for (const required of [
   "withOutreachDeliveryLock",
   "lockOutreachQueueMutation",
   "WHEN c.test_mode THEN 'test'",
+  "queueItemStatus",
+  '["sent", "cancelled"]',
 ]) {
   assert.ok(worker.includes(required), `worker aggregate quota should include ${required}`);
 }
