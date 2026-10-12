@@ -6,6 +6,7 @@ import { analyzeInboundReplyWithAi, suggestThreadMatchWithAi } from "../services
 import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
+import { quotaRemaining } from "../services/outreach-quota.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
 import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
@@ -440,13 +441,56 @@ async function scheduleDueEnrollments() {
 }
 
 async function lockNextSend() {
+  const runtime = await getRuntimeSettings();
   return withClient(async (client) => {
     await client.query("BEGIN");
-    const result = await client.query(
-      `
+    try {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('outreach_daily_quota'))");
+      const usage = (
+        await client.query(
+          `
+            WITH day_bounds AS (
+              SELECT
+                ((now() AT TIME ZONE $1)::date AT TIME ZONE $1) AS day_start,
+                (((now() AT TIME ZONE $1)::date + 1) AT TIME ZONE $1) AS day_end
+            )
+            SELECT
+              (
+                SELECT count(*)::int
+                FROM messages msg, day_bounds bounds
+                WHERE msg.type = 'outreach'
+                  AND msg.direction = 'outbound'
+                  AND msg.status = 'sent'
+                  AND msg.sent_at >= bounds.day_start
+                  AND msg.sent_at < bounds.day_end
+              ) AS sent_count,
+              (
+                SELECT count(*)::int
+                FROM sending_queue reserved_queue
+                WHERE reserved_queue.status = 'running'
+                  AND reserved_queue.mode <> 'test'
+              ) AS running_count
+          `,
+          [runtime.timeZone],
+        )
+      ).rows[0];
+      const globalUsed = Number(usage?.sent_count || 0) + Number(usage?.running_count || 0);
+      if (quotaRemaining({ globalLimit: runtime.outreachDailyLimit, globalUsed }) < 1) {
+        await client.query("COMMIT");
+        return null;
+      }
+
+      const result = await client.query(
+        `
+        WITH day_bounds AS (
+          SELECT
+            ((now() AT TIME ZONE $1)::date AT TIME ZONE $1) AS day_start,
+            (((now() AT TIME ZONE $1)::date + 1) AT TIME ZONE $1) AS day_end
+        )
         SELECT q.*, l.email AS lead_email, l.company, l.contact_name, l.position, l.website, l.domain, l.segment, l.city, l.pain,
                l.validation_status, l.suppressed_at,
                COALESCE(c.tracking_enabled, false) AS tracking_enabled,
+               c.daily_limit AS campaign_daily_limit,
                COALESCE(c.send_window_start, m.send_window_start) AS send_window_start,
                COALESCE(c.send_window_end, m.send_window_end) AS send_window_end,
                COALESCE(c.send_days, m.send_days) AS send_days,
@@ -455,6 +499,7 @@ async function lockNextSend() {
                s.name AS step_name, s.position AS step_position, s.subject_template, s.body_template_text, s.body_template_html,
                ods.position AS outreach_step_position, ods.delay_days AS outreach_delay_days, ods.body_html AS outreach_body_html,
                m.name AS mailbox_name, m.email AS mailbox_email, m.from_name,
+               m.daily_send_limit,
                m.smtp_host, m.smtp_port, m.smtp_secure, m.imap_host, m.imap_port, m.imap_secure,
                m.username, m.password_env_key, m.error_count, m.paused_until
         FROM sending_queue q
@@ -478,19 +523,71 @@ async function lockNextSend() {
             )
           )
           AND (m.paused_until IS NULL OR m.paused_until <= now())
-        ORDER BY q.scheduled_at ASC
+          AND (
+            m.daily_send_limit IS NULL
+            OR (
+              (
+                SELECT count(*)
+                FROM messages mailbox_msg, day_bounds bounds
+                WHERE mailbox_msg.mailbox_id = q.mailbox_id
+                  AND mailbox_msg.type = 'outreach'
+                  AND mailbox_msg.direction = 'outbound'
+                  AND mailbox_msg.status = 'sent'
+                  AND mailbox_msg.sent_at >= bounds.day_start
+                  AND mailbox_msg.sent_at < bounds.day_end
+              )
+              +
+              (
+                SELECT count(*)
+                FROM sending_queue reserved_queue
+                WHERE reserved_queue.mailbox_id = q.mailbox_id
+                  AND reserved_queue.status = 'running'
+                  AND reserved_queue.mode <> 'test'
+              )
+            ) < m.daily_send_limit
+          )
+          AND (
+            c.daily_limit IS NULL
+            OR (
+              (
+                SELECT count(*)
+                FROM messages campaign_msg, day_bounds bounds
+                WHERE campaign_msg.campaign_id = q.campaign_id
+                  AND campaign_msg.type = 'outreach'
+                  AND campaign_msg.direction = 'outbound'
+                  AND campaign_msg.status = 'sent'
+                  AND campaign_msg.sent_at >= bounds.day_start
+                  AND campaign_msg.sent_at < bounds.day_end
+              )
+              +
+              (
+                SELECT count(*)
+                FROM sending_queue reserved_queue
+                WHERE reserved_queue.campaign_id = q.campaign_id
+                  AND reserved_queue.status = 'running'
+                  AND reserved_queue.mode <> 'test'
+              )
+            ) < c.daily_limit
+          )
+        ORDER BY CASE WHEN COALESCE(ods.position, s.position, 1) > 1 THEN 0 ELSE 1 END,
+                 q.scheduled_at ASC
         FOR UPDATE OF q SKIP LOCKED
         LIMIT 1
       `,
-    );
-    if (!result.rowCount) {
+        [runtime.timeZone],
+      );
+      if (!result.rowCount) {
+        await client.query("COMMIT");
+        return null;
+      }
+      const item = result.rows[0];
+      await client.query("UPDATE sending_queue SET status = 'running', attempts = attempts + 1, updated_at = now() WHERE id = $1", [item.id]);
       await client.query("COMMIT");
-      return null;
+      return item;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
     }
-    const item = result.rows[0];
-    await client.query("UPDATE sending_queue SET status = 'running', attempts = attempts + 1, updated_at = now() WHERE id = $1", [item.id]);
-    await client.query("COMMIT");
-    return item;
   });
 }
 
