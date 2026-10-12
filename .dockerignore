@@ -1,0 +1,12 @@
+.git
+.github
+.env*
+node_modules
+.npm-cache
+.worktrees
+.superpowers
+storage
+tests
+docs
+*.log
+backup.sql
