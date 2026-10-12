@@ -17,7 +17,6 @@ for (const expected of [
   "ELSE 'failed'",
   "scheduled_at = now()",
   "Восстановлено после перезапуска worker",
-  "await recoverInterruptedQueues()",
   "await recoverInterruptedQueues({ staleOnly: true })",
   "const runtime = await getRuntimeSettings()",
   "$1 || ' seconds'",
@@ -31,6 +30,10 @@ for (const expected of [
   if (!worker.includes(expected)) {
     throw new Error(`worker recovery should include ${expected}`);
   }
+}
+
+if (/console\.log\("Outreach worker started"\);\s*await recoverInterruptedQueues\(\);/.test(worker)) {
+  throw new Error("worker startup must not recover reservations that may still belong to a live worker");
 }
 
 for (const expected of [

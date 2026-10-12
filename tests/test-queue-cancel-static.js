@@ -23,7 +23,8 @@ for (const expected of [
 
 for (const expected of [
   "async function queueItemCancelled(queueId)",
-  "if (await queueItemCancelled(item.id)) return",
+  "if (await queueItemCancelled(item.id)) {",
+  "await releaseQueueQuotaReservation(item.id)",
   "UPDATE messages SET status = 'cancelled'",
   "const info = await sendMail(mailbox",
 ]) {

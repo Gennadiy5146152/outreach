@@ -17,3 +17,7 @@ export function quotaRemaining({
     remaining(campaignLimit, campaignUsed),
   ));
 }
+
+export function shouldReserveOutreachQuota({ dryRun, mode }) {
+  return !dryRun && mode !== "test";
+}

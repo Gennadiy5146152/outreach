@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { quotaRemaining } from "../src/services/outreach-quota.js";
+import { quotaRemaining, shouldReserveOutreachQuota } from "../src/services/outreach-quota.js";
 
 test("global quota counts every outreach reservation", () => {
   assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 70 }), 30);
@@ -32,4 +32,10 @@ test("null local limits leave the global quota authoritative", () => {
 test("released running reservation restores one slot", () => {
   assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 100 }), 0);
   assert.equal(quotaRemaining({ globalLimit: 100, globalUsed: 99 }), 1);
+});
+
+test("dry-run and test sends never reserve real outreach quota", () => {
+  assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "auto" }), true);
+  assert.equal(shouldReserveOutreachQuota({ dryRun: true, mode: "auto" }), false);
+  assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "test" }), false);
 });

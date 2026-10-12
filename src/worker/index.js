@@ -7,6 +7,7 @@ import { classifyInbound } from "../services/classifier.js";
 import { logEvent } from "../services/events.js";
 import { createImapClient, sendMail } from "../services/mail.js";
 import { quotaRemaining } from "../services/outreach-quota.js";
+import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
 import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
@@ -451,8 +452,8 @@ async function lockNextSend() {
           `
             WITH day_bounds AS (
               SELECT
-                ((now() AT TIME ZONE $1)::date AT TIME ZONE $1) AS day_start,
-                (((now() AT TIME ZONE $1)::date + 1) AT TIME ZONE $1) AS day_end
+                ((now() AT TIME ZONE $1)::date::timestamp AT TIME ZONE $1) AS day_start,
+                (((now() AT TIME ZONE $1)::date + 1)::timestamp AT TIME ZONE $1) AS day_end
             )
             SELECT
               (
@@ -461,13 +462,14 @@ async function lockNextSend() {
                 WHERE msg.type = 'outreach'
                   AND msg.direction = 'outbound'
                   AND msg.status = 'sent'
+                  AND COALESCE(msg.provider_message_id, '') <> 'dry-run'
                   AND msg.sent_at >= bounds.day_start
                   AND msg.sent_at < bounds.day_end
               ) AS sent_count,
               (
                 SELECT count(*)::int
                 FROM sending_queue reserved_queue
-                WHERE reserved_queue.status = 'running'
+                WHERE reserved_queue.quota_reservation_active = true
                   AND reserved_queue.mode <> 'test'
               ) AS running_count
           `,
@@ -475,17 +477,17 @@ async function lockNextSend() {
         )
       ).rows[0];
       const globalUsed = Number(usage?.sent_count || 0) + Number(usage?.running_count || 0);
-      if (quotaRemaining({ globalLimit: runtime.outreachDailyLimit, globalUsed }) < 1) {
-        await client.query("COMMIT");
-        return null;
-      }
+      const globalQuotaAvailable = runtime.dryRun || quotaRemaining({
+        globalLimit: runtime.outreachDailyLimit,
+        globalUsed,
+      }) > 0;
 
       const result = await client.query(
         `
         WITH day_bounds AS (
           SELECT
-            ((now() AT TIME ZONE $1)::date AT TIME ZONE $1) AS day_start,
-            (((now() AT TIME ZONE $1)::date + 1) AT TIME ZONE $1) AS day_end
+            ((now() AT TIME ZONE $1)::date::timestamp AT TIME ZONE $1) AS day_start,
+            (((now() AT TIME ZONE $1)::date + 1)::timestamp AT TIME ZONE $1) AS day_end
         )
         SELECT q.*, l.email AS lead_email, l.company, l.contact_name, l.position, l.website, l.domain, l.segment, l.city, l.pain,
                l.validation_status, l.suppressed_at,
@@ -524,64 +526,84 @@ async function lockNextSend() {
           )
           AND (m.paused_until IS NULL OR m.paused_until <= now())
           AND (
-            m.daily_send_limit IS NULL
+            q.mode = 'test' OR $2::boolean
             OR (
-              (
-                SELECT count(*)
-                FROM messages mailbox_msg, day_bounds bounds
-                WHERE mailbox_msg.mailbox_id = q.mailbox_id
-                  AND mailbox_msg.type = 'outreach'
-                  AND mailbox_msg.direction = 'outbound'
-                  AND mailbox_msg.status = 'sent'
-                  AND mailbox_msg.sent_at >= bounds.day_start
-                  AND mailbox_msg.sent_at < bounds.day_end
+              $3::boolean
+              AND (
+                m.daily_send_limit IS NULL
+                OR (
+                  (
+                    SELECT count(*)
+                    FROM messages mailbox_msg, day_bounds bounds
+                    WHERE mailbox_msg.mailbox_id = q.mailbox_id
+                      AND mailbox_msg.type = 'outreach'
+                      AND mailbox_msg.direction = 'outbound'
+                      AND mailbox_msg.status = 'sent'
+                      AND COALESCE(mailbox_msg.provider_message_id, '') <> 'dry-run'
+                      AND mailbox_msg.sent_at >= bounds.day_start
+                      AND mailbox_msg.sent_at < bounds.day_end
+                  )
+                  +
+                  (
+                    SELECT count(*)
+                    FROM sending_queue reserved_queue
+                    WHERE reserved_queue.mailbox_id = q.mailbox_id
+                      AND reserved_queue.quota_reservation_active = true
+                      AND reserved_queue.mode <> 'test'
+                  )
+                ) < m.daily_send_limit
               )
-              +
-              (
-                SELECT count(*)
-                FROM sending_queue reserved_queue
-                WHERE reserved_queue.mailbox_id = q.mailbox_id
-                  AND reserved_queue.status = 'running'
-                  AND reserved_queue.mode <> 'test'
+              AND (
+                c.daily_limit IS NULL
+                OR (
+                  (
+                    SELECT count(*)
+                    FROM messages campaign_msg, day_bounds bounds
+                    WHERE campaign_msg.campaign_id = q.campaign_id
+                      AND campaign_msg.type = 'outreach'
+                      AND campaign_msg.direction = 'outbound'
+                      AND campaign_msg.status = 'sent'
+                      AND COALESCE(campaign_msg.provider_message_id, '') <> 'dry-run'
+                      AND campaign_msg.sent_at >= bounds.day_start
+                      AND campaign_msg.sent_at < bounds.day_end
+                  )
+                  +
+                  (
+                    SELECT count(*)
+                    FROM sending_queue reserved_queue
+                    WHERE reserved_queue.campaign_id = q.campaign_id
+                      AND reserved_queue.quota_reservation_active = true
+                      AND reserved_queue.mode <> 'test'
+                  )
+                ) < c.daily_limit
               )
-            ) < m.daily_send_limit
-          )
-          AND (
-            c.daily_limit IS NULL
-            OR (
-              (
-                SELECT count(*)
-                FROM messages campaign_msg, day_bounds bounds
-                WHERE campaign_msg.campaign_id = q.campaign_id
-                  AND campaign_msg.type = 'outreach'
-                  AND campaign_msg.direction = 'outbound'
-                  AND campaign_msg.status = 'sent'
-                  AND campaign_msg.sent_at >= bounds.day_start
-                  AND campaign_msg.sent_at < bounds.day_end
-              )
-              +
-              (
-                SELECT count(*)
-                FROM sending_queue reserved_queue
-                WHERE reserved_queue.campaign_id = q.campaign_id
-                  AND reserved_queue.status = 'running'
-                  AND reserved_queue.mode <> 'test'
-              )
-            ) < c.daily_limit
+            )
           )
         ORDER BY CASE WHEN COALESCE(ods.position, s.position, 1) > 1 THEN 0 ELSE 1 END,
                  q.scheduled_at ASC
         FOR UPDATE OF q SKIP LOCKED
         LIMIT 1
       `,
-        [runtime.timeZone],
+        [runtime.timeZone, runtime.dryRun, globalQuotaAvailable],
       );
       if (!result.rowCount) {
         await client.query("COMMIT");
         return null;
       }
       const item = result.rows[0];
-      await client.query("UPDATE sending_queue SET status = 'running', attempts = attempts + 1, updated_at = now() WHERE id = $1", [item.id]);
+      const reserveQuota = shouldReserveOutreachQuota({ dryRun: runtime.dryRun, mode: item.mode });
+      await client.query(
+        `
+          UPDATE sending_queue
+          SET status = 'running',
+              attempts = attempts + 1,
+              quota_reservation_active = $2,
+              quota_reserved_at = CASE WHEN $2 THEN now() ELSE NULL END,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [item.id, reserveQuota],
+      );
       await client.query("COMMIT");
       return item;
     } catch (error) {
@@ -589,6 +611,19 @@ async function lockNextSend() {
       throw error;
     }
   });
+}
+
+async function releaseQueueQuotaReservation(queueId) {
+  await query(
+    `
+      UPDATE sending_queue
+      SET quota_reservation_active = false,
+          quota_reserved_at = NULL,
+          updated_at = now()
+      WHERE id = $1
+    `,
+    [queueId],
+  );
 }
 
 async function processSend(item) {
@@ -600,12 +635,15 @@ async function processSend(item) {
   if (!isWithinWindow(item, runtime.timeZone)) {
     const nextAt = nextSendWindowAt(item, new Date(), runtime.timeZone);
     await query(
-      "UPDATE sending_queue SET status = 'pending', scheduled_at = $2, last_error = $3, updated_at = now() WHERE id = $1",
+      "UPDATE sending_queue SET status = 'pending', scheduled_at = $2, last_error = $3, quota_reservation_active = false, quota_reserved_at = NULL, updated_at = now() WHERE id = $1",
       [item.id, nextAt, sendWindowBlockReason(item, nextAt, runtime.timeZone)],
     );
     return;
   }
-  if (await queueItemCancelled(item.id)) return;
+  if (await queueItemCancelled(item.id)) {
+    await releaseQueueQuotaReservation(item.id);
+    return;
+  }
 
   const mailbox = {
     id: item.mailbox_id,
@@ -723,6 +761,7 @@ async function processSend(item) {
 
   if (await queueItemCancelled(item.id)) {
     await query("UPDATE messages SET status = 'cancelled' WHERE id = $1", [message.id]);
+    await releaseQueueQuotaReservation(item.id);
     return;
   }
 
@@ -748,7 +787,9 @@ async function processSend(item) {
   await query(
     `
       UPDATE sending_queue
-      SET status = 'sent', sent_message_id = $2, updated_at = now()
+      SET status = 'sent', sent_message_id = $2,
+          quota_reservation_active = false, quota_reserved_at = NULL,
+          updated_at = now()
       WHERE id = $1
     `,
     [item.id, message.id],
@@ -906,6 +947,8 @@ async function failSend(item, error) {
             ELSE now() + (($3 * 10) || ' minutes')::interval
           END,
           last_error = $4,
+          quota_reservation_active = false,
+          quota_reserved_at = NULL,
           updated_at = now()
       WHERE id = $1
     `,
@@ -942,7 +985,7 @@ async function failSend(item, error) {
 async function recoverInterruptedQueues({ staleOnly = false } = {}) {
   const staleJobFilter = staleOnly ? "AND locked_at < now() - interval '15 minutes'" : "";
   const staleSendFilter = staleOnly ? "AND updated_at < now() - interval '15 minutes'" : "";
-  const [jobs, sends] = await Promise.all([
+  const [jobs, sends, orphanedReservations] = await Promise.all([
     query(
       `
         UPDATE job_queue
@@ -967,10 +1010,24 @@ async function recoverInterruptedQueues({ staleOnly = false } = {}) {
               WHEN attempts < max_attempts THEN 'Восстановлено после перезапуска worker'
               ELSE 'Отправка не завершилась до перезапуска worker и исчерпала попытки'
             END,
+            quota_reservation_active = false,
+            quota_reserved_at = NULL,
             updated_at = now()
         WHERE status = 'running'
           ${staleSendFilter}
         RETURNING status
+      `,
+    ),
+    query(
+      `
+        UPDATE sending_queue
+        SET quota_reservation_active = false,
+            quota_reserved_at = NULL,
+            updated_at = now()
+        WHERE quota_reservation_active = true
+          AND status <> 'running'
+          AND quota_reserved_at < now() - interval '15 minutes'
+        RETURNING id
       `,
     ),
   ]);
@@ -979,7 +1036,8 @@ async function recoverInterruptedQueues({ staleOnly = false } = {}) {
   const failedJobs = jobs.rows.filter((row) => row.status === "failed").length;
   const recoveredSends = sends.rows.filter((row) => row.status === "retrying").length;
   const failedSends = sends.rows.filter((row) => row.status === "failed").length;
-  if (recoveredJobs || failedJobs || recoveredSends || failedSends) {
+  const releasedOrphanedReservations = orphanedReservations.rowCount;
+  if (recoveredJobs || failedJobs || recoveredSends || failedSends || releasedOrphanedReservations) {
     await logEvent("queue_recovered", {
       payload: {
         reason: staleOnly ? "stale_running" : "worker_startup",
@@ -987,6 +1045,7 @@ async function recoverInterruptedQueues({ staleOnly = false } = {}) {
         failedJobs,
         recoveredSends,
         failedSends,
+        releasedOrphanedReservations,
       },
     });
   }
@@ -1959,7 +2018,7 @@ process.on("SIGTERM", async () => {
 });
 
 console.log("Outreach worker started");
-await recoverInterruptedQueues();
+await recoverInterruptedQueues({ staleOnly: true });
 while (!stopping) {
   await tick();
   await sleep(await workerSleepMs());
