@@ -134,8 +134,12 @@ objects automatically.
 ## Worker activation requires separate approval
 
 Automatic deployment deliberately leaves `worker` stopped. Starting it can
-send queued emails when real sending is enabled. After explicit approval and a
-queue review, activate it separately:
+send queued emails when real sending is enabled. Before activation, verify in
+`Настройки` that the aggregate outreach limit is set to the intended value
+(`100` by default), review the queue, and obtain explicit approval. The limit
+combines first-touch and follow-up messages across every mailbox and campaign,
+resets on the application-time-zone calendar day, and prioritizes follow-ups.
+Activate the worker separately only after those checks:
 
 ```bash
 cd /root/outreach
