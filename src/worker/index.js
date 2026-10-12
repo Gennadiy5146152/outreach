@@ -439,6 +439,15 @@ async function scheduleDueEnrollments() {
       ) latest_queue ON true
       WHERE e.status = 'active'
         AND c.status = 'active'
+        AND (
+          c.test_mode = false
+          OR EXISTS (
+            SELECT 1
+            FROM sending_queue real_chain
+            WHERE real_chain.enrollment_id = e.id
+              AND real_chain.mode <> 'test'
+          )
+        )
         AND e.next_send_at IS NOT NULL
         AND e.next_send_at <= now()
         AND NOT EXISTS (

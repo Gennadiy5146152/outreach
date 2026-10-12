@@ -37,6 +37,8 @@ for (const required of [
   "withOutreachDeliveryLock",
   "lockOutreachQueueMutation",
   "previous_queue.mode <> 'test'",
+  "real_chain.mode <> 'test'",
+  "c.test_mode = false",
   "queueItemStatus",
   '["sent", "cancelled"]',
   "item.delivery_dry_run",
