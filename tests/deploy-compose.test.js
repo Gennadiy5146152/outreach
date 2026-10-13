@@ -46,14 +46,15 @@ test("production compose preserves runtime identity", () => {
 test("worker requires an explicit profile", () => {
   const config = productionConfig();
   assert.deepEqual(config.services.worker.profiles, ["worker"]);
+  assert.equal(config.services.personalizer.profiles, undefined);
 });
 
 test("application services use one immutable image", () => {
   const config = productionConfig();
-  const appServices = ["migrate", "web", "worker"].map((name) => config.services[name]);
+  const appServices = ["migrate", "web", "personalizer", "worker"].map((name) => config.services[name]);
   assert.deepEqual(
     appServices.map((service) => service.image),
-    ["outreach-desk-app:test-sha", "outreach-desk-app:test-sha", "outreach-desk-app:test-sha"],
+    ["outreach-desk-app:test-sha", "outreach-desk-app:test-sha", "outreach-desk-app:test-sha", "outreach-desk-app:test-sha"],
   );
 
   for (const service of appServices) {
@@ -80,7 +81,7 @@ test("Docker build excludes runtime data", () => {
 
 test("mailbox secret updates use a persistent runtime env file", () => {
   const config = productionConfig();
-  for (const serviceName of ["web", "worker"]) {
+  for (const serviceName of ["web", "personalizer", "worker"]) {
     const environment = config.services[serviceName].environment;
     assert.equal(environment.MAILBOX_PERSISTENCE_TEST, "runtime-file");
     assert.equal(environment.OUTREACH_SECRETS_FILE, "/app/storage/runtime.env");

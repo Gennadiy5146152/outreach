@@ -16,6 +16,7 @@ OUTREACH_HEALTH_URL=${OUTREACH_HEALTH_URL:-http://127.0.0.1:3000/api/health}
 OUTREACH_PROJECT=${OUTREACH_PROJECT:-outreach-desk}
 OUTREACH_POSTGRES_CONTAINER=${OUTREACH_POSTGRES_CONTAINER:-outreach-desk-postgres-1}
 OUTREACH_WEB_CONTAINER=${OUTREACH_WEB_CONTAINER:-outreach-desk-web-1}
+OUTREACH_PERSONALIZER_CONTAINER=${OUTREACH_PERSONALIZER_CONTAINER:-outreach-desk-personalizer-1}
 OUTREACH_VOLUME=${OUTREACH_VOLUME:-outreach-desk_postgres_data}
 OUTREACH_COMPOSE_FILE=${OUTREACH_COMPOSE_FILE:-$OUTREACH_DIR/docker-compose.prod.yml}
 OUTREACH_LEGACY_COMPOSE_FILE=${OUTREACH_LEGACY_COMPOSE_FILE:-$OUTREACH_DIR/docker-compose.yml}
@@ -144,6 +145,10 @@ prepare_storage_permissions() {
 }
 
 stop_web() {
+  if docker inspect "$OUTREACH_PERSONALIZER_CONTAINER" >/dev/null 2>&1; then
+    log "stopping personalizer container"
+    docker stop --time 30 "$OUTREACH_PERSONALIZER_CONTAINER" >/dev/null
+  fi
   if docker inspect "$OUTREACH_WEB_CONTAINER" >/dev/null 2>&1; then
     log "stopping web container"
     docker stop --time 30 "$OUTREACH_WEB_CONTAINER" >/dev/null
@@ -167,7 +172,7 @@ run_migrations() {
 
 start_web() {
   local requested_sha=$1
-  OUTREACH_IMAGE_TAG=$requested_sha compose up -d --no-deps web
+  OUTREACH_IMAGE_TAG=$requested_sha compose up -d --no-deps web personalizer
 }
 
 wait_for_health() {
@@ -215,7 +220,7 @@ rollback_application() {
       -p "$OUTREACH_PROJECT" \
       --env-file "$OUTREACH_ENV_FILE" \
       -f "$OUTREACH_LEGACY_COMPOSE_FILE" \
-      up -d --no-deps web || return $?
+      up -d --no-deps web personalizer || return $?
   else
     die "neither production nor legacy Compose file exists for rollback"
     return 1

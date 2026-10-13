@@ -207,6 +207,17 @@ test("wait_for_health accepts a running legacy container with healthy HTTP", () 
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("automatic application start includes personalizer but never the mail worker", () => {
+  const result = runBash(`
+    source "$1"
+    compose() { printf '%s\n' "$*"; }
+    start_web "$2"
+  `, [sha40]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /up -d --no-deps web personalizer/);
+  assert.doesNotMatch(result.stdout, /\bworker\b/);
+});
+
 test("termination after web stop invokes rollback and retention", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "outreach-signal-test-"));
   const trace = path.join(temp, "trace");

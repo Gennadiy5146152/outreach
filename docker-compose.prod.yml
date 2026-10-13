@@ -61,6 +61,14 @@ services:
       retries: 12
       start_period: 10s
 
+  personalizer:
+    <<: *app
+    command: ["node", "src/personalizer/index.js"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   worker:
     <<: *app
     command: ["node", "src/worker/index.js"]

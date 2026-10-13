@@ -4,8 +4,10 @@ Every push to `main` is validated by `.github/workflows/deploy.yml`. After the
 checks and Docker build pass, GitHub Actions requests deployment of the exact
 commit SHA through a restricted SSH key.
 
-The deployment restarts only `web`. It never starts `worker`, never restores a
-database dump automatically, and never copies application secrets to GitHub.
+The deployment restarts `web` and the isolated `personalizer`. The personalizer
+can analyze websites and create drafts but has no mail-delivery path. Deployment
+never starts `worker`, never restores a database dump automatically, and never
+copies application secrets to GitHub.
 
 ## Server layout
 
@@ -77,7 +79,7 @@ A push to `main` runs:
 2. a production Docker image build in GitHub Actions;
 3. the restricted server command for the event SHA;
 4. a server-side PostgreSQL backup;
-5. server image build, migrations, web restart, and `/api/health` check.
+5. server image build, migrations, web and personalizer restart, and `/api/health` check.
 
 Only a successful health check updates
 `/var/lib/outreach-deploy/current-sha`. Backups retain the seven newest files;
@@ -89,6 +91,7 @@ Inspect runs and server logs with:
 gh run list --workflow deploy.yml
 gh run view RUN_ID --log
 docker logs --tail 200 outreach-desk-web-1
+docker logs --tail 200 outreach-desk-personalizer-1
 curl -fsS http://127.0.0.1:3000/api/health
 ```
 
@@ -118,6 +121,7 @@ writers, and confirm the target backup path. A typical recovery sequence is:
 
 ```bash
 docker stop outreach-desk-web-1
+docker stop outreach-desk-personalizer-1 2>/dev/null || true
 docker stop outreach-desk-worker-1 2>/dev/null || true
 docker exec outreach-desk-postgres-1 \
   sh -ceu 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \

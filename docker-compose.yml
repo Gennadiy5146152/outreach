@@ -46,6 +46,20 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  personalizer:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "test -d node_modules || npm install; node src/personalizer/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+    volumes:
+      - .:/app
+      - ./storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   worker:
     image: node:22-alpine
     working_dir: /app

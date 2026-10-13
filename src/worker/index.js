@@ -11,6 +11,7 @@ import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
 import { lockOutreachQueueMutation, OUTREACH_MIN_SPACING_MINUTES, withOutreachDeliveryLock } from "../services/outreach-control.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
+import { claimJob, DELIVERY_JOB_TYPES, failJob as failQueuedJob, finishJob as finishQueuedJob } from "../services/job-queue.js";
 import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
 import { persistValidation, validateEmail } from "../services/validation.js";
 
@@ -262,53 +263,22 @@ function isWithinWindow(row, timeZone = env.appTimeZone) {
 }
 
 async function lockNextJob() {
-  return withClient(async (client) => {
-    await client.query("BEGIN");
-    const result = await client.query(
-      `
-        SELECT *
-        FROM job_queue
-        WHERE status IN ('pending','retrying') AND run_at <= now()
-        ORDER BY run_at ASC, created_at ASC
-        FOR UPDATE SKIP LOCKED
-        LIMIT 1
-      `,
-    );
-    if (!result.rowCount) {
-      await client.query("COMMIT");
-      return null;
-    }
-    const job = result.rows[0];
-    await client.query("UPDATE job_queue SET status = 'running', locked_at = now(), attempts = attempts + 1, updated_at = now() WHERE id = $1", [job.id]);
-    await client.query("COMMIT");
-    return job;
-  });
+  return withClient((client) => claimJob(client, { jobTypes: DELIVERY_JOB_TYPES }));
 }
 
 async function finishJob(jobId) {
-  await query("UPDATE job_queue SET status = 'done', last_error = NULL, updated_at = now() WHERE id = $1", [jobId]);
+  await finishQueuedJob({ query }, jobId);
 }
 
 async function failJob(job, error) {
-  const retry = job.attempts + 1 < job.max_attempts;
-  await query(
-    `
-      UPDATE job_queue
-      SET status = $2,
-          run_at = now() + (($3 * 5) || ' minutes')::interval,
-          last_error = $4,
-          updated_at = now()
-      WHERE id = $1
-    `,
-    [job.id, retry ? "retrying" : "failed", job.attempts + 1, error.message],
-  );
+  const { retry, attempts } = await failQueuedJob({ query }, job, error);
   if (job.job_type === "sync_inbox") {
     await logEvent("inbox_sync_failed", {
       mailboxId: job.payload?.mailboxId || null,
       payload: {
         jobId: job.id,
         retry,
-        attempts: job.attempts + 1,
+        attempts,
         error: error.message || String(error),
       },
     });
