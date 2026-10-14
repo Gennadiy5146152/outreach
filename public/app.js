@@ -74,6 +74,13 @@ const state = {
     mailboxes: {},
   },
   outreachImportProgress: null,
+  personalizationPilots: [],
+  personalizationPreview: null,
+  personalizationDetail: null,
+  selectedPersonalizationPilotId: null,
+  personalizationFilter: "all",
+  personalizationPage: 1,
+  personalizationPageSize: 10,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -141,6 +148,7 @@ const VIEW_TITLES = {
   dashboard: "Обзор",
   start: "Что делать",
   outreachImport: "Импорт Excel",
+  personalization: "Персонализация",
   outreachDrafts: "Черновики",
   runs: "Запуски",
   participation: "Участие",
@@ -161,6 +169,7 @@ const VIEW_GROUPS = {
   start: "Рабочий стол",
   dashboard: "Рабочий стол",
   outreachImport: "Аутрич",
+  personalization: "Аутрич",
   outreachDrafts: "Аутрич",
   runs: "Аутрич",
   participation: "Аутрич",
@@ -4508,6 +4517,165 @@ function scheduleInboxSyncRefreshes() {
   setTimeout(refreshInboxSyncRelated, 12000);
 }
 
+function safeEvidenceUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function renderPersonalizationPreview() {
+  const panel = $("#personalizationPreviewPanel");
+  const preview = state.personalizationPreview;
+  if (!panel) return;
+  panel.hidden = !preview;
+  $("#startPersonalizationBtn").disabled = !preview?.leads?.length;
+  if (!preview) return;
+  const segments = new Set(preview.leads.map((lead) => lead.segment).filter(Boolean));
+  const cities = new Set(preview.leads.map((lead) => lead.city).filter(Boolean));
+  $("#personalizationPreviewSummary").innerHTML = `
+    <span>Выбрано: <strong>${preview.counts.selected}</strong> из ${preview.limit}</span>
+    <span>Valid: <strong>${preview.counts.valid}</strong></span>
+    <span>Risky: <strong>${preview.counts.risky}</strong></span>
+    <span>Сегментов: <strong>${segments.size}</strong></span>
+    <span>Городов: <strong>${cities.size}</strong></span>
+  `;
+  $("#personalizationPreviewList").innerHTML = `
+    <div class="personalization-exclusions">
+      <strong>Автоматически не включаются</strong>
+      <span>лиды без сайта или валидного email</span>
+      <span>стоп-лист и активные диалоги</span>
+      <span>получатели прошлых писем про резервные копии</span>
+    </div>
+    ${preview.leads.map((lead, index) => `
+      <article class="personalization-preview-item">
+        <span>${index + 1}</span>
+        <div><strong>${esc(lead.company || lead.website)}</strong><small>${esc(lead.email)} · ${esc(lead.city || "город не указан")} · ${esc(lead.segment || "без сегмента")}</small></div>
+      </article>
+    `).join("")}
+  `;
+}
+
+function renderPersonalizationPilots() {
+  const node = $("#personalizationPilots");
+  if (!node) return;
+  node.innerHTML = state.personalizationPilots.length
+    ? state.personalizationPilots.map((pilot) => `
+      <button class="personalization-pilot ${pilot.id === state.selectedPersonalizationPilotId ? "active" : ""}" data-select-personalization="${pilot.id}">
+        <span><strong>${fmtDate(pilot.created_at)}</strong>${pill(pilot.status)}</span>
+        <small>Всего ${Number(pilot.total || 0)} · готовы ${Number(pilot.ready || 0)} · проверка ${Number(pilot.needs_review || 0)} · ошибки ${Number(pilot.failed || 0)}</small>
+      </button>
+    `).join("")
+    : `<p class="muted">Пилотов пока нет. Сначала открой предварительный список.</p>`;
+}
+
+function personalizationItemCard(item) {
+  const evidenceUrl = safeEvidenceUrl(item.fact_source_url);
+  const confidence = Number(item.contact_confidence);
+  const contact = item.enriched_contact_name
+    ? `${esc(item.enriched_contact_name)}${item.enriched_contact_position ? ` · ${esc(item.enriched_contact_position)}` : ""}${Number.isFinite(confidence) ? ` · уверенность ${Math.round(confidence * 100)}%` : ""}`
+    : "Подтверждённое имя не найдено — нейтральное приветствие";
+  const firstStep = Array.isArray(item.draft_steps) ? item.draft_steps.find((step) => Number(step.position) === 1) : null;
+  const followup = Array.isArray(item.draft_steps) ? item.draft_steps.find((step) => Number(step.position) === 2) : null;
+  return `
+    <article class="personalization-item" data-personalization-status="${esc(item.status)}">
+      <div class="personalization-item-head">
+        <div>
+          <strong>${esc(item.canonical_company || item.company || item.website)}</strong>
+          <p>${esc(item.email)} · ${esc(item.city || "город не указан")} · ${esc(item.segment || "без сегмента")}</p>
+        </div>
+        ${pill(item.status)}
+      </div>
+      <div class="personalization-evidence">
+        <div><span>Почему подходит</span><p>${esc(item.fit_reason || item.status_reason || "Анализ ещё не завершён")}</p></div>
+        <div><span>Контакт</span><p>${contact}</p></div>
+        <div><span>Факт с сайта</span><p>${esc(item.fact_evidence || "Подтверждённый факт пока не найден")}</p>
+          ${evidenceUrl ? `<a href="${esc(evidenceUrl)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : ""}
+        </div>
+      </div>
+      ${item.draft_id ? `
+        <details class="personalization-copy-preview">
+          <summary>Показать текст черновика</summary>
+          <strong>${esc(firstStep?.subject || item.subject || "")}</strong>
+          <p>${esc(firstStep?.bodyText || item.body_text || "")}</p>
+          ${followup ? `<hr /><strong>${esc(followup.subject || "Follow-up")}</strong><p>${esc(followup.bodyText || "")}</p>` : ""}
+        </details>
+      ` : ""}
+      ${item.last_error ? `<p class="warn-text">${esc(item.last_error)}</p>` : ""}
+      <div class="form-actions personalization-actions">
+        <button data-personalization-override="${item.id}" data-status="qualified">Подходит</button>
+        <button data-personalization-override="${item.id}" data-status="review">На проверку</button>
+        <button data-personalization-override="${item.id}" data-status="excluded">Исключить</button>
+        ${item.draft_id ? `<button data-open-personalized-draft="${item.draft_id}">Открыть редактор</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderPersonalizationDetail() {
+  const panel = $("#personalizationDetailPanel");
+  const detail = state.personalizationDetail;
+  if (!panel) return;
+  panel.hidden = !detail?.pilot;
+  if (!detail?.pilot) return;
+  const filteredItems = state.personalizationFilter === "all"
+    ? detail.items
+    : detail.items.filter((item) => item.status === state.personalizationFilter);
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / state.personalizationPageSize));
+  state.personalizationPage = Math.min(Math.max(state.personalizationPage, 1), totalPages);
+  const offset = (state.personalizationPage - 1) * state.personalizationPageSize;
+  const items = filteredItems.slice(offset, offset + state.personalizationPageSize);
+  $("#personalizationDetailTitle").textContent = `Пилот от ${fmtDate(detail.pilot.created_at)}`;
+  $("#personalizationDetailMeta").textContent = `Статус: ${detail.pilot.status}. В фильтре ${filteredItems.length}, всего ${detail.items.length}. Письма здесь не отправляются.`;
+  const retry = $("#retryPersonalizationBtn");
+  const failedCount = detail.items.filter((item) => item.status === "failed").length;
+  retry.hidden = failedCount === 0;
+  retry.dataset.retryPersonalization = detail.pilot.id;
+  retry.textContent = `Повторить ошибки (${failedCount})`;
+  $$("[data-personalization-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.personalizationFilter === state.personalizationFilter);
+  });
+  $("#personalizationItems").innerHTML = items.length
+    ? items.map(personalizationItemCard).join("")
+    : `<p class="muted">В этом фильтре строк нет.</p>`;
+  $("#personalizationPagination").innerHTML = `
+    <span>${filteredItems.length ? offset + 1 : 0}-${Math.min(offset + state.personalizationPageSize, filteredItems.length)} из ${filteredItems.length}</span>
+    <div class="pagination-actions">
+      <button data-personalization-page="${state.personalizationPage - 1}" ${state.personalizationPage <= 1 ? "disabled" : ""}>Назад</button>
+      <strong>Страница ${state.personalizationPage} из ${totalPages}</strong>
+      <button data-personalization-page="${state.personalizationPage + 1}" ${state.personalizationPage >= totalPages ? "disabled" : ""}>Вперёд</button>
+    </div>
+  `;
+}
+
+async function loadPersonalizationPilotDetail(pilotId) {
+  if (!pilotId) {
+    state.personalizationDetail = null;
+    renderPersonalizationDetail();
+    return;
+  }
+  state.selectedPersonalizationPilotId = pilotId;
+  state.personalizationPage = 1;
+  state.personalizationDetail = await api(`/api/personalization/pilots/${pilotId}`);
+  renderPersonalizationPilots();
+  renderPersonalizationDetail();
+}
+
+async function loadPersonalizationPilots() {
+  if (!$("#personalizationPilots")) return;
+  const result = await api("/api/personalization/pilots");
+  state.personalizationPilots = result.pilots || [];
+  if (state.selectedPersonalizationPilotId && !state.personalizationPilots.some((pilot) => pilot.id === state.selectedPersonalizationPilotId)) {
+    state.selectedPersonalizationPilotId = null;
+    state.personalizationDetail = null;
+  }
+  renderPersonalizationPilots();
+  if (state.selectedPersonalizationPilotId) await loadPersonalizationPilotDetail(state.selectedPersonalizationPilotId);
+  else renderPersonalizationDetail();
+}
+
 async function refresh() {
   await Promise.all([
     loadHealth(),
@@ -4517,6 +4685,7 @@ async function refresh() {
     loadLeads(),
     loadOutreachImports(),
     loadOutreachDrafts(),
+    loadPersonalizationPilots(),
     loadRuns(),
     loadParticipation(),
     loadMailboxes(),
@@ -4551,6 +4720,107 @@ $("#refreshBtn").addEventListener("click", (event) => runAction({
   await refresh();
   setActionResult({ status: "success", title: "Обновление данных", message: "Данные с сервера обновлены." });
 }));
+
+$("#previewPersonalizationBtn")?.addEventListener("click", (event) => runAction({
+  title: "Предварительный список персонализации",
+  button: event.currentTarget,
+}, async () => {
+  state.personalizationPreview = await api("/api/personalization/pilots/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ limit: 30 }),
+  });
+  renderPersonalizationPreview();
+  setActionResult({
+    status: "success",
+    title: "Предварительный список готов",
+    message: `Выбрано компаний: ${state.personalizationPreview.counts.selected}. Никаких писем не отправлено.`,
+  });
+}));
+
+$("#startPersonalizationBtn")?.addEventListener("click", (event) => {
+  const preview = state.personalizationPreview;
+  if (!preview?.leads?.length) return;
+  if (!window.confirm(`Создать ${preview.leads.length} персональных черновиков (пилот до 30)? Письма не будут отправлены.`)) return;
+  runAction({
+    title: "Создание пилота персонализации",
+    button: event.currentTarget,
+  }, async () => {
+    const result = await api("/api/personalization/pilots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        limit: preview.limit,
+        rulesVersion: preview.rulesVersion,
+        leadIds: preview.leads.map((lead) => lead.id),
+        selectionToken: preview.selectionToken,
+      }),
+    });
+    state.personalizationPreview = null;
+    state.selectedPersonalizationPilotId = result.pilot.id;
+    renderPersonalizationPreview();
+    await loadPersonalizationPilots();
+    setActionResult({
+      status: "success",
+      title: "Пилот запущен",
+      message: `В анализ поставлено ${result.queued} лидов. Создаются только черновики — отправка не запускается.`,
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("click", async (event) => {
+  const pilotId = event.target.closest("[data-select-personalization]")?.dataset.selectPersonalization;
+  const filter = event.target.closest("[data-personalization-filter]")?.dataset.personalizationFilter;
+  const page = event.target.closest("[data-personalization-page]")?.dataset.personalizationPage;
+  const retryPilotId = event.target.dataset.retryPersonalization;
+  const overrideItemId = event.target.dataset.personalizationOverride;
+  const openDraftId = event.target.dataset.openPersonalizedDraft;
+  if (pilotId) {
+    await loadPersonalizationPilotDetail(pilotId);
+    return;
+  }
+  if (filter) {
+    state.personalizationFilter = filter;
+    state.personalizationPage = 1;
+    renderPersonalizationDetail();
+    return;
+  }
+  if (page) {
+    state.personalizationPage = Number(page);
+    renderPersonalizationDetail();
+    return;
+  }
+  if (retryPilotId) {
+    await runAction({ title: "Повтор ошибок персонализации", button: event.target }, async () => {
+      const result = await api(`/api/personalization/pilots/${retryPilotId}/retry`, { method: "POST" });
+      await loadPersonalizationPilots();
+      setActionResult({ status: "success", title: "Ошибки поставлены на повтор", message: `Повторно поставлено задач: ${result.retried}.` });
+    });
+    return;
+  }
+  if (overrideItemId) {
+    const status = event.target.dataset.status;
+    const reason = window.prompt("Коротко укажи причину решения:", "Ручная проверка")?.trim();
+    if (reason === undefined) return;
+    await runAction({ title: "Ручная квалификация лида", button: event.target }, async () => {
+      await api(`/api/personalization/items/${overrideItemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, reason }),
+      });
+      await loadPersonalizationPilotDetail(state.selectedPersonalizationPilotId);
+      setActionResult({ status: "success", title: "Решение сохранено", message: "Статус лида обновлён и записан как ручное решение." });
+    });
+    return;
+  }
+  if (openDraftId) {
+    state.outreachDraftFilter = "all";
+    switchView("outreachDrafts");
+    await loadOutreachDrafts();
+    openOutreachDraftDrawer(openDraftId);
+  }
+});
 
 $("#logoutBtn").addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});

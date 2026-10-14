@@ -24,6 +24,7 @@
         <div class="nav-group">
           <span>Аутрич</span>
           <button data-view="outreachImport">Импорт Excel</button>
+          <button data-view="personalization">Персонализация</button>
           <button data-view="outreachDrafts">Черновики</button>
           <button data-view="runs">Запуски</button>
           <button data-view="participation">Участие</button>
@@ -297,6 +298,61 @@
           </div>
           <div id="outreachDraftLaunchSummary" class="summary-line"></div>
           <div class="table-wrap"><table id="outreachDraftLaunchTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="personalizationView">
+        <section class="panel hero-help personalization-hero">
+          <div>
+            <p class="eyebrow">Пилот без отправки</p>
+            <h2>Подготовим персональные письма по подтверждённым фактам с сайтов.</h2>
+            <p>Этот процесс только анализирует лидов и создаёт черновики. Он не запускает кампанию и не отправляет письма.</p>
+          </div>
+          <div class="form-actions">
+            <button id="previewPersonalizationBtn">Показать будущие 30</button>
+            <button id="startPersonalizationBtn" disabled>Подготовить 30 черновиков</button>
+          </div>
+        </section>
+
+        <section class="panel" id="personalizationPreviewPanel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2>Предварительный список</h2>
+              <p class="muted">Проверь количество, города и сегменты до создания пилота.</p>
+            </div>
+          </div>
+          <div id="personalizationPreviewSummary" class="summary-line"></div>
+          <div id="personalizationPreviewList" class="personalization-preview-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Пилоты персонализации</h2>
+              <p class="muted">Выбери пилот, чтобы увидеть квалификацию, доказательства и созданные черновики.</p>
+            </div>
+          </div>
+          <div id="personalizationPilots" class="personalization-pilots"></div>
+        </section>
+
+        <section class="panel" id="personalizationDetailPanel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 id="personalizationDetailTitle">Лиды пилота</h2>
+              <p id="personalizationDetailMeta" class="muted"></p>
+            </div>
+            <button id="retryPersonalizationBtn" data-retry-personalization="" hidden>Повторить ошибки</button>
+          </div>
+          <div class="quick-filters personalization-filters">
+            <button class="active" data-personalization-filter="all">Все</button>
+            <button data-personalization-filter="qualified">Подходят</button>
+            <button data-personalization-filter="review">Нужна проверка</button>
+            <button data-personalization-filter="excluded">Исключены</button>
+            <button data-personalization-filter="failed">Ошибки</button>
+            <button data-personalization-filter="ready">Черновики готовы</button>
+          </div>
+          <div id="personalizationItems" class="personalization-items"></div>
+          <div id="personalizationPagination" class="pagination"></div>
         </section>
       </section>
 

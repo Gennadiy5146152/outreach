@@ -12,6 +12,141 @@
   --warn: #a15c07;
 }
 
+.personalization-hero .form-actions {
+  justify-content: flex-end;
+  min-width: 260px;
+}
+
+.personalization-preview-grid,
+.personalization-items {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.personalization-exclusions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid #f2d3a2;
+  border-radius: 8px;
+  background: #fff8eb;
+}
+
+.personalization-exclusions span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.personalization-preview-item,
+.personalization-pilot,
+.personalization-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.personalization-preview-item {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.personalization-preview-item > span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.personalization-preview-item small,
+.personalization-pilot small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.personalization-pilots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.personalization-pilot {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+
+.personalization-pilot > span,
+.personalization-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.personalization-pilot.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.personalization-filters {
+  margin: 14px 0;
+}
+
+.personalization-item {
+  padding: 14px;
+}
+
+.personalization-item-head p,
+.personalization-evidence p,
+.personalization-copy-preview p {
+  margin: 5px 0;
+  white-space: pre-wrap;
+}
+
+.personalization-evidence {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.personalization-evidence > div {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.personalization-evidence span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.personalization-copy-preview {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.personalization-actions {
+  justify-content: flex-start;
+}
+
+@media (max-width: 900px) {
+  .personalization-hero .form-actions {
+    min-width: 0;
+  }
+
+  .personalization-evidence {
+    grid-template-columns: 1fr;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
