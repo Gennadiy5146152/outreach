@@ -17,6 +17,10 @@ test("company research migration defines runs, evidence, contacts, and non-senda
   assert.match(sql, /UNIQUE\s*\(research_run_id, canonical_url\)/i);
   assert.match(sql, /CHECK\s*\(char_length\(excerpt\) <= 500\)/i);
   assert.match(sql, /UNIQUE\s*\(research_run_id, contact_key\)/i);
+  const factsTable = sql.match(/CREATE TABLE IF NOT EXISTS company_research_facts \(([\s\S]*?)\n\);/i)?.[1] || "";
+  const contactsTable = sql.match(/CREATE TABLE IF NOT EXISTS company_contacts \(([\s\S]*?)\n\);/i)?.[1] || "";
+  assert.doesNotMatch(factsTable, /\bcontact_key\b/i);
+  assert.match(contactsTable, /\bcontact_key text NOT NULL\b/i);
   assert.match(sql, /UNIQUE\s*\(research_run_id, audience_key\)/i);
   assert.doesNotMatch(sql, /REFERENCES\s+(?:sending_queue|messages|enrollments)/i);
 });
