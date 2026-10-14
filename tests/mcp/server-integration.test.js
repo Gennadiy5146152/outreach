@@ -21,6 +21,7 @@ test("MCP server initializes, lists tools, and calls a read tool with structured
     const listed = await client.listTools();
     assert.ok(listed.tools.length >= 35);
     assert.equal(listed.tools.some((tool) => tool.name === "launch_execute" && tool.annotations?.destructiveHint === true), true);
+    assert.equal(listed.tools.some((tool) => tool.name === "personalization_pilot_execute" && tool.annotations?.destructiveHint === true), true);
 
     const result = await client.callTool({ name: "outreach_status", arguments: {} });
     assert.equal(result.isError, undefined);

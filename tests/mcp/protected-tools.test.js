@@ -26,6 +26,13 @@ function createProtectedFixture() {
     settings: { runtime: { dryRun: false, publicTrackingUrl: "https://track.example.com", maxAttachmentMb: 50, outreachStopScope: "company", timeZone: "Europe/Moscow", inboxSyncIntervalSeconds: 60 } },
     mailboxes: [{ id: "mailbox-1", email: "sales@example.com", is_active: true, smtp_verified_at: "2026-10-11T08:00:00Z" }],
     failNextMutation: false,
+    personalizationPreview: {
+      limit: 30,
+      rulesVersion: "backup-personalization-v1",
+      counts: { selected: 1, valid: 1, risky: 0 },
+      selectionToken: "selection-1",
+      leads: [{ id: "lead-1", company: "Example", email: "lead@example.com", website: "https://example.com" }],
+    },
   };
 
   function responseForGet(endpoint) {
@@ -56,6 +63,7 @@ function createProtectedFixture() {
     async post(endpoint, body) {
       calls.push({ method: "post", endpoint, body });
       if (endpoint === "/api/outreach/drafts/preflight") return structuredClone(state.draftPreflight);
+      if (endpoint === "/api/personalization/pilots/preview") return structuredClone(state.personalizationPreview);
       if (state.failNextMutation) {
         state.failNextMutation = false;
         throw new Error("downstream mutation failed");
@@ -121,6 +129,38 @@ test("draft launch requires prepare and exact unchanged preflight before mutatio
     method: "post",
     endpoint: "/api/outreach/drafts/start",
     body: { draft_ids: ["draft-1"], mode: "auto", daily_first_limit: 25 },
+  });
+});
+
+test("personalization pilot requires an unchanged prepared snapshot and explicit confirmation", async () => {
+  const { handlers, calls, state } = createProtectedFixture();
+  const prepared = await handlers.personalization_pilot_prepare({ limit: 30 });
+  const token = tokenOf(prepared);
+  assert.equal(calls.some((call) => call.endpoint === "/api/personalization/pilots"), false);
+
+  state.personalizationPreview.selectionToken = "selection-changed";
+  const blocked = await handlers.personalization_pilot_execute({ confirmation_token: token, confirm: true });
+  assert.equal(blocked.isError, true);
+  assert.equal(blocked.structuredContent.data.code, "confirmation_state_changed");
+  assert.equal(calls.some((call) => call.endpoint === "/api/personalization/pilots"), false);
+
+  state.personalizationPreview.selectionToken = "selection-1";
+  const preparedAgain = await handlers.personalization_pilot_prepare({ limit: 30 });
+  const noApproval = await handlers.personalization_pilot_execute({ confirmation_token: tokenOf(preparedAgain), confirm: false });
+  assert.equal(noApproval.structuredContent.data.code, "confirmation_required");
+
+  const preparedFinal = await handlers.personalization_pilot_prepare({ limit: 30 });
+  const executed = await handlers.personalization_pilot_execute({ confirmation_token: tokenOf(preparedFinal), confirm: true });
+  assert.equal(executed.isError, undefined, executed.content?.[0]?.text);
+  assert.deepEqual(calls.at(-1), {
+    method: "post",
+    endpoint: "/api/personalization/pilots",
+    body: {
+      limit: 30,
+      rulesVersion: "backup-personalization-v1",
+      leadIds: ["lead-1"],
+      selectionToken: "selection-1",
+    },
   });
 });
 

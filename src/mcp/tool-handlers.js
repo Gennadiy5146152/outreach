@@ -43,6 +43,26 @@ function arrayItems(value) {
   return [];
 }
 
+function evidenceExcerpt(value) {
+  return String(value || "").slice(0, 500);
+}
+
+function safePersonalizationDetail(detail) {
+  return {
+    ...detail,
+    items: arrayItems(detail).map((item) => ({
+      ...item,
+      fact_evidence: evidenceExcerpt(item.fact_evidence),
+      source_pages: Array.isArray(item.source_pages)
+        ? item.source_pages.map((page) => ({
+          url: String(page?.url || ""),
+          ...(page?.evidenceExcerpt ? { evidenceExcerpt: evidenceExcerpt(page.evidenceExcerpt) } : {}),
+        }))
+        : [],
+    })),
+  };
+}
+
 function exactSelection(items, ids, kind) {
   const wanted = new Set(ids);
   const selected = items.filter((item) => wanted.has(item.id));
@@ -95,6 +115,19 @@ function findAttachment(collections, attachmentId) {
 }
 
 export function createToolHandlers({ client, confirmations }) {
+  async function personalizationPreview(limit) {
+    return client.post("/api/personalization/pilots/preview", { limit });
+  }
+
+  function personalizationSnapshot(preview) {
+    return {
+      limit: Number(preview?.limit || 0),
+      rulesVersion: String(preview?.rulesVersion || ""),
+      leadIds: (preview?.leads || []).map((lead) => String(lead.id)),
+      selectionToken: String(preview?.selectionToken || ""),
+    };
+  }
+
   async function draftLaunchState(payload) {
     const [preflight, health, ...drafts] = await Promise.all([
       client.post("/api/outreach/drafts/preflight", { draft_ids: payload.draft_ids }),
@@ -174,6 +207,51 @@ export function createToolHandlers({ client, confirmations }) {
       return success("Outreach Desk доступен; состояние и режим получены.", { health, settings }, ["outreach_dashboard"]);
     }),
     outreach_dashboard: safeTool(async () => success("Метрики аутрича получены.", await client.get("/api/dashboard"))),
+    personalization_pilots_list: safeTool(async (input) => {
+      const data = await client.get("/api/personalization/pilots", { query: pageQuery(input) });
+      const pilots = Array.isArray(data) ? data : data?.pilots || [];
+      const summary = pilots.reduce((totals, pilot) => ({
+        pilots: totals.pilots + 1,
+        candidates: totals.candidates + Number(pilot.total || 0),
+        ready: totals.ready + Number(pilot.ready || 0),
+        review: totals.review + Number(pilot.needs_review || 0),
+        failed: totals.failed + Number(pilot.failed || 0),
+      }), { pilots: 0, candidates: 0, ready: 0, review: 0, failed: 0 });
+      return success("Пилоты персонализации получены.", { pilots, summary }, ["personalization_pilot_get", "personalization_pilot_prepare"]);
+    }),
+    personalization_pilot_get: safeTool(async ({ pilot_id: pilotId }) => success(
+      "Пилот персонализации получен.",
+      safePersonalizationDetail(await client.get(`/api/personalization/pilots/${pathId(pilotId, "pilot_id")}`)),
+      ["draft_update"],
+    )),
+    personalization_pilot_prepare: safeTool(async ({ limit = 30 }) => {
+      const preview = await personalizationPreview(limit);
+      const snapshot = personalizationSnapshot(preview);
+      if (!snapshot.leadIds.length) {
+        throw new OutreachApiError("No eligible leads were found for personalization", { code: "personalization_no_eligible_leads" });
+      }
+      return prepareConfirmation(
+        confirmations,
+        "personalization_pilot",
+        snapshot,
+        snapshot,
+        `Подготовлен пилот персонализации для ${snapshot.leadIds.length} лидов. Будут созданы только черновики; отправка не запускается. Требуется явное разрешение.`,
+        ["personalization_pilot_execute"],
+        { ...preview, leads: preview.leads.map((lead) => pick(lead, ["id", "company", "email", "website", "segment", "city", "validation_status"])) },
+      );
+    }),
+    personalization_pilot_execute: safeTool(async ({ confirmation_token: token, confirm }) => {
+      const plan = claim(token, "personalization_pilot", confirm);
+      const preview = await personalizationPreview(plan.payload.limit);
+      verify(plan, personalizationSnapshot(preview));
+      const data = await client.post("/api/personalization/pilots", {
+        limit: plan.payload.limit,
+        rulesVersion: plan.payload.rulesVersion,
+        leadIds: plan.payload.leadIds,
+        selectionToken: plan.payload.selectionToken,
+      });
+      return success("Подтверждённый пилот персонализации создан; письма не отправлялись.", data, ["personalization_pilot_get"]);
+    }),
     events_list: safeTool(async (input) => success("Журнал событий получен.", await client.get("/api/events", { query: pageQuery(input) }))),
     leads_list: safeTool(async (input) => success("Список лидов получен.", await client.get("/api/leads", { query: filteredQuery(input, ["status", "segment", "search"]) }), ["lead_upsert", "leads_import"])),
     lead_upsert: safeTool(async ({ lead_id: leadId, lead }) => success(

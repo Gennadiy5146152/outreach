@@ -48,6 +48,7 @@ test("catalog exposes the approved domain tools with bounded schemas", () => {
     "suppressions_list", "suppression_prepare", "suppression_execute",
     "mailboxes_list", "mailbox_check", "inbox_sync",
     "delivery_mode_prepare", "delivery_mode_execute",
+    "personalization_pilots_list", "personalization_pilot_get", "personalization_pilot_prepare", "personalization_pilot_execute",
   ]) assert.equal(names.has(name), true, `missing tool ${name}`);
 
   assert.equal(TOOL_DEFINITIONS.every((item) => item.inputSchema && item.description && item.annotations), true);
@@ -80,6 +81,8 @@ test("read handlers map to the existing Outreach API and cap pagination", async 
     ["conversation_get", { conversation_id: "conversation-1" }, "/api/outreach/conversations/conversation-1"],
     ["suppressions_list", {}, "/api/suppressions"],
     ["mailboxes_list", {}, "/api/mailboxes"],
+    ["personalization_pilots_list", { page: 1, page_size: 999 }, "/api/personalization/pilots"],
+    ["personalization_pilot_get", { pilot_id: "pilot-1" }, "/api/personalization/pilots/pilot-1"],
   ];
 
   for (const [name, input, expectedPath] of cases) {
@@ -94,6 +97,27 @@ test("read handlers map to the existing Outreach API and cap pagination", async 
   const pagedCalls = calls.filter((call) => call.args[1]?.query?.pageSize);
   assert.equal(pagedCalls.every((call) => call.args[1].query.pageSize === 100), true);
   assert.equal(pagedCalls.find((call) => call.args[0] === "/api/events").args[1].query.page, 1);
+});
+
+test("personalization detail truncates evidence and never exposes fetched page bodies", async () => {
+  const client = {
+    async get(endpoint) {
+      assert.equal(endpoint, "/api/personalization/pilots/pilot-1");
+      return {
+        pilot: { id: "pilot-1", status: "completed" },
+        items: [{
+          id: "item-1",
+          fact_evidence: "x".repeat(900),
+          source_pages: [{ url: "https://example.com/about", html: "<p>secret page body</p>", text: "secret page body" }],
+        }],
+      };
+    },
+  };
+  const handlers = createToolHandlers({ client, confirmations: {} });
+  const data = dataOf(await handlers.personalization_pilot_get({ pilot_id: "pilot-1" }));
+  assert.ok(data.items[0].fact_evidence.length <= 500);
+  assert.deepEqual(data.items[0].source_pages, [{ url: "https://example.com/about" }]);
+  assert.doesNotMatch(JSON.stringify(data), /secret page body/);
 });
 
 test("status combines health and safe settings while recursively removing secrets", async () => {
