@@ -13,6 +13,7 @@ test("personalization migration defines pilots, items, evidence, and protected d
   assert.match(sql, /UNIQUE\s*\(pilot_id, lead_id\)/i);
   assert.match(sql, /lead_enrichment_id uuid UNIQUE REFERENCES lead_enrichments/i);
   assert.match(sql, /manually_edited_at timestamptz/i);
+  assert.match(sql, /manual_override_by text/i);
   for (const status of ["draft", "running", "completed", "completed_with_errors", "cancelled"]) {
     assert.match(sql, new RegExp(`'${status}'`));
   }

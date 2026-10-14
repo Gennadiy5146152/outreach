@@ -21,6 +21,7 @@ import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.
 import { saveSecretToDotenv } from "./services/secret-file.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 import { createAuth, timingSafeEqualText } from "./http/auth.js";
+import { createPersonalizationApi } from "./services/personalization-api.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
 
@@ -49,6 +50,7 @@ const {
   clearAuthCookie,
   requireAuth,
 } = createAuth(env);
+const personalizationApi = createPersonalizationApi({ query, withClient });
 
 function cleanText(value) {
   return String(value || "").trim();
@@ -589,6 +591,46 @@ app.get("/api/health", asyncHandler(async (_req, res) => {
     timeZone: runtime.timeZone,
     inboxSyncIntervalSeconds: runtime.inboxSyncIntervalSeconds,
   });
+}));
+
+app.get("/api/personalization/pilots", asyncHandler(async (_req, res) => {
+  res.json({ pilots: await personalizationApi.listPilots() });
+}));
+
+app.get("/api/personalization/pilots/:id", asyncHandler(async (req, res) => {
+  const detail = await personalizationApi.getPilotDetail(req.params.id);
+  if (!detail.pilot) return res.status(404).json({ error: "personalization_pilot_not_found" });
+  res.json(detail);
+}));
+
+app.post("/api/personalization/pilots/preview", asyncHandler(async (req, res) => {
+  res.json(await personalizationApi.previewPilot({
+    limit: req.body.limit,
+    rulesVersion: req.body.rulesVersion,
+  }));
+}));
+
+app.post("/api/personalization/pilots", asyncHandler(async (req, res) => {
+  const result = await personalizationApi.startPilot({
+    limit: req.body.limit,
+    rulesVersion: req.body.rulesVersion,
+    leadIds: req.body.leadIds,
+    selectionToken: req.body.selectionToken,
+  });
+  res.status(201).json(result);
+}));
+
+app.post("/api/personalization/pilots/:id/retry", asyncHandler(async (req, res) => {
+  res.json(await personalizationApi.retryPilot(req.params.id));
+}));
+
+app.patch("/api/personalization/items/:id", asyncHandler(async (req, res) => {
+  res.json(await personalizationApi.updateItem(req.params.id, {
+    status: req.body.status,
+    reason: req.body.reason,
+    actor: req.body.actor || env.authUser,
+    draft: req.body.draft,
+  }));
 }));
 
 app.get("/api/settings", asyncHandler(async (_req, res) => {
@@ -1367,6 +1409,7 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
               send_after = $10,
               status = $11,
               error_reason = $12,
+              manually_edited_at = CASE WHEN lead_enrichment_id IS NOT NULL THEN now() ELSE manually_edited_at END,
               updated_at = now()
           WHERE id = $1
           RETURNING *

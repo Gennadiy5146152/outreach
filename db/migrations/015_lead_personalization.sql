@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS personalization_pilot_items (
   last_error text,
   source_row_number integer NOT NULL,
   manually_overridden_at timestamptz,
+  manual_override_by text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (pilot_id, lead_id)
@@ -65,4 +66,3 @@ CREATE INDEX IF NOT EXISTS personalization_pilot_items_status_idx
   ON personalization_pilot_items(pilot_id, status, source_row_number);
 CREATE INDEX IF NOT EXISTS lead_enrichments_status_idx
   ON lead_enrichments(status, fit_score DESC);
-

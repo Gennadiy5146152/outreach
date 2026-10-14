@@ -19,6 +19,7 @@ export async function createPilot(client, {
   rulesVersion,
   leadIds,
   selectionToken,
+  enqueueJobType,
 }) {
   const uniqueIds = uniqueLeadIds(leadIds);
   if (!uniqueIds.length) throw new Error("personalization_pilot_requires_leads");
@@ -52,6 +53,26 @@ export async function createPilot(client, {
       `,
       [pilot.id, uniqueIds],
     );
+    if (enqueueJobType) {
+      await client.query(
+        `
+          INSERT INTO job_queue(job_type, payload)
+          SELECT $2, jsonb_build_object(
+            'itemId', item.id::text,
+            'pilotId', item.pilot_id::text,
+            'rulesVersion', $3::text
+          )
+          FROM personalization_pilot_items item
+          WHERE item.pilot_id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM job_queue job
+              WHERE job.job_type = $2
+                AND job.payload->>'itemId' = item.id::text
+            )
+        `,
+        [pilot.id, enqueueJobType, rulesVersion],
+      );
+    }
     return pilot;
   });
 }
@@ -127,11 +148,24 @@ export async function getPilot(client, pilotId) {
              enrichment.contact_position AS enriched_contact_position,
              enrichment.contact_confidence, enrichment.personalization_fact,
              enrichment.fact_source_url, enrichment.fact_evidence,
-             draft.subject, draft.body_text, draft.manually_edited_at
+             enrichment.source_pages,
+             draft.subject, draft.body_text, draft.manually_edited_at,
+             draft_steps.steps AS draft_steps
       FROM personalization_pilot_items item
       JOIN leads lead ON lead.id = item.lead_id
       LEFT JOIN lead_enrichments enrichment ON enrichment.id = item.lead_enrichment_id
       LEFT JOIN outreach_drafts draft ON draft.id = item.draft_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'position', step.position,
+          'subject', step.subject,
+          'bodyText', step.body_text,
+          'delayDays', step.delay_days,
+          'status', step.status
+        ) ORDER BY step.position) AS steps
+        FROM outreach_draft_steps step
+        WHERE step.draft_id = draft.id
+      ) draft_steps ON true
       WHERE item.pilot_id = $1
       ORDER BY item.source_row_number
     `,
