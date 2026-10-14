@@ -88,10 +88,14 @@ test("createDraftFromPersonalization is transactional and idempotent", async () 
   const { createDraftFromPersonalization } = await import("../src/services/personalization-store.js");
   const calls = [];
   let existing = false;
+  let itemStatus = "generating";
   const client = {
     async query(sql, params = []) {
       calls.push({ sql: String(sql), params });
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [], rowCount: 0 };
+      if (String(sql).includes("FROM personalization_pilot_items") && String(sql).includes("FOR UPDATE")) {
+        return { rows: [{ status: itemStatus, draft_id: existing ? "draft-1" : null }], rowCount: 1 };
+      }
       if (String(sql).includes("SELECT id, manually_edited_at") && String(sql).includes("FROM outreach_drafts")) {
         return existing ? { rows: [{ id: "draft-1", manually_edited_at: null }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
@@ -123,8 +127,10 @@ test("createDraftFromPersonalization is transactional and idempotent", async () 
 
   assert.deepEqual(await createDraftFromPersonalization(client, input), { draftId: "draft-1", created: true });
   assert.deepEqual(await createDraftFromPersonalization(client, input), { draftId: "draft-1", created: false });
+  itemStatus = "excluded";
+  assert.deepEqual(await createDraftFromPersonalization(client, input), { draftId: "draft-1", created: false, skipped: true });
   assert.equal(calls.filter((call) => call.sql.includes("INSERT INTO outreach_drafts")).length, 1);
   assert.equal(calls.filter((call) => call.sql.includes("INSERT INTO outreach_draft_steps")).length, 1);
-  assert.equal(calls.filter((call) => call.sql === "BEGIN").length, 2);
-  assert.equal(calls.filter((call) => call.sql === "COMMIT").length, 2);
+  assert.equal(calls.filter((call) => call.sql === "BEGIN").length, 3);
+  assert.equal(calls.filter((call) => call.sql === "COMMIT").length, 3);
 });

@@ -104,8 +104,26 @@ test("review overrides record the actor and draft edits set manual protection", 
   assert.ok(statements.some((entry) => /manual_override_by[\s\S]*manually_overridden_at/i.test(entry.sql)));
   assert.ok(statements.some((entry) => /UPDATE outreach_drafts[\s\S]*manually_edited_at = now\(\)/i.test(entry.sql)));
   assert.ok(statements.some((entry) => /UPDATE outreach_draft_steps/i.test(entry.sql)));
+  assert.ok(statements.some((entry) => /UPDATE job_queue[\s\S]*cancelled_by_manual_override/i.test(entry.sql)));
   assert.equal(statements.at(0).sql, "BEGIN");
   assert.equal(statements.at(-1).sql, "COMMIT");
+});
+
+test("manual qualification waits until website enrichment exists", async () => {
+  const { createPersonalizationApi } = await import("../src/services/personalization-api.js");
+  const client = {
+    async query(sql) {
+      if (/SELECT item\./.test(sql)) {
+        return { rows: [{ id: "item-1", pilot_id: "pilot-1", draft_id: null, lead_enrichment_id: null, status: "enriching" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const api = createPersonalizationApi({ withClient: async (operation) => operation(client) });
+  await assert.rejects(
+    api.updateItem("item-1", { status: "qualified", reason: "Подтверждено вручную", actor: "Геннадий" }),
+    /personalization_enrichment_pending/,
+  );
 });
 
 test("retry queues only failed items and HTTP routes expose list, detail, preview, start, retry, and edit", async () => {

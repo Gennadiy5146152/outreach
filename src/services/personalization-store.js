@@ -146,7 +146,8 @@ export async function getPilot(client, pilotId) {
              enrichment.fit_score, enrichment.fit_reason, enrichment.canonical_company,
              enrichment.contact_name AS enriched_contact_name,
              enrichment.contact_position AS enriched_contact_position,
-             enrichment.contact_confidence, enrichment.personalization_fact,
+             enrichment.contact_confidence, enrichment.alternative_contacts,
+             enrichment.personalization_fact,
              enrichment.fact_source_url, enrichment.fact_evidence,
              enrichment.source_pages,
              draft.subject, draft.body_text, draft.manually_edited_at,
@@ -182,6 +183,20 @@ export async function createDraftFromPersonalization(client, {
   sourceRowNumber,
 }) {
   return transaction(client, async () => {
+    const item = (await client.query(
+      `
+        SELECT status, draft_id
+        FROM personalization_pilot_items
+        WHERE pilot_id = $1 AND lead_id = $2
+        FOR UPDATE
+      `,
+      [pilotId, lead.id],
+    )).rows[0];
+    if (!item) throw new Error("personalization_item_not_found");
+    if (["review", "excluded"].includes(item.status)) {
+      return { draftId: item.draft_id || null, created: false, skipped: true };
+    }
+
     const existing = (await client.query(
       "SELECT id, manually_edited_at FROM outreach_drafts WHERE lead_enrichment_id = $1",
       [enrichment.id],

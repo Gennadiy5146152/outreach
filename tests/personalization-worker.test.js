@@ -39,6 +39,8 @@ test("delivery and personalization processes have disjoint job allowlists and pe
   assert.doesNotMatch(personalizerSource, /sendMail|services\/mail\.js/);
   assert.doesNotMatch(personalizerSource, /\b(?:sending_queue|enrollments|messages)\b/i);
   assert.match(personalizerSource, /PERSONALIZATION_JOB_TYPES/);
+  assert.match(personalizerSource, /item\.manually_overridden_at/);
+  assert.match(personalizerSource, /recordJobFailure[\s\S]*\["review", "excluded"\]/);
 });
 
 test("personalization handlers are retry-safe and skip an already materialized or manually edited draft", async () => {
@@ -74,6 +76,7 @@ test("personalization handlers are retry-safe and skip an already materialized o
     },
   };
   let generated = 0;
+  let excludeDuringGeneration = false;
   const processor = createPersonalizationProcessor({
     repository,
     fetchPages: async () => ({ pages: [{ url: "https://alpha.example", html: "<form>Онлайн-запись</form>" }], errors: [] }),
@@ -95,6 +98,10 @@ test("personalization handlers are retry-safe and skip an already materialized o
     resolveContact: () => null,
     generateCopy: async () => {
       generated += 1;
+      if (excludeDuringGeneration) {
+        state.item.status = "excluded";
+        state.item.manuallyOverriddenAt = new Date().toISOString();
+      }
       return { subject: "Тема", bodyText: "Текст", followupSubject: "Re: Тема", followupBodyText: "Фоллоу-ап", usedEvidence: ["process-1"] };
     },
   });
@@ -118,6 +125,24 @@ test("personalization handlers are retry-safe and skip an already materialized o
   await processor.handleJob(generationJob);
   assert.equal(generated, 1, "manual draft must not be regenerated");
   assert.equal(state.draftCreates, 1, "manual draft must not be overwritten");
+
+  state.item = { ...state.item, status: "excluded", draftId: null, manuallyEditedAt: null };
+  await processor.handleJob(generationJob);
+  assert.equal(generated, 1, "a manually excluded item must not be generated");
+  assert.equal(state.item.status, "excluded", "manual exclusion must survive a queued generation job");
+
+  state.item = { ...state.item, status: "qualified", draftId: null, manuallyEditedAt: null, manuallyOverriddenAt: null };
+  excludeDuringGeneration = true;
+  await processor.handleJob(generationJob);
+  assert.equal(generated, 2, "generation may already be in flight when the operator excludes the lead");
+  assert.equal(state.draftCreates, 1, "an in-flight generation must not create a draft after manual exclusion");
+  assert.equal(state.item.status, "excluded", "an in-flight generation must not overwrite manual exclusion");
+
+  state.item = { ...state.item, status: "qualified", draftId: null, manuallyEditedAt: null, manuallyOverriddenAt: new Date().toISOString() };
+  excludeDuringGeneration = false;
+  await processor.handleJob(generationJob);
+  assert.equal(state.draftCreates, 2, "a deliberate manual qualification must still allow draft generation");
+  assert.equal(state.item.status, "ready");
 });
 
 test("production compose auto-starts personalizer but keeps the mail worker behind its profile", () => {

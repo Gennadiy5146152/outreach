@@ -103,6 +103,7 @@ test("deployment verifies and backs up before stopping web", () => {
     run_migrations() { record migrate; }
     start_web() { record start; }
     wait_for_health() { record health; }
+    wait_for_personalizer() { record personalizer; }
     record_deployed_sha() { record marker; }
     prune_artifacts() { record prune; }
     rollback_application() { record rollback; }
@@ -123,6 +124,7 @@ test("deployment verifies and backs up before stopping web", () => {
     "migrate",
     "start",
     "health",
+    "personalizer",
     "marker",
     "prune",
   ]);
@@ -210,12 +212,47 @@ test("wait_for_health accepts a running legacy container with healthy HTTP", () 
 test("automatic application start includes personalizer but never the mail worker", () => {
   const result = runBash(`
     source "$1"
+    OUTREACH_COMPOSE_FILE="$3"
     compose() { printf '%s\n' "$*"; }
     start_web "$2"
-  `, [sha40]);
+  `, [sha40, path.join(root, "docker-compose.prod.yml")]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /up -d --no-deps web personalizer/);
   assert.doesNotMatch(result.stdout, /\bworker\b/);
+});
+
+test("application rollback can start a compose revision from before personalizer existed", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "outreach-compose-test-"));
+  const composeFile = path.join(temp, "docker-compose.prod.yml");
+  fs.writeFileSync(composeFile, "services:\n  web:\n    image: example\n");
+  const result = runBash(`
+    source "$1"
+    OUTREACH_COMPOSE_FILE="$3"
+    compose() { printf '%s\n' "$*"; }
+    start_web "$2"
+  `, [sha40, composeFile]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /up -d --no-deps web$/m);
+  assert.doesNotMatch(result.stdout, /personalizer/);
+});
+
+test("personalizer health check requires its container to remain running", () => {
+  const healthy = runBash(`
+    source "$1"
+    docker() { printf 'true\n'; }
+    sleep() { return 0; }
+    wait_for_personalizer
+  `);
+  assert.equal(healthy.status, 0, healthy.stderr);
+
+  const stopped = runBash(`
+    source "$1"
+    docker() { printf 'false\n'; }
+    sleep() { return 0; }
+    wait_for_personalizer
+  `);
+  assert.notEqual(stopped.status, 0);
+  assert.match(stopped.stderr, /personalizer health check failed/);
 });
 
 test("termination after web stop invokes rollback and retention", () => {

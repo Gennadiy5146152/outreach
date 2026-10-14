@@ -231,6 +231,9 @@ export function createPersonalizationApi({
           if (!item) throw apiError("personalization_item_not_found", 404);
           if (status) {
             if (!["qualified", "review", "excluded"].includes(status)) throw apiError("personalization_status_invalid", 400);
+            if (status === "qualified" && !item.lead_enrichment_id) {
+              throw apiError("personalization_enrichment_pending", 409);
+            }
             await client.query(
               `
                 UPDATE personalization_pilot_items
@@ -250,6 +253,18 @@ export function createPersonalizationApi({
               await client.query(
                 "UPDATE outreach_drafts SET status = $2, updated_at = now() WHERE id = $1",
                 [item.draft_id, status === "qualified" ? "ready" : "blocked"],
+              );
+            }
+            if (["review", "excluded"].includes(status)) {
+              await client.query(
+                `
+                  UPDATE job_queue
+                  SET status = 'done', last_error = 'cancelled_by_manual_override', locked_at = NULL, updated_at = now()
+                  WHERE job_type = 'generate_personalized_draft'
+                    AND payload->>'itemId' = $1::text
+                    AND status IN ('pending','retrying')
+                `,
+                [itemId],
               );
             }
             if (status === "qualified" && !item.draft_id) {

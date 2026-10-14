@@ -4574,9 +4574,12 @@ function renderPersonalizationPilots() {
 function personalizationItemCard(item) {
   const evidenceUrl = safeEvidenceUrl(item.fact_source_url);
   const confidence = Number(item.contact_confidence);
+  const contactCandidate = (item.alternative_contacts || []).find((contact) => contact?.source === "email_candidate");
   const contact = item.enriched_contact_name
     ? `${esc(item.enriched_contact_name)}${item.enriched_contact_position ? ` · ${esc(item.enriched_contact_position)}` : ""}${Number.isFinite(confidence) ? ` · уверенность ${Math.round(confidence * 100)}%` : ""}`
-    : "Подтверждённое имя не найдено — нейтральное приветствие";
+    : contactCandidate
+      ? `Возможный контакт: ${esc(contactCandidate.name)} · не подтверждён, поэтому приветствие нейтральное`
+      : "Подтверждённое имя не найдено — нейтральное приветствие";
   const firstStep = Array.isArray(item.draft_steps) ? item.draft_steps.find((step) => Number(step.position) === 1) : null;
   const followup = Array.isArray(item.draft_steps) ? item.draft_steps.find((step) => Number(step.position) === 2) : null;
   return `

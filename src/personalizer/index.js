@@ -34,8 +34,9 @@ function databaseRepository() {
     async loadContext(itemId) {
       const row = (await query(
         `
-          SELECT item.id, item.pilot_id, item.lead_id, item.status, item.source_row_number,
-                 item.draft_id, pilot.rules_version,
+          SELECT item.id, item.pilot_id, item.lead_id, item.status, item.status_reason,
+                 item.source_row_number, item.draft_id, item.manually_overridden_at,
+                 pilot.rules_version,
                  lead.email, lead.company, lead.website, lead.segment, lead.city, lead.contact_name,
                  enrichment.id AS enrichment_id, enrichment.status AS enrichment_status,
                  enrichment.fit_score, enrichment.fit_reason, enrichment.canonical_company,
@@ -61,9 +62,11 @@ function databaseRepository() {
         pilotId: row.pilot_id,
         leadId: row.lead_id,
         status: row.status,
+        statusReason: row.status_reason,
         sourceRowNumber: row.source_row_number,
         draftId: row.draft_id,
         manuallyEditedAt: row.manually_edited_at,
+        manuallyOverriddenAt: row.manually_overridden_at,
         rulesVersion: row.rules_version,
         lead: {
           id: row.lead_id,
@@ -192,6 +195,10 @@ function databaseRepository() {
       if (!itemId) return;
       const context = await this.loadContext(itemId);
       if (!context) return;
+      if (["review", "excluded"].includes(context.status)) {
+        await this.updatePilotProgress(context.pilotId);
+        return;
+      }
       await this.markItem(itemId, {
         status: "failed",
         lastError: clean(error?.message || error).slice(0, 500),
@@ -226,6 +233,11 @@ export function createPersonalizationProcessor({
     if (!result.pages.length) signals.unavailable = true;
     const qualification = qualify({ lead: context.lead, signals });
     const contact = resolveContact({ lead: context.lead, signals });
+    const latest = await repository.loadContext(context.id);
+    if (["review", "excluded"].includes(latest?.status)) {
+      await repository.updatePilotProgress(context.pilotId);
+      return;
+    }
     const fact = qualification.fact;
     const enrichment = await repository.saveEnrichment({
       leadId: context.lead.id,
@@ -238,7 +250,14 @@ export function createPersonalizationProcessor({
       contactName: contact?.confirmed ? contact.name : null,
       contactPosition: contact?.confirmed ? contact.position : null,
       contactConfidence: contact?.confidence ?? null,
-      alternativeContacts: signals.alternativeEmails || [],
+      alternativeContacts: [
+        ...(signals.alternativeEmails || []),
+        ...(contact && !contact.confirmed ? [{
+          name: contact.name,
+          confidence: contact.confidence,
+          source: contact.source,
+        }] : []),
+      ],
       personalizationFact: fact ? `На сайте подтверждён процесс: ${fact.evidence}` : null,
       factSourceUrl: fact?.sourceUrl || null,
       factEvidence: fact?.evidence || null,
@@ -262,6 +281,10 @@ export function createPersonalizationProcessor({
   async function generate(job) {
     const context = await repository.loadContext(job.payload?.itemId);
     if (!context) throw new Error("personalization_item_not_found");
+    if (["review", "excluded"].includes(context.status)) {
+      await repository.updatePilotProgress(context.pilotId);
+      return;
+    }
     if (context.status === "ready" || context.draftId || context.manuallyEditedAt) {
       await repository.updatePilotProgress(context.pilotId);
       return;
@@ -274,7 +297,16 @@ export function createPersonalizationProcessor({
       evidence: copyEvidence(saved),
     };
     const copy = await generateCopy({ lead: context.lead, enrichment });
+    const latest = await repository.loadContext(context.id);
+    if (["review", "excluded"].includes(latest?.status) || latest?.manuallyEditedAt || latest?.draftId) {
+      await repository.updatePilotProgress(context.pilotId);
+      return;
+    }
     const draft = await repository.createDraft({ context, enrichment: saved, copy });
+    if (draft.skipped) {
+      await repository.updatePilotProgress(context.pilotId);
+      return;
+    }
     await repository.markItem(context.id, { status: "ready", draftId: draft.draftId, enrichmentId: saved.id, lastError: null });
     await repository.updatePilotProgress(context.pilotId);
   }

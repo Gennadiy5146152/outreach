@@ -170,9 +170,18 @@ run_migrations() {
   OUTREACH_IMAGE_TAG=$requested_sha compose run --rm --no-deps migrate
 }
 
+compose_has_personalizer() {
+  local compose_file=${1:-$OUTREACH_COMPOSE_FILE}
+  [[ -f "$compose_file" ]] && grep -Eq '^[[:space:]]{2}personalizer:' "$compose_file"
+}
+
 start_web() {
   local requested_sha=$1
-  OUTREACH_IMAGE_TAG=$requested_sha compose up -d --no-deps web personalizer
+  if compose_has_personalizer "$OUTREACH_COMPOSE_FILE"; then
+    OUTREACH_IMAGE_TAG=$requested_sha compose up -d --no-deps web personalizer
+  else
+    OUTREACH_IMAGE_TAG=$requested_sha compose up -d --no-deps web
+  fi
 }
 
 wait_for_health() {
@@ -190,6 +199,21 @@ wait_for_health() {
   done
 
   die "web health check failed"
+}
+
+wait_for_personalizer() {
+  local attempt running
+
+  for attempt in $(seq 1 6); do
+    running=$(docker inspect -f '{{.State.Running}}' "$OUTREACH_PERSONALIZER_CONTAINER" 2>/dev/null || true)
+    if [[ "$running" == true ]]; then
+      log "personalizer health check passed"
+      return 0
+    fi
+    sleep 2
+  done
+
+  die "personalizer health check failed"
 }
 
 record_deployed_sha() {
@@ -216,17 +240,28 @@ rollback_application() {
     fi
     start_web "$previous_sha" || return $?
   elif [[ -f "$OUTREACH_LEGACY_COMPOSE_FILE" ]]; then
-    docker compose \
-      -p "$OUTREACH_PROJECT" \
-      --env-file "$OUTREACH_ENV_FILE" \
-      -f "$OUTREACH_LEGACY_COMPOSE_FILE" \
-      up -d --no-deps web personalizer || return $?
+    if compose_has_personalizer "$OUTREACH_LEGACY_COMPOSE_FILE"; then
+      docker compose \
+        -p "$OUTREACH_PROJECT" \
+        --env-file "$OUTREACH_ENV_FILE" \
+        -f "$OUTREACH_LEGACY_COMPOSE_FILE" \
+        up -d --no-deps web personalizer || return $?
+    else
+      docker compose \
+        -p "$OUTREACH_PROJECT" \
+        --env-file "$OUTREACH_ENV_FILE" \
+        -f "$OUTREACH_LEGACY_COMPOSE_FILE" \
+        up -d --no-deps web || return $?
+    fi
   else
     die "neither production nor legacy Compose file exists for rollback"
     return 1
   fi
 
   wait_for_health || return $?
+  if compose_has_personalizer "$OUTREACH_COMPOSE_FILE" || compose_has_personalizer "$OUTREACH_LEGACY_COMPOSE_FILE"; then
+    wait_for_personalizer || return $?
+  fi
   record_deployed_sha "$previous_sha" || return $?
   log "application rollback completed"
 }
@@ -291,6 +326,7 @@ deploy_sha() {
     && run_migrations "$requested_sha" \
     && start_web "$requested_sha" \
     && wait_for_health \
+    && wait_for_personalizer \
     || deploy_status=$?
 
   if (( deploy_status != 0 )); then
