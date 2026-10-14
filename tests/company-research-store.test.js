@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const migrationUrl = new URL("../db/migrations/016_company_research.sql", import.meta.url);
+const recipientsMigrationUrl = new URL("../db/migrations/017_company_research_recipients.sql", import.meta.url);
 
 test("company research migration defines runs, evidence, contacts, and non-sendable candidates", () => {
   const sql = fs.readFileSync(migrationUrl, "utf8");
@@ -25,6 +26,14 @@ test("company research migration defines runs, evidence, contacts, and non-senda
   assert.doesNotMatch(sql, /REFERENCES\s+(?:sending_queue|messages|enrollments)/i);
 });
 
+test("company research recipients migration keeps every unsent address on its company run", () => {
+  const sql = fs.existsSync(recipientsMigrationUrl) ? fs.readFileSync(recipientsMigrationUrl, "utf8") : "";
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS company_research_recipients/i);
+  assert.match(sql, /UNIQUE\s*\(research_run_id, normalized_email\)/i);
+  assert.match(sql, /ALTER TABLE company_research_drafts[\s\S]*recipient_id/i);
+  assert.doesNotMatch(sql, /REFERENCES\s+(?:sending_queue|messages|enrollments)/i);
+});
+
 test("queue insertion is idempotent and claim uses a skip-locked lease", async () => {
   const { createResearchRuns, claimResearchRun } = await import("../src/services/company-research.js");
   const calls = [];
@@ -32,18 +41,35 @@ test("queue insertion is idempotent and claim uses a skip-locked lease", async (
     async query(sql, params = []) {
       calls.push({ sql: String(sql), params });
       if (/INSERT INTO company_research_runs/i.test(sql)) return { rows: [{ id: "run-1" }], rowCount: 1 };
+      if (/INSERT INTO company_research_recipients/i.test(sql)) return { rows: [{ id: `recipient-${calls.length}` }], rowCount: 1 };
       if (/UPDATE company_research_runs AS run/i.test(sql)) return { rows: [{ id: "run-1", status: "researching", claimed_by: "agent-1" }], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     },
   };
   const queued = await createResearchRuns(client, {
     rulesVersion: "research-v1",
-    leads: [{ id: "lead-1", company: "Альфа", email: "info@alpha.ru", website: "https://alpha.ru", segment: "малый бизнес" }],
+    leads: [{
+      id: "lead-1",
+      company: "Альфа",
+      email: "info@alpha.ru",
+      website: "https://alpha.ru",
+      segment: "малый бизнес",
+      recipients: [
+        { id: "lead-1", email: "info@alpha.ru" },
+        { id: "lead-2", email: "cto@alpha.ru" },
+      ],
+    }],
   });
   assert.equal(queued.created, 1);
   const insert = calls.find((entry) => /INSERT INTO company_research_runs/i.test(entry.sql));
   assert.match(insert.sql, /ON CONFLICT \(company_key, rules_version\) DO NOTHING/i);
   assert.equal(calls[0].sql, "BEGIN");
+  const recipientInserts = calls.filter((entry) => /INSERT INTO company_research_recipients/i.test(entry.sql));
+  assert.equal(recipientInserts.length, 2);
+  assert.deepEqual(recipientInserts.map((entry) => entry.params.slice(1, 4)), [
+    ["lead-1", "info@alpha.ru", "info@alpha.ru"],
+    ["lead-2", "cto@alpha.ru", "cto@alpha.ru"],
+  ]);
   assert.equal(calls.findLast((entry) => entry.sql === "COMMIT")?.sql, "COMMIT");
 
   const claimed = await claimResearchRun(client, { workerId: "agent-1", leaseMinutes: 15 });
@@ -108,4 +134,36 @@ test("duplicate source inputs consume one slot and name-only contacts use a stab
   assert.match(contactInsert.sql, /contact_key/i);
   assert.match(contactInsert.sql, /ON CONFLICT \(research_run_id, contact_key\)/i);
   assert.match(String(contactInsert.params[2]), /^person:/);
+});
+
+test("research completion creates one draft per stored recipient", async () => {
+  const { completeResearchRun } = await import("../src/services/company-research.js");
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      const text = String(sql);
+      calls.push({ sql: text, params });
+      if (/SELECT run\.\*, lead\.company/i.test(text)) {
+        return { rows: [{ id: "run-1", company: "Альфа", general_email: "old@alpha.ru" }], rowCount: 1 };
+      }
+      if (/FROM company_research_recipients/i.test(text) && /SELECT id, lead_id/i.test(text)) {
+        return { rows: [
+          { id: "recipient-1", leadId: "lead-1", email: "info@alpha.ru" },
+          { id: "recipient-2", leadId: "lead-2", email: "cto@alpha.ru" },
+        ], rowCount: 2 };
+      }
+      if (/FROM company_research_facts/i.test(text)) return { rows: [{ id: "fact-1", text: "Факт", selected_for_copy: true }], rowCount: 1 };
+      if (/FROM company_contacts/i.test(text)) return { rows: [], rowCount: 0 };
+      if (/UPDATE company_research_runs/i.test(text)) return { rows: [{ id: "run-1", status: "ready" }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const result = await completeResearchRun(client, { runId: "run-1", workerId: "agent-1", status: "ready" });
+  assert.equal(result.status, "ready");
+  const inserts = calls.filter((entry) => /INSERT INTO company_research_drafts/i.test(entry.sql));
+  assert.equal(inserts.length, 2);
+  assert.deepEqual(inserts.map((entry) => entry.params.slice(1, 6)), [
+    ["recipient-1", null, "general:recipient-1", "general", "info@alpha.ru"],
+    ["recipient-2", null, "general:recipient-2", "general", "cto@alpha.ru"],
+  ]);
 });

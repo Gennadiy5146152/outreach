@@ -125,26 +125,35 @@ function backupCopy({ company, greeting, fact }) {
   return `${greeting}\n\nИз-за последних атак на дата-центры часть компаний столкнулась с потерей данных и даже резервных копий.\n\nМы можем организовать для сайта ${company} хранение бэкапов по правилу 3-2-1: несколько копий, разные носители и одна копия вне основной инфраструктуры.${factLine}\n\nЕсли основной хостинг станет недоступен, данные можно будет восстановить из другой независимой копии.\n\nМожем организовать такую схему для вашего сайта.\n\nС уважением,\nГеннадий Коротков`;
 }
 
-export function buildResearchDraftCandidates({ company, generalEmail, facts = [], contacts = [] } = {}) {
-  const normalizedGeneral = normalizedEmail(generalEmail);
-  if (!normalizedGeneral) return [];
+export function buildResearchDraftCandidates({ company, generalEmail, generalRecipients, facts = [], contacts = [] } = {}) {
+  const recipients = Array.isArray(generalRecipients)
+    ? generalRecipients
+    : [{ id: null, leadId: null, email: generalEmail }];
   const companyName = clean(company) || "вашей компании";
   const fact = facts.find((item) => item?.selectedForCopy)?.text || facts[0]?.text || "";
   const subject = "Как защитить данные сайта и резервные копии";
   const followupSubject = "Re: как защитить данные сайта и резервные копии";
   const followupBodyText = "Добрый день! Напоминаю о предложении организовать резервное хранение данных вашего сайта по принципу 3-2-1. Подскажите, это актуально? Если нет, больше не буду вас беспокоить.";
-  const candidates = [{
-    audienceKey: "general",
-    audienceType: "general",
-    contactId: null,
-    toEmail: normalizedGeneral,
-    contactName: "",
-    subject,
-    bodyText: backupCopy({ company: companyName, greeting: "Добрый день!", fact }),
-    followupSubject,
-    followupBodyText,
-  }];
-  const seen = new Set([normalizedGeneral]);
+  const candidates = [];
+  const seen = new Set();
+  for (const recipient of recipients) {
+    const email = normalizedEmail(recipient?.email);
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    candidates.push({
+      audienceKey: recipient?.id ? `general:${recipient.id}` : "general",
+      audienceType: "general",
+      recipientId: recipient?.id || null,
+      leadId: recipient?.leadId || null,
+      contactId: null,
+      toEmail: email,
+      contactName: "",
+      subject,
+      bodyText: backupCopy({ company: companyName, greeting: "Добрый день!", fact }),
+      followupSubject,
+      followupBodyText,
+    });
+  }
   for (const contact of contacts) {
     const email = normalizedEmail(contact?.email);
     if (contact?.emailStatus !== "confirmed" || !email || seen.has(email)) continue;
@@ -153,6 +162,8 @@ export function buildResearchDraftCandidates({ company, generalEmail, facts = []
     candidates.push({
       audienceKey: `executive:${contact.id}`,
       audienceType: "executive",
+      recipientId: null,
+      leadId: null,
       contactId: contact.id,
       toEmail: email,
       contactName: clean(contact.name),
@@ -185,6 +196,7 @@ export async function createResearchRuns(client, { leads = [], rulesVersion = CO
   }
   return transaction(client, async () => {
     let created = 0;
+    let recipients = 0;
     const ids = [];
     for (const [companyKey, lead] of unique) {
       const priority = researchPriority(lead);
@@ -198,9 +210,39 @@ export async function createResearchRuns(client, { leads = [], rulesVersion = CO
         [lead.id, companyKey, rulesVersion, priority.tier, priority.reason],
       );
       created += result.rowCount || 0;
-      if (result.rows[0]?.id) ids.push(result.rows[0].id);
+      let runId = result.rows[0]?.id;
+      if (!runId) {
+        runId = (await client.query(
+          "SELECT id FROM company_research_runs WHERE company_key = $1 AND rules_version = $2",
+          [companyKey, rulesVersion],
+        )).rows[0]?.id;
+      }
+      if (!runId) throw new Error("company_research_run_missing");
+      if (result.rows[0]?.id) ids.push(runId);
+      const companyRecipients = Array.isArray(lead.recipients) && lead.recipients.length
+        ? lead.recipients
+        : [{ id: lead.id, email: lead.email }];
+      const seenEmails = new Set();
+      for (const recipient of companyRecipients) {
+        const email = normalizedEmail(recipient.email);
+        if (!email || seenEmails.has(email)) continue;
+        seenEmails.add(email);
+        const inserted = await client.query(
+          `
+            INSERT INTO company_research_recipients(
+              research_run_id, lead_id, email, normalized_email
+            )
+            VALUES ($1,$2,$3,$4)
+            ON CONFLICT (research_run_id, normalized_email) DO UPDATE SET
+              lead_id = EXCLUDED.lead_id, email = EXCLUDED.email, updated_at = now()
+            RETURNING id
+          `,
+          [runId, recipient.id || null, email, email],
+        );
+        recipients += inserted.rowCount || 0;
+      }
     }
-    return { created, existing: unique.size - created, selected: unique.size, ids };
+    return { created, existing: unique.size - created, selected: unique.size, recipients, ids };
   });
 }
 
@@ -355,6 +397,15 @@ export async function completeResearchRun(client, { runId, workerId, status = "r
       [runId, workerId],
     )).rows[0];
     if (!run) throw new Error("research_claim_invalid_or_expired");
+    const recipients = (await client.query(
+      `
+        SELECT id, lead_id AS "leadId", email
+        FROM company_research_recipients
+        WHERE research_run_id = $1 AND status <> 'excluded'
+        ORDER BY created_at, id
+      `,
+      [runId],
+    )).rows;
     const facts = (await client.query(
       "SELECT id, fact_text AS text, selected_for_copy FROM company_research_facts WHERE research_run_id = $1 ORDER BY selected_for_copy DESC, confidence DESC",
       [runId],
@@ -366,23 +417,35 @@ export async function completeResearchRun(client, { runId, workerId, status = "r
     let finalStatus = status;
     if (status === "ready" && !facts.length) finalStatus = "review";
     if (finalStatus !== "failed") {
-      const candidates = buildResearchDraftCandidates({ company: run.company, generalEmail: run.general_email, facts, contacts });
+      const candidates = buildResearchDraftCandidates({
+        company: run.company,
+        generalEmail: run.general_email,
+        generalRecipients: recipients,
+        facts,
+        contacts,
+      });
       for (const candidate of candidates) {
         await client.query(
           `
             INSERT INTO company_research_drafts(
-              research_run_id, contact_id, audience_key, audience_type, to_email,
+              research_run_id, recipient_id, contact_id, audience_key, audience_type, to_email,
               contact_name, subject, body_text, followup_subject, followup_body_text
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             ON CONFLICT (research_run_id, audience_key) DO UPDATE SET
-              to_email = EXCLUDED.to_email, contact_name = EXCLUDED.contact_name,
+              recipient_id = EXCLUDED.recipient_id, to_email = EXCLUDED.to_email, contact_name = EXCLUDED.contact_name,
               subject = EXCLUDED.subject, body_text = EXCLUDED.body_text,
               followup_subject = EXCLUDED.followup_subject,
               followup_body_text = EXCLUDED.followup_body_text, updated_at = now()
           `,
-          [runId, candidate.contactId, candidate.audienceKey, candidate.audienceType, candidate.toEmail, candidate.contactName, candidate.subject, candidate.bodyText, candidate.followupSubject, candidate.followupBodyText],
+          [runId, candidate.recipientId, candidate.contactId, candidate.audienceKey, candidate.audienceType, candidate.toEmail, candidate.contactName, candidate.subject, candidate.bodyText, candidate.followupSubject, candidate.followupBodyText],
         );
+        if (candidate.recipientId) {
+          await client.query(
+            "UPDATE company_research_recipients SET status = 'drafted', updated_at = now() WHERE id = $1 AND research_run_id = $2",
+            [candidate.recipientId, runId],
+          );
+        }
       }
     }
     const updated = (await client.query(

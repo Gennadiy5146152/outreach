@@ -113,3 +113,38 @@ test("draft candidates keep one general recipient and only distinct confirmed ex
   assert.match(candidates[0].bodyText, /Альфа/);
   assert.match(candidates[1].bodyText, /Иван/);
 });
+
+test("draft candidates preserve every unique unsent company recipient", async () => {
+  const { buildResearchDraftCandidates } = await import("../src/services/company-research.js");
+  const candidates = buildResearchDraftCandidates({
+    company: "Альфа",
+    generalRecipients: [
+      { id: "recipient-1", leadId: "lead-1", email: "info@alpha.ru" },
+      { id: "recipient-2", leadId: "lead-2", email: "cto@alpha.ru" },
+      { id: "recipient-3", leadId: "lead-3", email: "INFO@ALPHA.RU" },
+    ],
+    facts: [{ text: "На сайте работает личный кабинет", selectedForCopy: true }],
+    contacts: [
+      { id: "contact-1", name: "Иван Петров", role: "Технический директор", email: "cto@alpha.ru", emailStatus: "confirmed" },
+      { id: "contact-2", name: "Анна Смирнова", role: "Коммерческий директор", email: "anna@alpha.ru", emailStatus: "confirmed" },
+    ],
+  });
+  assert.deepEqual(candidates.map((item) => item.audienceKey), [
+    "general:recipient-1",
+    "general:recipient-2",
+    "executive:contact-2",
+  ]);
+  assert.deepEqual(candidates.slice(0, 2).map((item) => item.recipientId), ["recipient-1", "recipient-2"]);
+  assert.deepEqual(candidates.slice(0, 2).map((item) => item.leadId), ["lead-1", "lead-2"]);
+});
+
+test("an explicit empty recipient list never falls back to an already contacted address", async () => {
+  const { buildResearchDraftCandidates } = await import("../src/services/company-research.js");
+  const candidates = buildResearchDraftCandidates({
+    company: "Альфа",
+    generalEmail: "already-sent@alpha.ru",
+    generalRecipients: [],
+    facts: [{ text: "Факт", selectedForCopy: true }],
+  });
+  assert.deepEqual(candidates, []);
+});

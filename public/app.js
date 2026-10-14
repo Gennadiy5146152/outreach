@@ -4704,6 +4704,7 @@ function renderCompanyResearchPreview() {
   const priorities = preview.counts?.by_priority || {};
   node.innerHTML = `
     <strong>Уникальных компаний: ${Number(preview.counts?.selected || 0)}</strong>
+    <span>Уникальных адресов: ${Number(preview.counts?.recipients || 0)} · ранее отправленные адреса исключены</span>
     <span>МСП: ${Number(priorities[1] || 0)} · производства: ${Number(priorities[2] || 0)} · прочий бизнес: ${Number(priorities[3] || 0)} · банки и госсектор: ${Number(priorities[4] || 0)}</span>
     <small>Приоритет влияет только на порядок. На этом шаге письма и отправка не создаются.</small>
   `;
@@ -4717,7 +4718,7 @@ function renderCompanyResearchRuns() {
       <button class="company-research-run ${run.id === state.selectedCompanyResearchRunId ? "active" : ""}" data-select-company-research="${esc(run.id)}">
         <span><strong>${esc(run.company || run.email)}</strong>${pill(run.status)}</span>
         <small>${esc(companyResearchPriorityLabel(run))}</small>
-        <small>${Number(run.source_count || 0)} источников · ${Number(run.contact_count || 0)} контактов · ${Number(run.draft_count || 0)} текстов</small>
+        <small>${Number(run.recipient_count || 0)} адресов · ${Number(run.source_count || 0)} источников · ${Number(run.contact_count || 0)} контактов · ${Number(run.draft_count || 0)} текстов</small>
       </button>
     `).join("")
     : `<p class="muted">В этом статусе исследований пока нет.</p>`;
@@ -4725,6 +4726,7 @@ function renderCompanyResearchRuns() {
 
 function companyResearchCard(research) {
   const run = research.run;
+  const recipients = research.recipients || [];
   const sources = research.sources || [];
   const facts = research.facts || [];
   const contacts = research.contacts || [];
@@ -4749,12 +4751,16 @@ function companyResearchCard(research) {
       ${draft.status === "candidate" ? `<button data-materialize-research-draft="${esc(draft.id)}">Создать обычный черновик</button>` : draft.materialized_draft_id ? `<button data-open-personalized-draft="${esc(draft.materialized_draft_id)}">Открыть черновик</button>` : ""}
     </article>
   `).join("") : `<p class="muted">Кандидаты писем появятся после завершения исследования. Отправка не запускается.</p>`;
+  const recipientList = recipients.length
+    ? recipients.map((recipient) => `<li><strong>${esc(recipient.email)}</strong><small>${esc(recipient.status)}</small></li>`).join("")
+    : `<li class="muted">Получатели ещё не привязаны.</li>`;
   return `
     <div class="company-research-head">
       <div><p class="eyebrow">${esc(companyResearchPriorityLabel(run))}</p><h3>${esc(run.company || run.email)}</h3><p>${esc(run.email)}${run.website ? ` · ${esc(run.website)}` : ""}</p></div>
       <div>${pill(run.status)}${["failed", "review"].includes(run.status) ? `<button data-retry-company-research="${esc(run.id)}">Вернуть в очередь</button>` : ""}</div>
     </div>
     ${run.last_error ? `<p class="warn-text">${esc(run.last_error)}</p>` : ""}
+    <section><h4>Получатели исследования (${recipients.length})</h4><ul>${recipientList}</ul></section>
     <div class="research-evidence-grid">
       <section><h4>Источники (${sources.length}/10)</h4><ul>${sourceList}</ul></section>
       <section><h4>Факты</h4><ul>${factList}</ul></section>
@@ -4910,14 +4916,14 @@ $("#previewCompanyResearchBtn")?.addEventListener("click", (event) => runAction(
   setActionResult({
     status: "success",
     title: "Охват исследования готов",
-    message: `Найдено ${state.companyResearchPreview.counts.selected} уникальных компаний. Пока ничего не создано и не отправлено.`,
+    message: `Найдено ${state.companyResearchPreview.counts.selected} компаний и ${state.companyResearchPreview.counts.recipients} новых адресов. Ранее отправленные адреса исключены.`,
   });
 }));
 
 $("#startCompanyResearchBtn")?.addEventListener("click", (event) => {
   const preview = state.companyResearchPreview;
   if (!preview?.companies?.length) return;
-  if (!window.confirm(`Создать очередь исследования для ${preview.companies.length} компаний? Письма и отправка не создаются.`)) return;
+  if (!window.confirm(`Создать очередь исследования для ${preview.companies.length} компаний и ${preview.counts.recipients} новых адресов? Письма и отправка не создаются.`)) return;
   runAction({ title: "Создание очереди исследования", button: event.currentTarget }, async () => {
     const result = await api("/api/company-research/queue", {
       method: "POST",
@@ -4934,7 +4940,7 @@ $("#startCompanyResearchBtn")?.addEventListener("click", (event) => {
     setActionResult({
       status: "success",
       title: "Очередь исследования создана",
-      message: `Новых задач: ${result.created}; уже существовало: ${result.existing}. Письма не отправляются.`,
+      message: `Новых задач: ${result.created}; уже существовало: ${result.existing}; привязано адресов: ${result.recipients}. Письма не отправляются.`,
       details: result,
     });
   });

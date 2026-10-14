@@ -50,6 +50,15 @@ function eligibleCompaniesSql() {
         WHERE lower(conversation.email) = lower(lead.email)
           AND conversation.status = ANY($1::text[])
       )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM messages sent_message
+        JOIN leads sent_lead ON sent_lead.id = sent_message.lead_id
+        WHERE sent_message.direction = 'outbound'
+          AND sent_message.type = 'outreach'
+          AND sent_message.status = 'sent'
+          AND lower(sent_lead.email) = lower(lead.email)
+      )
     ORDER BY lead.updated_at DESC, lead.id
     LIMIT 10000
   `;
@@ -64,14 +73,27 @@ function prioritizeAndDedupe(rows) {
     } catch {
       continue;
     }
-    if (byCompany.has(companyKey)) continue;
-    const priority = researchPriority(row);
-    byCompany.set(companyKey, {
-      ...row,
-      company_key: companyKey,
-      priority_tier: priority.tier,
-      priority_reason: priority.reason,
-    });
+    const email = clean(row.email).toLowerCase();
+    if (!email) continue;
+    let company = byCompany.get(companyKey);
+    if (!company) {
+      const priority = researchPriority(row);
+      company = {
+        ...row,
+        company_key: companyKey,
+        priority_tier: priority.tier,
+        priority_reason: priority.reason,
+        recipients: [],
+      };
+      byCompany.set(companyKey, company);
+    }
+    if (!company.recipients.some((recipient) => recipient.email === email)) {
+      company.recipients.push({
+        id: row.id,
+        email,
+        updated_at: row.updated_at,
+      });
+    }
   }
   return [...byCompany.values()].sort((left, right) => (
     left.priority_tier - right.priority_tier || String(left.company_key).localeCompare(String(right.company_key))
@@ -81,7 +103,12 @@ function prioritizeAndDedupe(rows) {
 export function researchQueueToken(companies, rulesVersion) {
   return hash({
     rulesVersion,
-    snapshot: companies.map((company) => [company.id, company.company_key, company.priority_tier, new Date(company.updated_at || 0).toISOString()]),
+    snapshot: companies.map((company) => [
+      company.id,
+      company.company_key,
+      company.priority_tier,
+      company.recipients.map((recipient) => [recipient.id, recipient.email, new Date(recipient.updated_at || 0).toISOString()]),
+    ]),
   });
 }
 
@@ -98,11 +125,21 @@ async function fetchDraftCandidates(queryFn, draftIds, { lock = false } = {}) {
   if (!Array.isArray(draftIds) || !draftIds.length || draftIds.length > 500) throw apiError("company_research_draft_selection_invalid");
   const result = await queryFn(
     `
-      SELECT draft.*, run.lead_id, lead.company, lead.segment
+      SELECT draft.*, COALESCE(recipient.lead_id, run.lead_id) AS lead_id, lead.company, lead.segment
       FROM company_research_drafts draft
       JOIN company_research_runs run ON run.id = draft.research_run_id
       JOIN leads lead ON lead.id = run.lead_id
+      LEFT JOIN company_research_recipients recipient ON recipient.id = draft.recipient_id
       WHERE draft.id = ANY($1::uuid[]) AND draft.status = 'candidate'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM messages sent_message
+          JOIN leads sent_lead ON sent_lead.id = sent_message.lead_id
+          WHERE sent_message.direction = 'outbound'
+            AND sent_message.type = 'outreach'
+            AND sent_message.status = 'sent'
+            AND lower(sent_lead.email) = lower(draft.to_email)
+        )
       ${lock ? "FOR UPDATE OF draft" : ""}
     `,
     [draftIds],
@@ -139,7 +176,11 @@ export function createCompanyResearchApi({
     return {
       rulesVersion,
       companies,
-      counts: { selected: companies.length, by_priority: byPriority },
+      counts: {
+        selected: companies.length,
+        recipients: companies.reduce((total, company) => total + company.recipients.length, 0),
+        by_priority: byPriority,
+      },
       selectionToken: researchQueueToken(companies, rulesVersion),
     };
   }
@@ -169,6 +210,7 @@ export function createCompanyResearchApi({
           `
             SELECT run.*, lead.company, lead.email, lead.website, lead.segment, lead.city,
                    (SELECT count(*)::int FROM company_research_sources WHERE research_run_id = run.id) AS source_count,
+                   (SELECT count(*)::int FROM company_research_recipients WHERE research_run_id = run.id AND status <> 'excluded') AS recipient_count,
                    (SELECT count(*)::int FROM company_contacts WHERE research_run_id = run.id) AS contact_count,
                    (SELECT count(*)::int FROM company_research_drafts WHERE research_run_id = run.id) AS draft_count
             FROM company_research_runs run
@@ -192,13 +234,14 @@ export function createCompanyResearchApi({
         [runId],
       )).rows[0] || null;
       if (!run) return null;
-      const [sources, facts, contacts, drafts] = await Promise.all([
+      const [recipients, sources, facts, contacts, drafts] = await Promise.all([
+        queryFn("SELECT * FROM company_research_recipients WHERE research_run_id = $1 AND status <> 'excluded' ORDER BY created_at, id", [runId]),
         queryFn("SELECT * FROM company_research_sources WHERE research_run_id = $1 ORDER BY trust_tier, created_at", [runId]),
         queryFn("SELECT * FROM company_research_facts WHERE research_run_id = $1 ORDER BY selected_for_copy DESC, confidence DESC", [runId]),
         queryFn("SELECT * FROM company_contacts WHERE research_run_id = $1 ORDER BY email_status, confidence DESC", [runId]),
         queryFn("SELECT * FROM company_research_drafts WHERE research_run_id = $1 ORDER BY audience_type, created_at", [runId]),
       ]);
-      return { run, sources: sources.rows, facts: facts.rows, contacts: contacts.rows, drafts: drafts.rows };
+      return { run, recipients: recipients.rows, sources: sources.rows, facts: facts.rows, contacts: contacts.rows, drafts: drafts.rows };
     },
 
     async claimJob({ workerId, leaseMinutes } = {}) {
@@ -301,4 +344,3 @@ export function createCompanyResearchApi({
     },
   };
 }
-

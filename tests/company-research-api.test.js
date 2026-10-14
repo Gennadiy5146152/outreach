@@ -35,11 +35,17 @@ test("queue preview researches every eligible company, deduplicates domains, and
   });
   const preview = await api.previewQueue();
   assert.equal(preview.companies.length, 2);
+  const alpha = preview.companies.find((item) => item.company === "Альфа");
+  assert.deepEqual(alpha.recipients.map((item) => item.email), ["a@example.ru", "a2@example.ru"]);
+  assert.equal(preview.counts.recipients, 3);
   assert.equal(preview.companies.some((item) => item.company === "Пример Банк"), true);
   assert.equal(preview.companies.find((item) => item.company === "Пример Банк").priority_tier, 4);
   assert.equal(preview.counts.by_priority[4], 1);
   assert.match(preview.selectionToken, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(statements[0], /\b(?:INSERT|UPDATE|DELETE)\b/i);
+  assert.match(statements[0], /messages sent_message/i);
+  assert.match(statements[0], /sent_message\.status = 'sent'/i);
+  assert.match(statements[0], /lower\(sent_lead\.email\) = lower\(lead\.email\)/i);
 });
 
 test("queue execution rejects a changed snapshot and creates idempotent research runs", async () => {
@@ -129,7 +135,8 @@ test("server exposes research routes and never wires research to mail", () => {
     'app.post("/api/company-research/drafts/materialize"',
   ]) assert.ok(server.includes(route), route);
   const source = fs.readFileSync(path.join(root, "src/services/company-research-api.js"), "utf8");
+  assert.match(source, /LEFT JOIN company_research_recipients recipient/i);
+  assert.match(source, /lower\(sent_lead\.email\) = lower\(draft\.to_email\)/i);
   assert.doesNotMatch(source, /sendMail|services\/mail\.js/);
   assert.doesNotMatch(source, /(?:INSERT|UPDATE)\s+(?:sending_queue|messages|enrollments)/i);
 });
-
