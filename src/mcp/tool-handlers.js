@@ -128,6 +128,29 @@ export function createToolHandlers({ client, confirmations }) {
     };
   }
 
+  async function companyResearchQueuePreview(rulesVersion) {
+    return client.post("/api/company-research/queue/preview", rulesVersion ? { rulesVersion } : {});
+  }
+
+  function companyResearchQueueSnapshot(preview) {
+    return {
+      rulesVersion: String(preview?.rulesVersion || ""),
+      leadIds: (preview?.companies || []).map((company) => String(company.id)),
+      selectionToken: String(preview?.selectionToken || ""),
+    };
+  }
+
+  async function companyResearchDraftPreview(draftIds) {
+    return client.post("/api/company-research/drafts/preview", { draftIds });
+  }
+
+  function companyResearchDraftSnapshot(preview) {
+    return {
+      draftIds: (preview?.drafts || []).map((draft) => String(draft.id)),
+      selectionToken: String(preview?.selectionToken || ""),
+    };
+  }
+
   async function draftLaunchState(payload) {
     const [preflight, health, ...drafts] = await Promise.all([
       client.post("/api/outreach/drafts/preflight", { draft_ids: payload.draft_ids }),
@@ -251,6 +274,100 @@ export function createToolHandlers({ client, confirmations }) {
         selectionToken: plan.payload.selectionToken,
       });
       return success("Подтверждённый пилот персонализации создан; письма не отправлялись.", data, ["personalization_pilot_get"]);
+    }),
+    company_research_list: safeTool(async (input) => success(
+      "Очередь исследования компаний получена.",
+      await client.get("/api/company-research/runs", { query: filteredQuery(input, ["status"]) }),
+      ["company_research_get", "company_research_queue_prepare", "company_research_job_claim"],
+    )),
+    company_research_get: safeTool(async ({ run_id: runId }) => success(
+      "Карточка исследования компании получена.",
+      await client.get(`/api/company-research/runs/${pathId(runId, "run_id")}`),
+      ["company_research_evidence_save", "company_research_job_complete"],
+    )),
+    company_research_queue_prepare: safeTool(async ({ rules_version: rulesVersion } = {}) => {
+      const preview = await companyResearchQueuePreview(rulesVersion);
+      const snapshot = companyResearchQueueSnapshot(preview);
+      if (!snapshot.leadIds.length) throw new OutreachApiError("No eligible companies were found", { code: "company_research_no_eligible_companies" });
+      return prepareConfirmation(
+        confirmations,
+        "company_research_queue",
+        snapshot,
+        snapshot,
+        `Подготовлено исследование ${snapshot.leadIds.length} уникальных компаний. Письма не создаются и не отправляются. Требуется явное разрешение.`,
+        ["company_research_queue_execute"],
+        preview,
+      );
+    }),
+    company_research_queue_execute: safeTool(async ({ confirmation_token: token, confirm }) => {
+      const plan = claim(token, "company_research_queue", confirm);
+      const preview = await companyResearchQueuePreview(plan.payload.rulesVersion);
+      verify(plan, companyResearchQueueSnapshot(preview));
+      const data = await client.post("/api/company-research/queue", {
+        rulesVersion: plan.payload.rulesVersion,
+        leadIds: plan.payload.leadIds,
+        selectionToken: plan.payload.selectionToken,
+      });
+      return success("Подтверждённая очередь исследования создана; писем и отправки нет.", data, ["company_research_list", "company_research_job_claim"]);
+    }),
+    company_research_job_claim: safeTool(async ({ worker_id: workerId, lease_minutes: leaseMinutes = 15 }) => success(
+      "Следующая исследовательская задача арендована.",
+      await client.post("/api/company-research/jobs/claim", { workerId, leaseMinutes }),
+      ["company_research_evidence_save", "company_research_job_complete"],
+    )),
+    company_research_evidence_save: safeTool(async ({ run_id: runId, worker_id: workerId, sources = [], facts = [], contacts = [] }) => success(
+      "Публичные источники, факты и контакты сохранены.",
+      await client.post(`/api/company-research/runs/${pathId(runId, "run_id")}/evidence`, {
+        workerId,
+        sources: sources.map((source) => ({
+          sourceKey: source.source_key,
+          url: source.url,
+          sourceType: source.source_type,
+          title: source.title,
+          publisher: source.publisher,
+          publishedAt: source.published_at,
+          excerpt: source.excerpt,
+          trustTier: source.trust_tier,
+          metadata: source.metadata,
+        })),
+        facts: facts.map((fact) => ({ sourceId: fact.source_id, factType: fact.fact_type, text: fact.text, evidence: fact.evidence, confidence: fact.confidence, selectedForCopy: fact.selected_for_copy })),
+        contacts: contacts.map((contact) => ({ sourceId: contact.source_id, name: contact.name, role: contact.role, email: contact.email, emailStatus: contact.email_status, confidence: contact.confidence, evidence: contact.evidence })),
+      }),
+      ["company_research_get", "company_research_job_complete"],
+    )),
+    company_research_job_complete: safeTool(async ({ run_id: runId, worker_id: workerId, status, error }) => success(
+      "Исследовательская задача завершена; отправка не запускалась.",
+      await client.post(`/api/company-research/runs/${pathId(runId, "run_id")}/complete`, { workerId, status, error }),
+      ["company_research_get", "company_research_job_claim", "company_research_drafts_prepare"],
+    )),
+    company_research_retry: safeTool(async ({ run_id: runId }) => success(
+      "Исследование возвращено в очередь.",
+      await client.post(`/api/company-research/runs/${pathId(runId, "run_id")}/retry`, {}),
+      ["company_research_job_claim"],
+    )),
+    company_research_drafts_prepare: safeTool(async ({ draft_ids: draftIds }) => {
+      const preview = await companyResearchDraftPreview(draftIds);
+      const snapshot = companyResearchDraftSnapshot(preview);
+      if (snapshot.draftIds.length !== draftIds.length) throw new OutreachApiError("Some research drafts changed", { code: "company_research_drafts_changed" });
+      return prepareConfirmation(
+        confirmations,
+        "company_research_drafts",
+        snapshot,
+        snapshot,
+        `Подготовлено создание ${snapshot.draftIds.length} обычных черновиков. Они не будут отправлены. Требуется явное разрешение.`,
+        ["company_research_drafts_execute"],
+        preview,
+      );
+    }),
+    company_research_drafts_execute: safeTool(async ({ confirmation_token: token, confirm }) => {
+      const plan = claim(token, "company_research_drafts", confirm);
+      const preview = await companyResearchDraftPreview(plan.payload.draftIds);
+      verify(plan, companyResearchDraftSnapshot(preview));
+      const data = await client.post("/api/company-research/drafts/materialize", {
+        draftIds: plan.payload.draftIds,
+        selectionToken: plan.payload.selectionToken,
+      });
+      return success("Подтверждённые кандидаты созданы как обычные черновики; отправка не запускалась.", data, ["drafts_list", "drafts_preflight"]);
     }),
     events_list: safeTool(async (input) => success("Журнал событий получен.", await client.get("/api/events", { query: pageQuery(input) }))),
     leads_list: safeTool(async (input) => success("Список лидов получен.", await client.get("/api/leads", { query: filteredQuery(input, ["status", "segment", "search"]) }), ["lead_upsert", "leads_import"])),

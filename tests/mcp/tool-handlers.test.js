@@ -49,6 +49,9 @@ test("catalog exposes the approved domain tools with bounded schemas", () => {
     "mailboxes_list", "mailbox_check", "inbox_sync",
     "delivery_mode_prepare", "delivery_mode_execute",
     "personalization_pilots_list", "personalization_pilot_get", "personalization_pilot_prepare", "personalization_pilot_execute",
+    "company_research_list", "company_research_get", "company_research_queue_prepare", "company_research_queue_execute",
+    "company_research_job_claim", "company_research_evidence_save", "company_research_job_complete", "company_research_retry",
+    "company_research_drafts_prepare", "company_research_drafts_execute",
   ]) assert.equal(names.has(name), true, `missing tool ${name}`);
 
   assert.equal(TOOL_DEFINITIONS.every((item) => item.inputSchema && item.description && item.annotations), true);
@@ -83,6 +86,8 @@ test("read handlers map to the existing Outreach API and cap pagination", async 
     ["mailboxes_list", {}, "/api/mailboxes"],
     ["personalization_pilots_list", { page: 1, page_size: 999 }, "/api/personalization/pilots"],
     ["personalization_pilot_get", { pilot_id: "pilot-1" }, "/api/personalization/pilots/pilot-1"],
+    ["company_research_list", { page: 1, page_size: 999, status: "ready" }, "/api/company-research/runs"],
+    ["company_research_get", { run_id: "run-1" }, "/api/company-research/runs/run-1"],
   ];
 
   for (const [name, input, expectedPath] of cases) {
@@ -157,6 +162,8 @@ test("ordinary mutation handlers map exact actions to HTTP methods and bodies", 
     ["conversation_classify", { conversation_id: "conversation-1", classification: "neutral_reply" }, "patch", "/api/outreach/conversations/conversation-1/classification", { classification: "neutral_reply" }],
     ["mailbox_check", { mailbox_id: "mailbox-1" }, "post", "/api/mailboxes/mailbox-1/check", {}],
     ["inbox_sync", {}, "post", "/api/inbox/sync", {}],
+    ["company_research_job_claim", { worker_id: "agent-1", lease_minutes: 15 }, "post", "/api/company-research/jobs/claim", { workerId: "agent-1", leaseMinutes: 15 }],
+    ["company_research_retry", { run_id: "run-1" }, "post", "/api/company-research/runs/run-1/retry", {}],
   ];
 
   for (const [name, input, method, endpoint, body] of cases) {

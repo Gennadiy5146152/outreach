@@ -22,6 +22,7 @@ import { saveSecretToDotenv } from "./services/secret-file.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 import { createAuth, timingSafeEqualText } from "./http/auth.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
+import { createCompanyResearchApi } from "./services/company-research-api.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
 
@@ -51,6 +52,7 @@ const {
   requireAuth,
 } = createAuth(env);
 const personalizationApi = createPersonalizationApi({ query, withClient });
+const companyResearchApi = createCompanyResearchApi({ query, withClient });
 
 function cleanText(value) {
   return String(value || "").trim();
@@ -630,6 +632,68 @@ app.patch("/api/personalization/items/:id", asyncHandler(async (req, res) => {
     reason: req.body.reason,
     actor: req.body.actor || env.authUser,
     draft: req.body.draft,
+  }));
+}));
+
+app.get("/api/company-research/runs", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.listRuns({
+    page: req.query.page,
+    pageSize: req.query.pageSize,
+    status: req.query.status,
+  }));
+}));
+
+app.get("/api/company-research/runs/:id", asyncHandler(async (req, res) => {
+  const detail = await companyResearchApi.getRun(req.params.id);
+  if (!detail) return res.status(404).json({ error: "company_research_run_not_found" });
+  res.json(detail);
+}));
+
+app.post("/api/company-research/queue/preview", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.previewQueue({ rulesVersion: req.body.rulesVersion }));
+}));
+
+app.post("/api/company-research/queue", asyncHandler(async (req, res) => {
+  res.status(201).json(await companyResearchApi.createQueue({
+    rulesVersion: req.body.rulesVersion,
+    leadIds: req.body.leadIds,
+    selectionToken: req.body.selectionToken,
+  }));
+}));
+
+app.post("/api/company-research/jobs/claim", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.claimJob({ workerId: req.body.workerId, leaseMinutes: req.body.leaseMinutes }));
+}));
+
+app.post("/api/company-research/runs/:id/evidence", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.saveEvidence(req.params.id, {
+    workerId: req.body.workerId,
+    sources: req.body.sources,
+    facts: req.body.facts,
+    contacts: req.body.contacts,
+  }));
+}));
+
+app.post("/api/company-research/runs/:id/complete", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.completeJob(req.params.id, {
+    workerId: req.body.workerId,
+    status: req.body.status,
+    error: req.body.error,
+  }));
+}));
+
+app.post("/api/company-research/runs/:id/retry", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.retryRun(req.params.id));
+}));
+
+app.post("/api/company-research/drafts/preview", asyncHandler(async (req, res) => {
+  res.json(await companyResearchApi.previewDrafts({ draftIds: req.body.draftIds }));
+}));
+
+app.post("/api/company-research/drafts/materialize", asyncHandler(async (req, res) => {
+  res.status(201).json(await companyResearchApi.materializeDrafts({
+    draftIds: req.body.draftIds,
+    selectionToken: req.body.selectionToken,
   }));
 }));
 

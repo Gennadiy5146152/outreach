@@ -33,6 +33,16 @@ function createProtectedFixture() {
       selectionToken: "selection-1",
       leads: [{ id: "lead-1", company: "Example", email: "lead@example.com", website: "https://example.com" }],
     },
+    researchPreview: {
+      rulesVersion: "company-research-v1",
+      selectionToken: "research-selection-1",
+      counts: { selected: 1, by_priority: { 1: 1 } },
+      companies: [{ id: "lead-1", company: "Example", email: "lead@example.com", priority_tier: 1 }],
+    },
+    researchDraftPreview: {
+      selectionToken: "research-drafts-1",
+      drafts: [{ id: "research-draft-1", to_email: "lead@example.com", audience_type: "general", updated_at: "2026-10-14T00:00:00Z" }],
+    },
   };
 
   function responseForGet(endpoint) {
@@ -52,6 +62,7 @@ function createProtectedFixture() {
     if (endpoint === "/api/suppressions/impact") return { scope: "email", target: "lead@example.com", affected_count: 1, leads: [{ id: "lead-1", email: "lead@example.com" }] };
     if (endpoint === "/api/outreach/runs/run-1") return structuredClone(state.run);
     if (endpoint === "/api/outreach/stop-all/impact") return structuredClone(state.stopAllImpact);
+    if (endpoint === "/api/company-research/runs") return { rows: [] };
     throw new Error(`unexpected GET ${endpoint}`);
   }
 
@@ -64,6 +75,8 @@ function createProtectedFixture() {
       calls.push({ method: "post", endpoint, body });
       if (endpoint === "/api/outreach/drafts/preflight") return structuredClone(state.draftPreflight);
       if (endpoint === "/api/personalization/pilots/preview") return structuredClone(state.personalizationPreview);
+      if (endpoint === "/api/company-research/queue/preview") return structuredClone(state.researchPreview);
+      if (endpoint === "/api/company-research/drafts/preview") return structuredClone(state.researchDraftPreview);
       if (state.failNextMutation) {
         state.failNextMutation = false;
         throw new Error("downstream mutation failed");
@@ -162,6 +175,31 @@ test("personalization pilot requires an unchanged prepared snapshot and explicit
       selectionToken: "selection-1",
     },
   });
+});
+
+test("company research queue and draft materialization require fresh explicit confirmation", async () => {
+  const { handlers, calls, state } = createProtectedFixture();
+  const preparedQueue = await handlers.company_research_queue_prepare({});
+  state.researchPreview.selectionToken = "changed";
+  const staleQueue = await handlers.company_research_queue_execute({ confirmation_token: tokenOf(preparedQueue), confirm: true });
+  assert.equal(staleQueue.structuredContent.data.code, "confirmation_state_changed");
+  assert.equal(calls.some((call) => call.endpoint === "/api/company-research/queue"), false);
+
+  state.researchPreview.selectionToken = "research-selection-1";
+  const queueAgain = await handlers.company_research_queue_prepare({});
+  const queued = await handlers.company_research_queue_execute({ confirmation_token: tokenOf(queueAgain), confirm: true });
+  assert.equal(queued.isError, undefined);
+  assert.deepEqual(calls.at(-1), {
+    method: "post",
+    endpoint: "/api/company-research/queue",
+    body: { rulesVersion: "company-research-v1", leadIds: ["lead-1"], selectionToken: "research-selection-1" },
+  });
+
+  const preparedDrafts = await handlers.company_research_drafts_prepare({ draft_ids: ["research-draft-1"] });
+  state.researchDraftPreview.selectionToken = "changed";
+  const staleDrafts = await handlers.company_research_drafts_execute({ confirmation_token: tokenOf(preparedDrafts), confirm: true });
+  assert.equal(staleDrafts.structuredContent.data.code, "confirmation_state_changed");
+  assert.equal(calls.some((call) => call.endpoint === "/api/company-research/drafts/materialize"), false);
 });
 
 test("failed preflight never creates an executable launch plan", async () => {

@@ -12,6 +12,34 @@ const suppressionInput = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("email"), target: z.string().email(), reason: z.string().min(1).max(500) }).strict(),
   z.object({ scope: z.literal("domain"), target: z.string().min(1).max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i), reason: z.string().min(1).max(500) }).strict(),
 ]);
+const researchSource = z.object({
+  source_key: z.string().min(1).max(100).optional(),
+  url: z.string().url().max(2000),
+  source_type: z.enum(["official", "conference", "publication", "profile", "video", "directory", "other"]).default("other"),
+  title: z.string().max(300).optional(),
+  publisher: z.string().max(200).optional(),
+  published_at: z.string().max(60).optional(),
+  excerpt: z.string().max(500).default(""),
+  trust_tier: z.number().int().min(1).max(5).default(5),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+const researchFact = z.object({
+  source_id: z.string().min(1).max(200),
+  fact_type: z.string().min(1).max(80).default("other"),
+  text: z.string().min(1).max(500),
+  evidence: z.string().min(1).max(500),
+  confidence: z.number().min(0).max(1).default(0.5),
+  selected_for_copy: z.boolean().default(false),
+}).strict();
+const researchContact = z.object({
+  source_id: z.string().min(1).max(200),
+  name: z.string().max(200).default(""),
+  role: z.string().max(200).default(""),
+  email: z.string().email().optional(),
+  email_status: z.enum(["confirmed", "needs_review", "rejected"]).default("needs_review"),
+  confidence: z.number().min(0).max(1).default(0.5),
+  evidence: z.string().min(1).max(500),
+}).strict();
 
 const readAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const writeAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -33,6 +61,16 @@ export const TOOL_DEFINITIONS = [
   definition("personalization_pilot_get", "Получить пилот персонализации, квалификацию, доказательства и черновики.", z.object({ pilot_id: id }).strict(), readAnnotations),
   definition("personalization_pilot_prepare", "Подготовить точный список до 30 лидов для персонализации без создания пилота и без отправки писем.", z.object({ limit: z.number().int().min(1).max(30).default(30) }).strict(), prepareAnnotations),
   definition("personalization_pilot_execute", "Создать ранее подготовленный пилот черновиков. Вызывать только после явного разрешения пользователя; письма не отправляются.", confirm, executeAnnotations),
+  definition("company_research_list", "Получить очередь исследования компаний по приоритету и статусу.", z.object({ page, page_size: pageSize, status: z.enum(["queued", "researching", "review", "ready", "failed"]).optional() }).strict(), readAnnotations),
+  definition("company_research_get", "Получить карточку исследования компании: источники, факты, контакты и кандидаты писем.", z.object({ run_id: id }).strict(), readAnnotations),
+  definition("company_research_queue_prepare", "Подготовить точный список всех подходящих компаний для исследования без создания очереди.", z.object({ rules_version: z.string().min(1).max(100).optional() }).strict(), prepareAnnotations),
+  definition("company_research_queue_execute", "Создать подтверждённую очередь исследования компаний. Письма и черновики не создаются.", confirm, executeAnnotations),
+  definition("company_research_job_claim", "Взять следующую компанию для публичного исследования на ограниченное время.", z.object({ worker_id: z.string().min(1).max(200), lease_minutes: z.number().int().min(1).max(60).default(15) }).strict(), writeAnnotations),
+  definition("company_research_evidence_save", "Сохранить до 10 публичных источников и связанные факты/контакты для арендованной задачи.", z.object({ run_id: id, worker_id: z.string().min(1).max(200), sources: z.array(researchSource).max(10).default([]), facts: z.array(researchFact).max(30).default([]), contacts: z.array(researchContact).max(30).default([]) }).strict(), writeAnnotations),
+  definition("company_research_job_complete", "Завершить арендованное исследование; создаются только неподключённые к отправке кандидаты писем.", z.object({ run_id: id, worker_id: z.string().min(1).max(200), status: z.enum(["ready", "review", "failed"]), error: z.string().max(1000).optional() }).strict(), writeAnnotations),
+  definition("company_research_retry", "Вернуть неудачное или спорное исследование в очередь.", z.object({ run_id: id }).strict(), writeAnnotations),
+  definition("company_research_drafts_prepare", "Подготовить материализацию выбранных кандидатов в обычные черновики без отправки.", z.object({ draft_ids: ids }).strict(), prepareAnnotations),
+  definition("company_research_drafts_execute", "Создать подтверждённые обычные черновики из кандидатов исследования. Отправка не запускается.", confirm, executeAnnotations),
   definition("drafts_list", "Получить персональные черновики.", z.object({ page, page_size: pageSize, status: z.string().max(60).optional(), import_id: id.optional() }).strict(), readAnnotations),
   definition("draft_update", "Изменить карточку черновика или follow-up шаг.", z.object({ action: z.enum(["draft", "step"]), draft_id: id, position: z.number().int().min(2).max(4).optional(), values }).strict(), writeAnnotations),
   definition("drafts_preflight", "Проверить точный набор черновиков перед запуском.", z.object({ draft_ids: ids }).strict(), readAnnotations),
