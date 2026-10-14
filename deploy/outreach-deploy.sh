@@ -205,8 +205,12 @@ wait_for_personalizer() {
   local attempt running
 
   for attempt in $(seq 1 6); do
-    running=$(docker inspect -f '{{.State.Running}}' "$OUTREACH_PERSONALIZER_CONTAINER" 2>/dev/null || true)
-    if [[ "$running" == true ]]; then
+    running=$(docker ps \
+      --filter "label=com.docker.compose.project=$OUTREACH_PROJECT" \
+      --filter "label=com.docker.compose.service=personalizer" \
+      --filter "status=running" \
+      --quiet 2>/dev/null || true)
+    if [[ -n "$running" ]]; then
       log "personalizer health check passed"
       return 0
     fi

@@ -237,9 +237,14 @@ test("application rollback can start a compose revision from before personalizer
 });
 
 test("personalizer health check requires its container to remain running", () => {
+  const scriptSource = fs.readFileSync(script, "utf8");
+  const healthFunction = scriptSource.match(/wait_for_personalizer\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(healthFunction, /com\.docker\.compose\.service=personalizer/);
+  assert.doesNotMatch(healthFunction, /OUTREACH_PERSONALIZER_CONTAINER/);
+
   const healthy = runBash(`
     source "$1"
-    docker() { printf 'true\n'; }
+    docker() { printf 'scaled-personalizer-container-id\n'; }
     sleep() { return 0; }
     wait_for_personalizer
   `);
@@ -247,7 +252,7 @@ test("personalizer health check requires its container to remain running", () =>
 
   const stopped = runBash(`
     source "$1"
-    docker() { printf 'false\n'; }
+    docker() { return 0; }
     sleep() { return 0; }
     wait_for_personalizer
   `);
