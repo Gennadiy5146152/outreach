@@ -19,12 +19,19 @@ function lead(id, values = {}) {
   };
 }
 
-test("queue preview researches every eligible company, deduplicates domains, and only prioritizes banks", async () => {
+test("queue preview keeps confirmed SMB and manufacturers while holding or excluding unsuitable companies", async () => {
   const { createCompanyResearchApi } = await import("../src/services/company-research-api.js");
   const rows = [
     lead("a", { website: "https://alpha.ru", company: "Альфа" }),
-    lead("a2", { website: "https://www.alpha.ru/contacts", company: "Альфа филиал" }),
+    lead("a2", { website: "https://www.alpha.ru/contacts", company: "Альфа филиал", segment: "" }),
+    lead("factory", { website: "https://factory.ru", company: "Ромашка", segment: "Мебельное производство" }),
+    lead("mixed-smb", { website: "https://mixed.ru", company: "Ромашка МСП", segment: "малый бизнес" }),
+    lead("mixed-bank", { website: "https://www.mixed.ru/contacts", company: "Пример Банк", segment: "банк" }),
     lead("bank", { website: "https://bank.ru", company: "Пример Банк", segment: "банк" }),
+    lead("ministry", { website: "https://ministry.ru", company: "Министерство промышленности", segment: "government" }),
+    lead("temple", { website: "https://temple.ru", company: "Храм в честь иконы", segment: "religion" }),
+    lead("coffee-like", { website: "https://coffee-like.ru", company: "Coffee Like", segment: "cafe" }),
+    lead("unknown", { website: "https://unknown.ru", company: "Неизвестная компания", segment: "" }),
   ];
   const statements = [];
   const api = createCompanyResearchApi({
@@ -38,9 +45,11 @@ test("queue preview researches every eligible company, deduplicates domains, and
   const alpha = preview.companies.find((item) => item.company === "Альфа");
   assert.deepEqual(alpha.recipients.map((item) => item.email), ["a@example.ru", "a2@example.ru"]);
   assert.equal(preview.counts.recipients, 3);
-  assert.equal(preview.companies.some((item) => item.company === "Пример Банк"), true);
-  assert.equal(preview.companies.find((item) => item.company === "Пример Банк").priority_tier, 4);
-  assert.equal(preview.counts.by_priority[4], 1);
+  assert.deepEqual(preview.companies.map((item) => item.company), ["Альфа", "Ромашка"]);
+  assert.equal(preview.counts.excluded, 5);
+  assert.equal(preview.counts.needs_size_review, 1);
+  assert.equal(preview.counts.by_priority[1], 1);
+  assert.equal(preview.counts.by_priority[2], 1);
   assert.match(preview.selectionToken, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(statements[0], /\b(?:INSERT|UPDATE|DELETE)\b/i);
   assert.match(statements[0], /messages sent_message/i);

@@ -4705,8 +4705,9 @@ function renderCompanyResearchPreview() {
   node.innerHTML = `
     <strong>Уникальных компаний: ${Number(preview.counts?.selected || 0)}</strong>
     <span>Уникальных адресов: ${Number(preview.counts?.recipients || 0)} · ранее отправленные адреса исключены</span>
-    <span>МСП: ${Number(priorities[1] || 0)} · производства: ${Number(priorities[2] || 0)} · прочий бизнес: ${Number(priorities[3] || 0)} · банки и госсектор: ${Number(priorities[4] || 0)}</span>
-    <small>Приоритет влияет только на порядок. На этом шаге письма и отправка не создаются.</small>
+    <span>МСП: ${Number(priorities[1] || 0)} · производства: ${Number(priorities[2] || 0)}</span>
+    <span>Исключено как неподходящие: ${Number(preview.counts?.excluded || 0)} · ожидают проверки размера: ${Number(preview.counts?.needs_size_review || 0)}</span>
+    <small>В очередь попадают только подтверждённые МСП и производства. На этом шаге письма и отправка не создаются.</small>
   `;
 }
 

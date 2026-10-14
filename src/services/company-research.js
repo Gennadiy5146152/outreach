@@ -1,7 +1,9 @@
 import { assertPublicHttpUrl, normalizeWebsiteUrl } from "./website-enrichment.js";
 
-export const COMPANY_RESEARCH_RULES_VERSION = "company-research-v1";
+export const COMPANY_RESEARCH_RULES_VERSION = "company-research-v2-smb-only";
 export const MAX_RESEARCH_SOURCES = 10;
+
+const LARGE_BRAND_PATTERN = /(?:coffee\s*like|lacoste|dhl|сдэк|cdek|инвитро|(?:^|[^а-яёa-z0-9])metro(?=$|[^а-яёa-z0-9])|xiaomi|азбука\s+вкуса|eurospar|(?:^|[^а-яёa-z0-9])spar(?=$|[^а-яёa-z0-9])|ортек|(?:кино\s+)?окко|okko|respect|emka|baggins\s+coffee|вес[её]лая\s+затея|управдом|мавт[-\s]?винотека)/iu;
 
 function clean(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -23,6 +25,34 @@ function normalizedEmail(value) {
 
 function emailDomain(value) {
   return normalizedEmail(value)?.split("@")[1] || "unknown";
+}
+
+export function researchEligibility(lead = {}) {
+  const company = clean(lead.company).toLowerCase();
+  const segment = clean(lead.segment).toLowerCase();
+  const haystack = `${company} ${segment} ${clean(lead.businessType)}`.toLowerCase();
+  if (/министер|ведомств|администрац|государств|муниципал|правительств|каз[её]нн(?:ое|ая|ый)?\s+учрежден|бюджетн(?:ое|ая|ый)?\s+учрежден|(?:^|[^а-яёa-z0-9])(?:фгбпоу|фгбоу|фгаоу|фгбну|фгбу|фгку|фгау|фбу|фку|фау|гбпоу|гбоу|гбуз|гбу|гку|гау|мбоу|мбу|мку|мау|фгуп|гуп|муп)(?=$|[^а-яёa-z0-9])|(?:^|[^а-яёa-z0-9])суд(?=$|[^а-яёa-z0-9])|government|public_sector/iu.test(haystack)) {
+    return { status: "excluded", reason: "public_sector" };
+  }
+  if (/храм|церков|приход|епарх|мечет|синагог|монастыр|религи|religion/iu.test(haystack)) {
+    return { status: "excluded", reason: "religious_or_noncommercial" };
+  }
+  if (/детск(?:ий|ого)\s+сад|школ|гимнази|лицей|университет|институт|колледж|академи|kindergarten|education/iu.test(haystack)) {
+    return { status: "excluded", reason: "education_or_budget" };
+  }
+  if (/банк|банков|страхов|финанс|кредит|микрофинанс|(?:^|[^а-яёa-z0-9])мфо(?=$|[^а-яёa-z0-9])|insurance|(?:^|[^а-яёa-z0-9])bank(?=$|[^а-яёa-z0-9])/iu.test(haystack)) {
+    return { status: "excluded", reason: "finance_or_insurance" };
+  }
+  if (LARGE_BRAND_PATTERN.test(company)) {
+    return { status: "excluded", reason: "large_brand" };
+  }
+  if (/завод|фабрик|производ|manufactur|промышлен/iu.test(haystack)) {
+    return { status: "eligible", reason: "factory_or_manufacturer" };
+  }
+  if (/(?:^|[^а-яёa-z0-9])(?:микро|мал(?:ый|ое)|средн(?:ий|ее)|мсп|ип)(?=$|[^а-яёa-z0-9])/iu.test(haystack)) {
+    return { status: "eligible", reason: "confirmed_smb" };
+  }
+  return { status: "needs_size_review", reason: "size_unconfirmed" };
 }
 
 export function researchPriority(lead = {}) {

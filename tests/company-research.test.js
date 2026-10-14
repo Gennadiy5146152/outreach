@@ -1,8 +1,78 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("priority ranks every company without hard-excluding banks or government", async () => {
-  const { researchPriority } = await import("../src/services/company-research.js");
+test("strict SMB eligibility excludes public, religious, financial, and large-brand targets", async () => {
+  const { researchEligibility, researchPriority } = await import("../src/services/company-research.js");
+  assert.deepEqual(researchEligibility({ company: "Ромашка", segment: "cafe" }), {
+    status: "needs_size_review",
+    reason: "size_unconfirmed",
+  });
+  assert.deepEqual(researchEligibility({ company: "Большой завод", segment: "крупное производство" }), {
+    status: "eligible",
+    reason: "factory_or_manufacturer",
+  });
+  assert.deepEqual(researchEligibility({ company: "Coffee Like", segment: "cafe" }), {
+    status: "excluded",
+    reason: "large_brand",
+  });
+  assert.deepEqual(researchEligibility({ company: "Инвитро", segment: "производство" }), {
+    status: "excluded",
+    reason: "large_brand",
+  });
+  for (const company of ["ООО «METRO»", "ООО «SPAR»"]) {
+    assert.deepEqual(researchEligibility({ company, segment: "малый бизнес" }), {
+      status: "excluded",
+      reason: "large_brand",
+    });
+  }
+  for (const company of [
+    "Министерство промышленности",
+    "ГБУ Жилищник",
+    "МБУ Ромашка",
+    "ФГБУ Центр",
+    "ГКУ Центр занятости",
+    "МКУ Управление",
+    "ФКУ Центр",
+    "ГАУ Центр",
+    "МАУ Центр",
+    "ФГАУ Центр",
+    "ФГКУ Центр",
+    "ФГБОУ Университет",
+    "ГБУЗ Поликлиника",
+    "МБОУ Школа",
+    "ГУП Сервис",
+    "МУП Водоканал",
+    "ФГУП Почта",
+    "Казённое учреждение",
+    "Бюджетное учреждение",
+  ]) {
+    assert.deepEqual(researchEligibility({ company, segment: "малый бизнес" }), {
+      status: "excluded",
+      reason: "public_sector",
+    });
+  }
+  assert.deepEqual(researchEligibility({ company: "Храм в честь иконы", segment: "religion" }), {
+    status: "excluded",
+    reason: "religious_or_noncommercial",
+  });
+  assert.deepEqual(researchEligibility({ company: "Пример Банк", segment: "bank" }), {
+    status: "excluded",
+    reason: "finance_or_insurance",
+  });
+  for (const company of ["Страховая компания Ромашка", "Финансовая компания Ромашка", "Кредитная компания Ромашка", "МФО Ромашка", "ООО «МФО Ромашка»"]) {
+    assert.deepEqual(researchEligibility({ company, segment: "малый бизнес" }), {
+      status: "excluded",
+      reason: "finance_or_insurance",
+    });
+  }
+  assert.deepEqual(researchEligibility({ company: "Неизвестная компания", segment: "" }), {
+    status: "needs_size_review",
+    reason: "size_unconfirmed",
+  });
+  assert.deepEqual(researchEligibility({ company: "ООО Неизвестная компания", segment: "company" }), {
+    status: "needs_size_review",
+    reason: "size_unconfirmed",
+  });
   assert.deepEqual(researchPriority({ company: "Альфа", segment: "малый бизнес" }), {
     tier: 1,
     reason: "micro_small_medium",

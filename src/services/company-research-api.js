@@ -5,6 +5,7 @@ import {
   companyResearchKey,
   completeResearchRun,
   createResearchRuns,
+  researchEligibility,
   researchPriority,
   saveResearchBundle,
 } from "./company-research.js";
@@ -65,7 +66,7 @@ function eligibleCompaniesSql() {
 }
 
 function prioritizeAndDedupe(rows) {
-  const byCompany = new Map();
+  const grouped = new Map();
   for (const row of rows) {
     let companyKey;
     try {
@@ -75,29 +76,44 @@ function prioritizeAndDedupe(rows) {
     }
     const email = clean(row.email).toLowerCase();
     if (!email) continue;
-    let company = byCompany.get(companyKey);
-    if (!company) {
-      const priority = researchPriority(row);
-      company = {
-        ...row,
-        company_key: companyKey,
-        priority_tier: priority.tier,
-        priority_reason: priority.reason,
-        recipients: [],
-      };
-      byCompany.set(companyKey, company);
+    const eligibility = researchEligibility(row);
+    let group = grouped.get(companyKey);
+    if (!group) {
+      group = { companyKey, decision: eligibility, eligibleRow: null, recipients: [] };
+      grouped.set(companyKey, group);
     }
-    if (!company.recipients.some((recipient) => recipient.email === email)) {
-      company.recipients.push({
+    const decisionRank = { needs_size_review: 1, eligible: 2, excluded: 3 };
+    if (decisionRank[eligibility.status] > decisionRank[group.decision.status]) group.decision = eligibility;
+    if (eligibility.status === "eligible" && !group.eligibleRow) group.eligibleRow = row;
+    if (!group.recipients.some((recipient) => recipient.email === email)) {
+      group.recipients.push({
         id: row.id,
         email,
         updated_at: row.updated_at,
       });
     }
   }
-  return [...byCompany.values()].sort((left, right) => (
+  const companies = [];
+  const counts = { excluded: 0, needs_size_review: 0, by_reason: {} };
+  for (const group of grouped.values()) {
+    if (group.decision.status !== "eligible") {
+      counts[group.decision.status] = Number(counts[group.decision.status] || 0) + 1;
+      counts.by_reason[group.decision.reason] = Number(counts.by_reason[group.decision.reason] || 0) + 1;
+      continue;
+    }
+    const priority = researchPriority(group.eligibleRow);
+    companies.push({
+      ...group.eligibleRow,
+      company_key: group.companyKey,
+      priority_tier: priority.tier,
+      priority_reason: priority.reason,
+      recipients: group.recipients,
+    });
+  }
+  companies.sort((left, right) => (
     left.priority_tier - right.priority_tier || String(left.company_key).localeCompare(String(right.company_key))
   ));
+  return { companies, counts };
 }
 
 export function researchQueueToken(companies, rulesVersion) {
@@ -170,7 +186,8 @@ export function createCompanyResearchApi({
   async function currentQueue(rulesVersion = COMPANY_RESEARCH_RULES_VERSION) {
     if (!queryFn) throw new Error("company_research_query_required");
     const rows = (await queryFn(eligibleCompaniesSql(), [ACTIVE_CONVERSATION_STATUSES])).rows;
-    const companies = prioritizeAndDedupe(rows);
+    const selection = prioritizeAndDedupe(rows);
+    const companies = selection.companies;
     const byPriority = {};
     for (const company of companies) byPriority[company.priority_tier] = (byPriority[company.priority_tier] || 0) + 1;
     return {
@@ -179,6 +196,9 @@ export function createCompanyResearchApi({
       counts: {
         selected: companies.length,
         recipients: companies.reduce((total, company) => total + company.recipients.length, 0),
+        excluded: selection.counts.excluded,
+        needs_size_review: selection.counts.needs_size_review,
+        by_reason: selection.counts.by_reason,
         by_priority: byPriority,
       },
       selectionToken: researchQueueToken(companies, rulesVersion),
