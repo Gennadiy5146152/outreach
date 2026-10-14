@@ -4,7 +4,7 @@ import { pool, query, withClient } from "../db/pool.js";
 import { claimJob, failJob, finishJob, PERSONALIZATION_JOB_TYPES } from "../services/job-queue.js";
 import { confirmedContact, generatePersonalizedCopy, qualifyLead } from "../services/lead-personalization.js";
 import { createDraftFromPersonalization, upsertEnrichment } from "../services/personalization-store.js";
-import { extractSiteSignals, fetchWebsitePages } from "../services/website-enrichment.js";
+import { discoverCompanyWebsite, extractSiteSignals, fetchWebsitePages } from "../services/website-enrichment.js";
 
 function clean(value) {
   return String(value || "").trim();
@@ -37,7 +37,7 @@ function databaseRepository() {
           SELECT item.id, item.pilot_id, item.lead_id, item.status, item.status_reason,
                  item.source_row_number, item.draft_id, item.manually_overridden_at,
                  pilot.rules_version,
-                 lead.email, lead.company, lead.website, lead.segment, lead.city, lead.contact_name,
+                 lead.email, lead.company, lead.website, lead.domain, lead.segment, lead.city, lead.contact_name,
                  enrichment.id AS enrichment_id, enrichment.status AS enrichment_status,
                  enrichment.fit_score, enrichment.fit_reason, enrichment.canonical_company,
                  enrichment.business_type, enrichment.city AS enrichment_city,
@@ -73,6 +73,7 @@ function databaseRepository() {
           email: row.email,
           company: row.company,
           website: row.website,
+          domain: row.domain,
           segment: row.segment,
           city: row.city,
           contact_name: row.contact_name,
@@ -211,6 +212,7 @@ function databaseRepository() {
 export function createPersonalizationProcessor({
   repository,
   fetchPages = fetchWebsitePages,
+  discoverWebsite = discoverCompanyWebsite,
   extractSignals = extractSiteSignals,
   qualify = qualifyLead,
   resolveContact = confirmedContact,
@@ -225,9 +227,15 @@ export function createPersonalizationProcessor({
       await repository.updatePilotProgress(context.pilotId);
       return;
     }
-    if (!clean(context.lead?.website)) throw new Error("personalization_website_required");
     await repository.markItem(context.id, { status: "enriching", lastError: null });
-    const result = await fetchPages({ website: context.lead.website });
+    const website = clean(context.lead?.website) || await discoverWebsite({
+      company: context.lead?.company,
+      city: context.lead?.city,
+      emailDomain: context.lead?.domain,
+    });
+    const result = website
+      ? await fetchPages({ website })
+      : { pages: [], errors: [{ error: "personalization_website_not_found" }] };
     const signals = extractSignals(result.pages);
     signals.pageTextLength = result.pages.reduce((total, page) => total + clean(page.text).length, 0);
     if (!result.pages.length) signals.unavailable = true;

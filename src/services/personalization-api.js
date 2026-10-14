@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import { createPilot, getPilot } from "./personalization-store.js";
+import { companyResearchKey, researchEligibility } from "./company-research.js";
 
-const RULES_VERSION = "backup-personalization-v1";
+const RULES_VERSION = "backup-personalization-v2-smb-bulk";
 const ACTIVE_CONVERSATION_STATUSES = [
   "active_sequence",
   "waiting_reply_review",
@@ -22,19 +23,17 @@ function apiError(message, status) {
 
 function boundedLimit(value) {
   const limit = Math.trunc(Number(value || 30));
-  if (limit < 1 || limit > 30) throw apiError("personalization_limit_invalid", 400);
+  if (limit < 1 || limit > 1000) throw apiError("personalization_limit_invalid", 400);
   return limit;
 }
 
 function eligibleLeadsSql({ byIds = false } = {}) {
   return `
-    SELECT lead.id, lead.company, lead.email, lead.website, lead.segment, lead.city,
+    SELECT lead.id, lead.company, lead.email, lead.website, lead.domain, lead.segment, lead.city,
            lead.validation_status, lead.updated_at
     FROM leads lead
     WHERE lead.validation_status IN ('valid', 'risky')
       AND lead.status <> 'suppressed'
-      AND lead.website IS NOT NULL
-      AND btrim(lead.website) <> ''
       ${byIds ? "AND lead.id = ANY($1::uuid[])" : ""}
       AND NOT EXISTS (
         SELECT 1 FROM suppressions suppression
@@ -57,15 +56,60 @@ function eligibleLeadsSql({ byIds = false } = {}) {
           )
       )
       AND NOT EXISTS (
-        SELECT 1 FROM messages message
-        WHERE message.lead_id = lead.id
+        SELECT 1
+        FROM personalization_pilot_items pilot_item
+        WHERE pilot_item.lead_id = lead.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM messages message
+        JOIN leads sent_lead ON sent_lead.id = message.lead_id
+        WHERE lower(sent_lead.email) = lower(lead.email)
           AND message.direction = 'outbound'
           AND message.type = 'outreach'
-          AND (message.subject ILIKE '%резервн%' OR message.body_text ILIKE '%правилу 3-2-1%')
+          AND message.status = 'sent'
       )
     ORDER BY lead.segment NULLS LAST, lead.city NULLS LAST, lead.updated_at DESC, lead.id
     ${byIds ? "" : "LIMIT $2"}
   `;
+}
+
+export function selectTargetLeads(rows = []) {
+  const groups = new Map();
+  for (const row of rows) {
+    let companyKey;
+    try {
+      companyKey = companyResearchKey(row);
+    } catch {
+      continue;
+    }
+    const email = clean(row.email).toLowerCase();
+    if (!email) continue;
+    const eligibility = researchEligibility(row);
+    let group = groups.get(companyKey);
+    if (!group) {
+      group = { companyKey, excluded: false, rows: [], emails: new Set() };
+      groups.set(companyKey, group);
+    }
+    if (eligibility.status === "excluded") group.excluded = true;
+    if (!group.emails.has(email)) {
+      group.emails.add(email);
+      group.rows.push(row);
+    }
+  }
+
+  const leads = [];
+  let excluded = 0;
+  let excludedAddresses = 0;
+  for (const group of groups.values()) {
+    if (group.excluded) {
+      excluded += 1;
+      excludedAddresses += group.rows.length;
+      continue;
+    }
+    leads.push(...group.rows);
+  }
+  return { leads, companies: groups.size - excluded, excluded, excludedAddresses };
 }
 
 export function selectDiverseLeads(rows, limit) {
@@ -111,10 +155,12 @@ export function createPersonalizationApi({
     if (!queryFn) throw new Error("personalization_query_required");
     if (leadIds) {
       const result = await queryFn(eligibleLeadsSql({ byIds: true }), [leadIds, ACTIVE_CONVERSATION_STATUSES]);
-      return orderedRows(result.rows, leadIds);
+      const selection = selectTargetLeads(result.rows);
+      return { ...selection, leads: orderedRows(selection.leads, leadIds) };
     }
     const result = await queryFn(eligibleLeadsSql(), [ACTIVE_CONVERSATION_STATUSES, Math.max(limit * 8, 100)]);
-    return selectDiverseLeads(result.rows, limit);
+    const selection = selectTargetLeads(result.rows);
+    return { ...selection, leads: selectDiverseLeads(selection.leads, limit) };
   }
 
   return {
@@ -143,15 +189,19 @@ export function createPersonalizationApi({
 
     async previewPilot({ limit = 30, rulesVersion = RULES_VERSION } = {}) {
       const normalizedLimit = boundedLimit(limit);
-      const leads = await findEligible({ limit: normalizedLimit });
+      const selection = await findEligible({ limit: normalizedLimit });
+      const leads = selection.leads;
       return {
         limit: normalizedLimit,
         rulesVersion,
         leads,
         counts: {
           selected: leads.length,
+          companies: new Set(leads.map((lead) => companyResearchKey(lead))).size,
           valid: leads.filter((lead) => lead.validation_status === "valid").length,
           risky: leads.filter((lead) => lead.validation_status === "risky").length,
+          excluded: selection.excluded,
+          excludedAddresses: selection.excludedAddresses,
         },
         selectionToken: createSelectionToken(leads, rulesVersion),
       };
@@ -162,8 +212,8 @@ export function createPersonalizationApi({
       const uniqueIds = [...new Set(leadIds.map(clean).filter(Boolean))];
       if (!uniqueIds.length || uniqueIds.length > normalizedLimit) throw apiError("personalization_selection_invalid", 400);
       const current = await findEligible({ leadIds: uniqueIds });
-      const currentToken = createSelectionToken(current, rulesVersion);
-      if (current.length !== uniqueIds.length || currentToken !== clean(selectionToken)) {
+      const currentToken = createSelectionToken(current.leads, rulesVersion);
+      if (current.leads.length !== uniqueIds.length || currentToken !== clean(selectionToken)) {
         throw apiError("personalization_preview_stale", 409);
       }
       if (!withClientFn) throw new Error("personalization_client_required");

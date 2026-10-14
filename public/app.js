@@ -4541,7 +4541,9 @@ function renderPersonalizationPreview() {
   const segments = new Set(preview.leads.map((lead) => lead.segment).filter(Boolean));
   const cities = new Set(preview.leads.map((lead) => lead.city).filter(Boolean));
   $("#personalizationPreviewSummary").innerHTML = `
-    <span>Выбрано: <strong>${preview.counts.selected}</strong> из ${preview.limit}</span>
+    <span>Компаний: <strong>${preview.counts.companies ?? preview.counts.selected}</strong></span>
+    <span>Адресов: <strong>${preview.counts.selected}</strong> из ${preview.limit}</span>
+    <span>Жёстко исключено компаний: <strong>${preview.counts.excluded ?? 0}</strong></span>
     <span>Valid: <strong>${preview.counts.valid}</strong></span>
     <span>Risky: <strong>${preview.counts.risky}</strong></span>
     <span>Сегментов: <strong>${segments.size}</strong></span>
@@ -4554,7 +4556,8 @@ function renderPersonalizationPreview() {
       <span>стоп-лист и активные диалоги</span>
       <span>получатели прошлых писем про резервные копии</span>
     </div>
-    ${preview.leads.map((lead, index) => `
+    ${preview.leads.length > 100 ? `<p class="muted">Показаны первые 100 из ${preview.leads.length} адресов.</p>` : ""}
+    ${preview.leads.slice(0, 100).map((lead, index) => `
       <article class="personalization-preview-item">
         <span>${index + 1}</span>
         <div><strong>${esc(lead.company || lead.website)}</strong><small>${esc(lead.email)} · ${esc(lead.city || "город не указан")} · ${esc(lead.segment || "без сегмента")}</small></div>
@@ -4863,20 +4866,20 @@ $("#previewPersonalizationBtn")?.addEventListener("click", (event) => runAction(
   state.personalizationPreview = await api("/api/personalization/pilots/preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ limit: 30 }),
+    body: JSON.stringify({ limit: 1000 }),
   });
   renderPersonalizationPreview();
   setActionResult({
     status: "success",
     title: "Предварительный список готов",
-    message: `Выбрано компаний: ${state.personalizationPreview.counts.selected}. Никаких писем не отправлено.`,
+    message: `Выбрано компаний: ${state.personalizationPreview.counts.companies ?? state.personalizationPreview.counts.selected}; адресов: ${state.personalizationPreview.counts.selected}. Никаких писем не отправлено.`,
   });
 }));
 
 $("#startPersonalizationBtn")?.addEventListener("click", (event) => {
   const preview = state.personalizationPreview;
   if (!preview?.leads?.length) return;
-  if (!window.confirm(`Создать ${preview.leads.length} персональных черновиков (пилот до 30)? Письма не будут отправлены.`)) return;
+  if (!window.confirm(`Запустить обогащение ${preview.counts.companies ?? preview.leads.length} компаний и подготовку до ${preview.leads.length} черновиков? Письма не будут отправлены.`)) return;
   runAction({
     title: "Создание пилота персонализации",
     button: event.currentTarget,

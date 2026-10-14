@@ -45,6 +45,8 @@ test("qualification deterministically separates qualified, review, excluded, and
   for (const lead of [
     { company: "Банк Пример", segment: "bank" },
     { company: "Администрация района", segment: "government" },
+    { company: "Coffee Like", segment: "cafe" },
+    { company: "Храм в честь иконы", segment: "other" },
   ]) {
     const result = qualifyLead({ lead, signals: { canonicalCompany: lead.company, pageTextLength: 1000, digitalProcesses: [] } });
     assert.equal(result.status, "excluded");
@@ -141,4 +143,22 @@ test("generation requires strict JSON and validates the model response against p
     enrichment,
     callModel: async () => ({ text: JSON.stringify(validCopy({ usedEvidence: ["made-up"] })) }),
   }), /personalization_copy_blocked:unsupported_evidence/);
+});
+
+test("fallback generation creates valid grounded copy when no language model is configured", async () => {
+  const { generateFallbackPersonalizedCopy, validatePersonalizedCopy } = await import("../src/services/lead-personalization.js");
+  const lead = { company: "Альфа", email: "info@alpha.example", city: "Самара", segment: "clinic" };
+  const enrichment = {
+    canonicalCompany: "Клиника Альфа",
+    contactName: "",
+    personalizationFact: "На сайте работает онлайн-запись",
+    factSourceUrl: "https://alpha.example",
+    factEvidence: "Онлайн-запись к врачу",
+    evidence: [{ id: "process-1", sourceUrl: "https://alpha.example", evidence: "Онлайн-запись к врачу" }],
+  };
+  const copy = generateFallbackPersonalizedCopy({ lead, enrichment });
+  assert.equal(validatePersonalizedCopy(copy, enrichment).ok, true);
+  assert.match(copy.subject, /Альфа/);
+  assert.match(copy.bodyText, /Онлайн-запись к врачу/);
+  assert.deepEqual(copy.usedEvidence, ["process-1"]);
 });

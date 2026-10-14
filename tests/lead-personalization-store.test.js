@@ -53,6 +53,29 @@ test("createPilot writes one import, one pilot, and conflict-safe items in a tra
   assert.match(itemInsert.sql, /ON CONFLICT \(pilot_id, lead_id\) DO NOTHING/);
 });
 
+test("createPilot accepts a bulk selection up to 1000 leads", async () => {
+  const { createPilot } = await import("../src/services/personalization-store.js");
+  const client = {
+    async query(sql) {
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [], rowCount: 0 };
+      if (String(sql).includes("INSERT INTO outreach_imports")) return { rows: [{ id: "import-1" }], rowCount: 1 };
+      if (String(sql).includes("INSERT INTO personalization_pilots")) return { rows: [{ id: "pilot-1" }], rowCount: 1 };
+      if (String(sql).includes("INSERT INTO personalization_pilot_items")) return { rows: [], rowCount: 703 };
+      if (String(sql).includes("INSERT INTO job_queue")) return { rows: [], rowCount: 703 };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const leadIds = Array.from({ length: 703 }, (_, index) => `lead-${index + 1}`);
+  const pilot = await createPilot(client, {
+    limit: 1000,
+    rulesVersion: "backup-v2",
+    leadIds,
+    selectionToken: "snapshot-bulk",
+    enqueueJobType: "enrich_lead",
+  });
+  assert.equal(pilot.id, "pilot-1");
+});
+
 test("enrichment upsert and pilot detail use stable conflict keys", async () => {
   const { upsertEnrichment, getPilot } = await import("../src/services/personalization-store.js");
   const calls = [];

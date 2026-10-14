@@ -1,4 +1,5 @@
-import { callYandexGpt } from "./yandex-gpt.js";
+import { callYandexGpt, isYandexGptConfigured } from "./yandex-gpt.js";
+import { researchEligibility } from "./company-research.js";
 
 const EXCLUDED_SEGMENTS = new Set([
   "bank",
@@ -46,7 +47,13 @@ export function qualifyLead({ lead = {}, signals = {} } = {}) {
 
   const segment = clean(lead.segment).toLowerCase();
   const company = `${clean(lead.company)} ${clean(signals.canonicalCompany)}`.toLowerCase();
+  const targetDecision = researchEligibility({
+    ...lead,
+    company,
+    businessType: signals.businessType,
+  });
   if (
+    targetDecision.status === "excluded" ||
     EXCLUDED_SEGMENTS.has(segment) ||
     signals.isFederalBranch === true ||
     /(?:^|\s)(?:банк|администраци|министерств|ведомств|госучрежден|филиал\s+(?:сдэк|почт))/iu.test(company)
@@ -205,13 +212,45 @@ function personalizationPrompt(lead, enrichment) {
   });
 }
 
+function safeCopyFragment(value, max) {
+  const text = clean(value).replace(/[?{}<>\[\]]/g, ".");
+  return text.length <= max ? text : `${text.slice(0, max - 1).trim()}…`;
+}
+
+export function generateFallbackPersonalizedCopy({ lead = {}, enrichment = {} } = {}) {
+  const company = safeCopyFragment(enrichment.canonicalCompany || lead.company || "вашей компании", 100);
+  const evidence = safeCopyFragment(enrichment.factEvidence || enrichment.personalizationFact, 160);
+  const contactName = safeCopyFragment(enrichment.contactName, 100);
+  const greeting = contactName ? `Добрый день, ${contactName}!` : "Добрый день!";
+  const subject = `Резервные копии для сайта «${company}»`;
+  const bodyText = [
+    greeting,
+    `На сайте компании «${company}» увидел подтверждённый цифровой процесс: ${evidence}. Такие формы, записи и личные кабинеты обычно связаны с клиентскими и операционными данными, поэтому при недоступности основного сервера важно иметь независимую точку восстановления.`,
+    "Мы можем организовать резервирование по правилу 3-2-1: несколько копий на разных носителях, отдельное хранение у независимых российских провайдеров, шифрование, контроль успешности и регулярную проверку восстановления. Такая схема снижает зависимость от одного дата-центра и позволяет вернуть сайт и данные из другой копии.",
+    "Подскажите, актуально ли для вас организовать такую схему сейчас?",
+  ].join("\n\n");
+  return {
+    subject,
+    bodyText,
+    followupSubject: `Re: ${subject}`,
+    followupBodyText: "Добрый день! Напоминаю о предложении организовать независимые резервные копии сайта. Подскажите, задача сейчас актуальна?",
+    usedEvidence: ["process-1"],
+  };
+}
+
 export async function generatePersonalizedCopy({
   lead = {},
   enrichment = {},
-  callModel = (prompt) => callYandexGpt({ prompt, maxTokens: 1200, temperature: 0.2 }),
+  callModel = null,
 } = {}) {
+  if (!callModel && !isYandexGptConfigured()) {
+    const copy = generateFallbackPersonalizedCopy({ lead, enrichment });
+    const validation = validatePersonalizedCopy(copy, enrichment);
+    if (!validation.ok) throw new Error(`personalization_copy_blocked:${validation.errors.join(",")}`);
+    return copy;
+  }
   const prompt = personalizationPrompt(lead, enrichment);
-  const response = await callModel(prompt);
+  const response = await (callModel || ((value) => callYandexGpt({ prompt: value, maxTokens: 1200, temperature: 0.2 })))(prompt);
   const raw = typeof response === "string" ? response : response?.text;
   let copy;
   try {

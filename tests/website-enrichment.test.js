@@ -136,3 +136,19 @@ test("signal extraction returns evidence-backed company, contacts, emails, and d
     assert.ok(process.evidence.length > 0);
   }
 });
+
+test("website discovery extracts a public result for a company without a saved website", async () => {
+  const { discoverCompanyWebsite } = await import("../src/services/website-enrichment.js");
+  const html = `
+    <a class="result__a" href="https://unrelated-shop.ru">Совсем другой магазин</a>
+    <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Falpha-studio.ru%2Fabout">Альфа Студия — официальный сайт</a>
+    <a class="result__a" href="https://vk.com/alpha">Альфа в VK</a>
+  `;
+  const result = await discoverCompanyWebsite({
+    company: "Альфа Студия",
+    city: "Самара",
+    emailDomain: "mail.ru",
+    fetchImpl: async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }),
+  });
+  assert.equal(result, "https://alpha-studio.ru/about");
+});

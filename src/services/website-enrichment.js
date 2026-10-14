@@ -5,6 +5,9 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 const MAX_PAGES = 3;
 const MAX_REDIRECTS = 5;
+const SEARCH_TIMEOUT_MS = 10_000;
+
+const BLOCKED_DISCOVERY_HOSTS = /(?:^|\.)(?:duckduckgo\.com|vk\.com|ok\.ru|youtube\.com|rutube\.ru|t\.me|2gis\.ru|yandex\.ru|google\.com|mail\.ru|ya\.ru|avito\.ru)$/i;
 
 function error(code) {
   return new Error(code);
@@ -14,6 +17,65 @@ export function normalizeWebsiteUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) throw error("website_url_required");
   return new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+}
+
+function discoveryResultUrl(href) {
+  try {
+    const absolute = new URL(decodeHtml(href), "https://html.duckduckgo.com");
+    if (absolute.hostname.endsWith("duckduckgo.com") && absolute.pathname.startsWith("/l/")) {
+      const target = absolute.searchParams.get("uddg");
+      if (!target) return null;
+      return normalizeWebsiteUrl(target);
+    }
+    return normalizeWebsiteUrl(absolute.href);
+  } catch {
+    return null;
+  }
+}
+
+export async function discoverCompanyWebsite({
+  company,
+  city,
+  emailDomain,
+  fetchImpl = fetch,
+  timeoutMs = SEARCH_TIMEOUT_MS,
+} = {}) {
+  const query = [String(company || "").trim(), String(city || "").trim(), "официальный сайт"].filter(Boolean).join(" ");
+  if (!query) return null;
+  const companyTokens = String(company || "").toLowerCase()
+    .split(/[^а-яёa-z0-9]+/iu)
+    .filter((token) => token.length >= 3 && !["ооо", "зао", "пао", "ао", "ип", "компания"].includes(token));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(error("website_discovery_timeout")), timeoutMs);
+  try {
+    const response = await fetchImpl(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      signal: controller.signal,
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "KorDev-Outreach-Personalization/1.0 contact=team@korotkov.dev",
+      },
+    });
+    if (!response.ok) return null;
+    const html = await readBoundedText(response, DEFAULT_MAX_BYTES);
+    const anchors = [...html.matchAll(/<a\b[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const mailHost = normalizedHostname(emailDomain);
+    for (const match of anchors) {
+      const target = discoveryResultUrl(match[1]);
+      if (!target || !["http:", "https:"].includes(target.protocol)) continue;
+      const hostname = normalizedHostname(target.hostname).replace(/^www\./, "");
+      if (!hostname || BLOCKED_DISCOVERY_HOSTS.test(hostname)) continue;
+      const resultText = `${hostname} ${htmlToText(match[2])}`.toLowerCase();
+      if (companyTokens.length && !companyTokens.some((token) => resultText.includes(token))) continue;
+      if (mailHost && hostname === mailHost && /(?:^|\.)(?:gmail\.com|yandex\.ru|mail\.ru|bk\.ru|inbox\.ru|list\.ru)$/i.test(mailHost)) continue;
+      target.hash = "";
+      return target.href;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizedHostname(hostname) {

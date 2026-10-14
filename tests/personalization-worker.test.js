@@ -145,6 +145,43 @@ test("personalization handlers are retry-safe and skip an already materialized o
   assert.equal(state.item.status, "ready");
 });
 
+test("personalization discovers a website before enrichment when the lead has no saved URL", async () => {
+  const { createPersonalizationProcessor } = await import("../src/personalizer/index.js");
+  let fetchedWebsite = "";
+  const context = {
+    id: "item-2",
+    pilotId: "pilot-2",
+    status: "pending",
+    lead: { id: "lead-2", company: "Альфа", city: "Самара", domain: "mail.ru", website: "" },
+    enrichment: null,
+  };
+  const repository = {
+    async loadContext() { return context; },
+    async markItem(_id, patch) { Object.assign(context, patch); },
+    async saveEnrichment(input) { context.enrichment = { id: "enrichment-2", ...input }; return context.enrichment; },
+    async enqueueGeneration() {},
+    async updatePilotProgress() {},
+  };
+  const processor = createPersonalizationProcessor({
+    repository,
+    discoverWebsite: async ({ company, city }) => {
+      assert.equal(company, "Альфа");
+      assert.equal(city, "Самара");
+      return "https://alpha.example";
+    },
+    fetchPages: async ({ website }) => {
+      fetchedWebsite = website;
+      return { pages: [{ url: website, html: "<html>Контакты</html>", text: "Контакты" }], errors: [] };
+    },
+    extractSignals: () => ({ canonicalCompany: "Альфа", digitalProcesses: [], alternativeEmails: [], namedContacts: [] }),
+    qualify: () => ({ status: "review", score: 30, reason: "Нужна проверка", fact: null }),
+    resolveContact: () => null,
+  });
+  await processor.handleJob({ job_type: "enrich_lead", payload: { itemId: "item-2", rulesVersion: "v2" } });
+  assert.equal(fetchedWebsite, "https://alpha.example");
+  assert.equal(context.status, "review");
+});
+
 test("production compose auto-starts personalizer but keeps the mail worker behind its profile", () => {
   const compose = fs.readFileSync(path.join(root, "docker-compose.prod.yml"), "utf8");
   assert.match(compose, /\n  personalizer:\n[\s\S]*command:\s*\["node",\s*"src\/personalizer\/index\.js"\]/);

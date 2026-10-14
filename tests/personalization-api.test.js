@@ -39,7 +39,70 @@ test("preview selects at most 30 diverse eligible leads and performs no writes",
   assert.match(sql, /NOT EXISTS[\s\S]*suppressions/i);
   assert.match(sql, /NOT EXISTS[\s\S]*outreach_conversations/i);
   assert.match(sql, /NOT EXISTS[\s\S]*outreach_drafts/i);
+  assert.match(sql, /NOT EXISTS[\s\S]*personalization_pilot_items/i);
+  assert.match(sql, /message\.status = 'sent'/i);
+  assert.match(sql, /lower\(sent_lead\.email\) = lower\(lead\.email\)/i);
+  assert.doesNotMatch(sql, /messages message[\s\S]*message\.subject ILIKE/i);
   assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/i);
+});
+
+test("bulk preview supports 1000 addresses and removes hard exclusions for an entire company", async () => {
+  const { createPersonalizationApi } = await import("../src/services/personalization-api.js");
+  const rows = [
+    ...candidates(36),
+    {
+      id: "00000000-0000-4000-8000-000000000101",
+      company: "МТС Банк",
+      email: "office@mtsbank.ru",
+      website: "https://mtsbank.ru",
+      domain: "mtsbank.ru",
+      segment: "bank",
+      city: "Москва",
+      validation_status: "valid",
+      updated_at: "2026-10-13T10:00:00.000Z",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000102",
+      company: "Альфа",
+      email: "branch@shared.example",
+      website: "https://shared.example",
+      domain: "shared.example",
+      segment: "clinic",
+      city: "Москва",
+      validation_status: "valid",
+      updated_at: "2026-10-13T10:00:00.000Z",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000103",
+      company: "Министерство промышленности",
+      email: "info@shared.example",
+      website: "https://shared.example",
+      domain: "shared.example",
+      segment: "production",
+      city: "Москва",
+      validation_status: "valid",
+      updated_at: "2026-10-13T10:00:00.000Z",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000104",
+      company: "Мастерская без сайта",
+      email: "owner@example-mail.ru",
+      website: "",
+      domain: "example-mail.ru",
+      segment: "craft",
+      city: "Самара",
+      validation_status: "risky",
+      updated_at: "2026-10-13T10:00:00.000Z",
+    },
+  ];
+  const api = createPersonalizationApi({ query: async () => ({ rows, rowCount: rows.length }) });
+  const preview = await api.previewPilot({ limit: 1000, rulesVersion: "backup-v2" });
+
+  assert.equal(preview.limit, 1000);
+  assert.equal(preview.leads.some((lead) => lead.company === "МТС Банк"), false);
+  assert.equal(preview.leads.some((lead) => lead.domain === "shared.example"), false, "an excluded duplicate domain must dominate the company");
+  assert.equal(preview.leads.some((lead) => lead.company === "Мастерская без сайта"), true, "website discovery happens in the worker");
+  assert.equal(preview.counts.excluded, 2);
 });
 
 test("pilot start rejects a stale preview and atomically requests one enrichment job per selected lead", async () => {

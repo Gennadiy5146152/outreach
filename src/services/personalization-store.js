@@ -23,7 +23,7 @@ export async function createPilot(client, {
 }) {
   const uniqueIds = uniqueLeadIds(leadIds);
   if (!uniqueIds.length) throw new Error("personalization_pilot_requires_leads");
-  if (!Number.isInteger(limit) || limit < 1 || limit > 30 || uniqueIds.length > limit) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || uniqueIds.length > limit) {
     throw new Error("personalization_pilot_limit_invalid");
   }
 
