@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import test from "node:test";
 
 const migrationPath = new URL("../db/migrations/015_lead_personalization.sql", import.meta.url);
+const bulkLimitMigrationPath = new URL("../db/migrations/018_personalization_bulk_limit.sql", import.meta.url);
 
 test("personalization migration defines pilots, items, evidence, and protected draft links", async () => {
   const sql = await fs.readFile(migrationPath, "utf8");
@@ -20,6 +21,12 @@ test("personalization migration defines pilots, items, evidence, and protected d
   for (const status of ["pending", "enriching", "qualified", "review", "excluded", "generating", "ready", "failed"]) {
     assert.match(sql, new RegExp(`'${status}'`));
   }
+});
+
+test("bulk personalization migration raises the persisted pilot limit to 1000", async () => {
+  const sql = await fs.readFile(bulkLimitMigrationPath, "utf8");
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS personalization_pilots_requested_limit_check/i);
+  assert.match(sql, /CHECK\s*\(requested_limit BETWEEN 1 AND 1000\)/i);
 });
 
 test("createPilot writes one import, one pilot, and conflict-safe items in a transaction", async () => {
