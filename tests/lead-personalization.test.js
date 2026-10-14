@@ -162,3 +162,32 @@ test("fallback generation creates valid grounded copy when no language model is 
   assert.match(copy.bodyText, /Онлайн-запись к врачу/);
   assert.deepEqual(copy.usedEvidence, ["process-1"]);
 });
+
+test("fallback generation stays valid for maximum-length source facts and names", async () => {
+  const { generateFallbackPersonalizedCopy, validatePersonalizedCopy } = await import("../src/services/lead-personalization.js");
+  const contactName = "Иван Иванович Очень-Длинное-Имя-Которое-Нельзя-Искажать";
+  const lead = {
+    company: "Очень длинное название компании ".repeat(8),
+    email: "info@example.com",
+    city: "Москва",
+    segment: "services",
+  };
+  const enrichment = {
+    canonicalCompany: lead.company,
+    contactName,
+    personalizationFact: "На сайте подтверждён цифровой процесс",
+    factSourceUrl: "https://example.com/services",
+    factEvidence: "Подробное описание подтверждённого процесса на сайте компании ".repeat(8),
+    evidence: [{
+      id: "fact-42",
+      sourceUrl: "https://example.com/services",
+      evidence: "Подробное описание подтверждённого процесса на сайте компании",
+    }],
+  };
+  const copy = generateFallbackPersonalizedCopy({ lead, enrichment });
+  const validation = validatePersonalizedCopy(copy, enrichment);
+  assert.deepEqual(validation, { ok: true, errors: [] });
+  assert.ok(copy.bodyText.length >= 500 && copy.bodyText.length <= 700, copy.bodyText.length);
+  assert.doesNotMatch(copy.bodyText, /^Добрый день, Иван Иванович Очень-Длинное/);
+  assert.deepEqual(copy.usedEvidence, ["fact-42"]);
+});

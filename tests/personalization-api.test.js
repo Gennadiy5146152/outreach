@@ -195,14 +195,26 @@ test("retry queues only failed items and HTTP routes expose list, detail, previe
   const api = createPersonalizationApi({
     query: async (sql, params = []) => {
       statements.push({ sql: String(sql), params });
-      if (/UPDATE personalization_pilot_items/i.test(sql)) return { rows: [{ id: "failed-1" }, { id: "failed-2" }], rowCount: 2 };
+      if (/UPDATE personalization_pilot_items/i.test(sql)) {
+        return {
+          rows: [
+            { id: "failed-1", status: "pending" },
+            { id: "failed-2", status: "qualified" },
+          ],
+          rowCount: 2,
+        };
+      }
       return { rows: [], rowCount: 0 };
     },
   });
   assert.deepEqual(await api.retryPilot("pilot-1"), { retried: 2 });
-  const enqueue = statements.find((entry) => /INSERT INTO job_queue/i.test(entry.sql));
-  assert.match(enqueue.sql, /'enrich_lead'/);
-  assert.match(enqueue.sql, /NOT EXISTS/);
+  const enqueueStatements = statements.filter((entry) => /INSERT INTO job_queue/i.test(entry.sql));
+  assert.equal(enqueueStatements.length, 2);
+  assert.match(enqueueStatements[0].sql, /'enrich_lead'/);
+  assert.deepEqual(enqueueStatements[0].params[0], ["failed-1"]);
+  assert.match(enqueueStatements[1].sql, /'generate_personalized_draft'/);
+  assert.deepEqual(enqueueStatements[1].params[0], ["failed-2"]);
+  assert.match(statements[0].sql, /lead_enrichments/i);
 
   const server = fs.readFileSync(path.join(root, "src/server.js"), "utf8");
   for (const route of [

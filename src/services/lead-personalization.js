@@ -218,23 +218,28 @@ function safeCopyFragment(value, max) {
 }
 
 export function generateFallbackPersonalizedCopy({ lead = {}, enrichment = {} } = {}) {
-  const company = safeCopyFragment(enrichment.canonicalCompany || lead.company || "вашей компании", 100);
-  const evidence = safeCopyFragment(enrichment.factEvidence || enrichment.personalizationFact, 160);
-  const contactName = safeCopyFragment(enrichment.contactName, 100);
+  const company = safeCopyFragment(enrichment.canonicalCompany || lead.company || "вашей компании", 45);
+  const evidence = safeCopyFragment(enrichment.factEvidence || enrichment.personalizationFact, 90);
+  const rawContactName = clean(enrichment.contactName);
+  const contactName = rawContactName.length <= 40 ? safeCopyFragment(rawContactName, 40) : "";
   const greeting = contactName ? `Добрый день, ${contactName}!` : "Добрый день!";
   const subject = `Резервные копии для сайта «${company}»`;
   const bodyText = [
     greeting,
-    `На сайте компании «${company}» увидел подтверждённый цифровой процесс: ${evidence}. Такие формы, записи и личные кабинеты обычно связаны с клиентскими и операционными данными, поэтому при недоступности основного сервера важно иметь независимую точку восстановления.`,
-    "Мы можем организовать резервирование по правилу 3-2-1: несколько копий на разных носителях, отдельное хранение у независимых российских провайдеров, шифрование, контроль успешности и регулярную проверку восстановления. Такая схема снижает зависимость от одного дата-центра и позволяет вернуть сайт и данные из другой копии.",
+    `На сайте «${company}» увидел: ${evidence}. Это означает, что часть клиентских или рабочих данных зависит от доступности сайта и его инфраструктуры.`,
+    "Можем организовать резервирование по правилу 3-2-1: несколько копий на разных носителях, хранение у независимых российских провайдеров, шифрование, контроль успешности и регулярную проверку восстановления.",
+    "Даже при сбое основного дата-центра сайт и данные можно будет восстановить из отдельной копии.",
     "Подскажите, актуально ли для вас организовать такую схему сейчас?",
   ].join("\n\n");
+  const evidenceId = (Array.isArray(enrichment.evidence) ? enrichment.evidence : [])
+    .map((item) => clean(item?.id))
+    .find(Boolean) || "process-1";
   return {
     subject,
     bodyText,
     followupSubject: `Re: ${subject}`,
     followupBodyText: "Добрый день! Напоминаю о предложении организовать независимые резервные копии сайта. Подскажите, задача сейчас актуальна?",
-    usedEvidence: ["process-1"],
+    usedEvidence: [evidenceId],
   };
 }
 

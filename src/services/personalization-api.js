@@ -231,30 +231,61 @@ export function createPersonalizationApi({
       if (!queryFn) throw new Error("personalization_query_required");
       const failed = await queryFn(
         `
-          UPDATE personalization_pilot_items
-          SET status = 'pending', last_error = NULL, updated_at = now()
-          WHERE pilot_id = $1 AND status = 'failed'
-          RETURNING id
+          UPDATE personalization_pilot_items item
+          SET status = CASE
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM lead_enrichments enrichment
+                  WHERE enrichment.id = item.lead_enrichment_id
+                    AND enrichment.status = 'qualified'
+                ) THEN 'qualified'
+                ELSE 'pending'
+              END,
+              last_error = NULL,
+              updated_at = now()
+          WHERE item.pilot_id = $1 AND item.status = 'failed'
+          RETURNING item.id, item.status
         `,
         [pilotId],
       );
       if (failed.rowCount) {
-        await queryFn(
-          `
-            INSERT INTO job_queue(job_type, payload)
-            SELECT 'enrich_lead', jsonb_build_object('itemId', item.id::text, 'pilotId', item.pilot_id::text, 'rulesVersion', pilot.rules_version)
-            FROM personalization_pilot_items item
-            JOIN personalization_pilots pilot ON pilot.id = item.pilot_id
-            WHERE item.id = ANY($1::uuid[])
-              AND NOT EXISTS (
-                SELECT 1 FROM job_queue job
-                WHERE job.job_type = 'enrich_lead'
-                  AND job.payload->>'itemId' = item.id::text
-                  AND job.status IN ('pending','running','retrying')
-              )
-          `,
-          [failed.rows.map((row) => row.id)],
-        );
+        const enrichmentIds = failed.rows.filter((row) => row.status === "pending").map((row) => row.id);
+        const generationIds = failed.rows.filter((row) => row.status === "qualified").map((row) => row.id);
+        if (enrichmentIds.length) {
+          await queryFn(
+            `
+              INSERT INTO job_queue(job_type, payload)
+              SELECT 'enrich_lead', jsonb_build_object('itemId', item.id::text, 'pilotId', item.pilot_id::text, 'rulesVersion', pilot.rules_version)
+              FROM personalization_pilot_items item
+              JOIN personalization_pilots pilot ON pilot.id = item.pilot_id
+              WHERE item.id = ANY($1::uuid[])
+                AND NOT EXISTS (
+                  SELECT 1 FROM job_queue job
+                  WHERE job.job_type = 'enrich_lead'
+                    AND job.payload->>'itemId' = item.id::text
+                    AND job.status IN ('pending','running','retrying')
+                )
+            `,
+            [enrichmentIds],
+          );
+        }
+        if (generationIds.length) {
+          await queryFn(
+            `
+              INSERT INTO job_queue(job_type, payload)
+              SELECT 'generate_personalized_draft', jsonb_build_object('itemId', item.id::text, 'pilotId', item.pilot_id::text)
+              FROM personalization_pilot_items item
+              WHERE item.id = ANY($1::uuid[])
+                AND NOT EXISTS (
+                  SELECT 1 FROM job_queue job
+                  WHERE job.job_type = 'generate_personalized_draft'
+                    AND job.payload->>'itemId' = item.id::text
+                    AND job.status IN ('pending','running','retrying')
+                )
+            `,
+            [generationIds],
+          );
+        }
         await queryFn(
           "UPDATE personalization_pilots SET status = 'running', completed_at = NULL, updated_at = now() WHERE id = $1",
           [pilotId],
