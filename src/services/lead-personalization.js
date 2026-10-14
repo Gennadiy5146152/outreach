@@ -27,6 +27,46 @@ function clean(value) {
   return String(value || "").trim();
 }
 
+const PERSONALIZATION_SIGNALS = [
+  {
+    type: "online_appointment",
+    pattern: /(?:онлайн[\s-]*запис|запис(?:аться|ь)?\s+онлайн)/iu,
+    clause: "работает онлайн-запись",
+    dataSentence: "Такие функции обычно связаны с клиентскими данными, поэтому при сбое важно иметь независимую копию сайта и базы данных.",
+  },
+  {
+    type: "online_booking",
+    pattern: /(?:онлайн[\s-]*бронирован|забронировать|бронирование\s+онлайн)/iu,
+    clause: "доступно онлайн-бронирование",
+    dataSentence: "Такие функции обычно связаны с клиентскими данными, поэтому при сбое важно иметь независимую копию сайта и базы данных.",
+  },
+  {
+    type: "personal_account",
+    pattern: /личн(?:ый|ого|ом|ым)\s+кабинет/iu,
+    clause: "доступен личный кабинет",
+    dataSentence: "Личный кабинет обычно связан с клиентскими данными, поэтому при сбое важно иметь независимую копию сайта и базы данных.",
+  },
+  {
+    type: "online_store",
+    pattern: /(?:интернет[\s-]*магазин|добавить\s+в\s+корзину)/iu,
+    clause: "работает интернет-магазин",
+    dataSentence: "Заказы и клиентские данные зависят от доступности сайта, поэтому при сбое важно иметь независимую копию сайта и базы данных.",
+  },
+  {
+    type: "order_form",
+    pattern: /(?:оформить\s+заказ|форма\s+заказа|сделать\s+заказ)/iu,
+    clause: "работает форма заказа",
+    dataSentence: "Заказы и клиентские данные зависят от доступности сайта, поэтому при сбое важно иметь независимую копию сайта и базы данных.",
+  },
+];
+
+export function detectPersonalizationSignal(value) {
+  const evidence = clean(value);
+  if (!evidence) return null;
+  const signal = PERSONALIZATION_SIGNALS.find((candidate) => candidate.pattern.test(evidence));
+  return signal ? { type: signal.type, clause: signal.clause, dataSentence: signal.dataSentence } : null;
+}
+
 function normalizedFact(process, index) {
   if (!process || typeof process !== "object") return null;
   const sourceUrl = clean(process.sourceUrl);
@@ -68,7 +108,7 @@ export function qualifyLead({ lead = {}, signals = {} } = {}) {
 
   const facts = (Array.isArray(signals.digitalProcesses) ? signals.digitalProcesses : [])
     .map(normalizedFact)
-    .filter(Boolean);
+    .filter((fact) => fact && detectPersonalizationSignal(fact.evidence));
   if (!facts.length) {
     return { status: "review", score: 30, reason: "Цифровой процесс на сайте не подтверждён; нужна ручная проверка.", fact: null };
   }
@@ -143,9 +183,9 @@ export function validatePersonalizedCopy(copy = {}, enrichment = {}) {
   const allText = [subject, bodyText, followupSubject, followupBodyText].join("\n");
 
   if (!subject || !bodyText || !followupSubject || !followupBodyText) errors.push("required_copy_field_missing");
-  if (bodyText.length < 500 || bodyText.length > 700) errors.push("body_length_out_of_range");
+  if (bodyText.length < 300 || bodyText.length > 700) errors.push("body_length_out_of_range");
   const followupSentences = sentenceCount(followupBodyText);
-  if (followupSentences < 2 || followupSentences > 3) errors.push("followup_sentence_count");
+  if (followupSentences < 3 || followupSentences > 4) errors.push("followup_sentence_count");
   if (containsMarker(allText)) errors.push("unresolved_marker");
 
   const questionCount = (bodyText.match(/\?/g) || []).length;
@@ -180,14 +220,14 @@ function personalizationPrompt(lead, enrichment) {
     constraints: {
       output: "strict_json_only",
       subject: "конкретная тема без кликбейта",
-      bodyLength: "500-700 characters",
-      followupSentences: "2-3",
+      bodyLength: "300-700 characters",
+      followupSentences: "3-4",
       closingQuestions: 1,
       greeting: confirmedName ? `Добрый день, ${confirmedName}!` : "Добрый день!",
       noInventedFacts: true,
     },
     lead: {
-      company: clean(enrichment.canonicalCompany || lead.company),
+      company: clean(lead.company),
       city: clean(lead.city),
       segment: clean(lead.segment),
       contactName: confirmedName,
@@ -212,24 +252,29 @@ function personalizationPrompt(lead, enrichment) {
   });
 }
 
-function safeCopyFragment(value, max) {
-  const text = clean(value).replace(/[?{}<>\[\]]/g, ".");
-  return text.length <= max ? text : `${text.slice(0, max - 1).trim()}…`;
+function safeCompanyName(value) {
+  const company = clean(value)
+    .replace(/&(?:laquo|raquo|quot|amp);/giu, " ")
+    .replace(/[<>{}\[\]«»„“”‟‹›"]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!company || company.length > 100) throw new Error("personalization_company_name_not_safe");
+  return company;
 }
 
 export function generateFallbackPersonalizedCopy({ lead = {}, enrichment = {} } = {}) {
-  const company = safeCopyFragment(enrichment.canonicalCompany || lead.company || "вашей компании", 45);
-  const evidence = safeCopyFragment(enrichment.factEvidence || enrichment.personalizationFact, 90);
+  const company = safeCompanyName(lead.company);
+  const signal = detectPersonalizationSignal(enrichment.factEvidence || enrichment.personalizationFact);
+  if (!signal) throw new Error("personalization_signal_not_approved");
   const rawContactName = clean(enrichment.contactName);
-  const contactName = rawContactName.length <= 40 ? safeCopyFragment(rawContactName, 40) : "";
+  const contactName = rawContactName.length <= 40 ? rawContactName.replace(/[?{}<>\[\]]/g, "").trim() : "";
   const greeting = contactName ? `Добрый день, ${contactName}!` : "Добрый день!";
   const subject = `Резервные копии для сайта «${company}»`;
   const bodyText = [
     greeting,
-    `На сайте «${company}» увидел: ${evidence}. Это означает, что часть клиентских или рабочих данных зависит от доступности сайта и его инфраструктуры.`,
-    "Можем организовать резервирование по правилу 3-2-1: несколько копий на разных носителях, хранение у независимых российских провайдеров, шифрование, контроль успешности и регулярную проверку восстановления.",
-    "Даже при сбое основного дата-центра сайт и данные можно будет восстановить из отдельной копии.",
-    "Подскажите, актуально ли для вас организовать такую схему сейчас?",
+    `Увидел, что на вашем сайте ${signal.clause}. ${signal.dataSentence}`,
+    "Мы можем организовать хранение по правилу 3-2-1: несколько копий, независимые российские хостинги, шифрование и регулярная проверка восстановления.",
+    "Подскажите, актуальна ли для вас такая задача?",
   ].join("\n\n");
   const evidenceId = (Array.isArray(enrichment.evidence) ? enrichment.evidence : [])
     .map((item) => clean(item?.id))
@@ -238,7 +283,7 @@ export function generateFallbackPersonalizedCopy({ lead = {}, enrichment = {} } 
     subject,
     bodyText,
     followupSubject: `Re: ${subject}`,
-    followupBodyText: "Добрый день! Напоминаю о предложении организовать независимые резервные копии сайта. Подскажите, задача сейчас актуальна?",
+    followupBodyText: "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Актуальна ли сейчас такая задача? Если нет — больше не буду вас беспокоить.",
     usedEvidence: [evidenceId],
   };
 }

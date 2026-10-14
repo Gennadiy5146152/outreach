@@ -12,7 +12,7 @@ function validBody() {
 
 function validCopy(overrides = {}) {
   const bodyText = validBody();
-  assert.ok(bodyText.length >= 500 && bodyText.length <= 700, bodyText.length);
+  assert.ok(bodyText.length >= 300 && bodyText.length <= 700, String(bodyText.length));
   return {
     subject: "Резервные копии для сайта «Альфа»",
     bodyText,
@@ -158,36 +158,63 @@ test("fallback generation creates valid grounded copy when no language model is 
   };
   const copy = generateFallbackPersonalizedCopy({ lead, enrichment });
   assert.equal(validatePersonalizedCopy(copy, enrichment).ok, true);
-  assert.match(copy.subject, /Альфа/);
-  assert.match(copy.bodyText, /Онлайн-запись к врачу/);
+  assert.equal(copy.subject, "Резервные копии для сайта «Альфа»");
+  assert.match(copy.bodyText, /на вашем сайте работает онлайн-запись/i);
+  assert.doesNotMatch(copy.bodyText, /Онлайн-запись к врачу/);
+  assert.doesNotMatch(copy.bodyText, /Клиника Альфа/);
+  assert.equal(copy.followupBodyText, "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Актуальна ли сейчас такая задача? Если нет — больше не буду вас беспокоить.");
   assert.deepEqual(copy.usedEvidence, ["process-1"]);
 });
 
-test("fallback generation stays valid for maximum-length source facts and names", async () => {
+test("fallback generation uses the lead company, strips nested quotes, and never truncates source fragments", async () => {
   const { generateFallbackPersonalizedCopy, validatePersonalizedCopy } = await import("../src/services/lead-personalization.js");
   const contactName = "Иван Иванович Очень-Длинное-Имя-Которое-Нельзя-Искажать";
   const lead = {
-    company: "Очень длинное название компании ".repeat(8),
+    company: "«7 красок»",
     email: "info@example.com",
     city: "Москва",
     segment: "services",
   };
   const enrichment = {
-    canonicalCompany: lead.company,
+    canonicalCompany: "Главная",
     contactName,
-    personalizationFact: "На сайте подтверждён цифровой процесс",
+    personalizationFact: "На сайте работает интернет-магазин",
     factSourceUrl: "https://example.com/services",
-    factEvidence: "Подробное описание подтверждённого процесса на сайте компании ".repeat(8),
+    factEvidence: "Интернет-магазин. <form class=\"order\"> Подробное техническое описание ".repeat(8),
     evidence: [{
       id: "fact-42",
       sourceUrl: "https://example.com/services",
-      evidence: "Подробное описание подтверждённого процесса на сайте компании",
+      evidence: "Интернет-магазин",
     }],
   };
   const copy = generateFallbackPersonalizedCopy({ lead, enrichment });
   const validation = validatePersonalizedCopy(copy, enrichment);
   assert.deepEqual(validation, { ok: true, errors: [] });
-  assert.ok(copy.bodyText.length >= 500 && copy.bodyText.length <= 700, copy.bodyText.length);
+  assert.ok(copy.bodyText.length >= 300 && copy.bodyText.length <= 700, String(copy.bodyText.length));
   assert.doesNotMatch(copy.bodyText, /^Добрый день, Иван Иванович Очень-Длинное/);
+  assert.equal(copy.subject, "Резервные копии для сайта «7 красок»");
+  assert.doesNotMatch(copy.bodyText, /<form|class=|…|Главная/i);
   assert.deepEqual(copy.usedEvidence, ["fact-42"]);
+});
+
+test("strict signal detection supports only approved website facts and blocks generic forms", async () => {
+  const { detectPersonalizationSignal, generateFallbackPersonalizedCopy } = await import("../src/services/lead-personalization.js");
+  const fixtures = [
+    ["Записаться онлайн", "online_appointment"],
+    ["Онлайн-бронирование номера", "online_booking"],
+    ["Вход в личный кабинет", "personal_account"],
+    ["Интернет-магазин", "online_store"],
+    ["Оформить заказ", "order_form"],
+  ];
+  for (const [evidence, type] of fixtures) assert.equal(detectPersonalizationSignal(evidence)?.type, type);
+  assert.equal(detectPersonalizationSignal("Форма обратной связи"), null);
+  assert.throws(() => generateFallbackPersonalizedCopy({
+    lead: { company: "Альфа" },
+    enrichment: {
+      personalizationFact: "На сайте есть форма",
+      factSourceUrl: "https://alpha.example",
+      factEvidence: "Форма обратной связи",
+      evidence: [{ id: "process-1" }],
+    },
+  }), /personalization_signal_not_approved/);
 });
