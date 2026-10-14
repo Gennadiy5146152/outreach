@@ -81,6 +81,11 @@ const state = {
   personalizationFilter: "all",
   personalizationPage: 1,
   personalizationPageSize: 10,
+  companyResearchRuns: [],
+  companyResearchPreview: null,
+  companyResearchDetail: null,
+  selectedCompanyResearchRunId: null,
+  companyResearchFilter: "all",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -4679,6 +4684,125 @@ async function loadPersonalizationPilots() {
   else renderPersonalizationDetail();
 }
 
+function companyResearchPriorityLabel(run) {
+  return {
+    1: "Приоритет 1 · МСП",
+    2: "Приоритет 2 · производство",
+    3: "Приоритет 3 · прочий бизнес",
+    4: "Приоритет 4 · банки и госсектор",
+  }[Number(run.priority_tier)] || "Приоритет не определён";
+}
+
+function renderCompanyResearchPreview() {
+  const node = $("#companyResearchPreview");
+  const start = $("#startCompanyResearchBtn");
+  if (!node || !start) return;
+  const preview = state.companyResearchPreview;
+  node.hidden = !preview;
+  start.disabled = !preview?.companies?.length;
+  if (!preview) return;
+  const priorities = preview.counts?.by_priority || {};
+  node.innerHTML = `
+    <strong>Уникальных компаний: ${Number(preview.counts?.selected || 0)}</strong>
+    <span>МСП: ${Number(priorities[1] || 0)} · производства: ${Number(priorities[2] || 0)} · прочий бизнес: ${Number(priorities[3] || 0)} · банки и госсектор: ${Number(priorities[4] || 0)}</span>
+    <small>Приоритет влияет только на порядок. На этом шаге письма и отправка не создаются.</small>
+  `;
+}
+
+function renderCompanyResearchRuns() {
+  const node = $("#companyResearchRuns");
+  if (!node) return;
+  node.innerHTML = state.companyResearchRuns.length
+    ? state.companyResearchRuns.map((run) => `
+      <button class="company-research-run ${run.id === state.selectedCompanyResearchRunId ? "active" : ""}" data-select-company-research="${esc(run.id)}">
+        <span><strong>${esc(run.company || run.email)}</strong>${pill(run.status)}</span>
+        <small>${esc(companyResearchPriorityLabel(run))}</small>
+        <small>${Number(run.source_count || 0)} источников · ${Number(run.contact_count || 0)} контактов · ${Number(run.draft_count || 0)} текстов</small>
+      </button>
+    `).join("")
+    : `<p class="muted">В этом статусе исследований пока нет.</p>`;
+}
+
+function companyResearchCard(research) {
+  const run = research.run;
+  const sources = research.sources || [];
+  const facts = research.facts || [];
+  const contacts = research.contacts || [];
+  const drafts = research.drafts || [];
+  const sourceList = sources.length ? sources.map((source) => {
+    const url = safeEvidenceUrl(source.canonical_url);
+    return `<li><strong>${esc(source.title || source.publisher || source.source_type || "Источник")}</strong><p>${esc(source.excerpt || "Без сохранённого фрагмента")}</p>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : ""}</li>`;
+  }).join("") : `<li class="muted">Источники ещё не сохранены.</li>`;
+  const factList = facts.length ? facts.map((fact) => `<li><strong>${fact.selected_for_copy ? "Используется в письме" : "Факт"}</strong><p>${esc(fact.fact_text)}</p><small>${esc(fact.evidence)}</small></li>`).join("") : `<li class="muted">Подтверждённых фактов пока нет.</li>`;
+  const contactList = contacts.length ? contacts.map((contact) => `
+    <li>
+      <strong>${esc(contact.name || "Имя не установлено")}${contact.role ? ` · ${esc(contact.role)}` : ""}</strong>
+      <p>${contact.email ? esc(contact.email) : "Email не подтверждён"} · ${esc(contact.email_status)}</p>
+      <small>${esc(contact.evidence)}</small>
+    </li>
+  `).join("") : `<li class="muted">Публичные руководители и контакты пока не найдены.</li>`;
+  const draftList = drafts.length ? drafts.map((draft) => `
+    <article class="research-draft-card">
+      <div class="personalization-item-head"><strong>${draft.audience_type === "executive" ? "Личное письмо руководителю" : "Письмо на общий адрес"}</strong>${pill(draft.status)}</div>
+      <p>${esc(draft.to_email)}${draft.contact_name ? ` · ${esc(draft.contact_name)}` : ""}</p>
+      <details><summary>Показать текст</summary><strong>${esc(draft.subject)}</strong><p>${esc(draft.body_text)}</p><hr /><strong>${esc(draft.followup_subject)}</strong><p>${esc(draft.followup_body_text)}</p></details>
+      ${draft.status === "candidate" ? `<button data-materialize-research-draft="${esc(draft.id)}">Создать обычный черновик</button>` : draft.materialized_draft_id ? `<button data-open-personalized-draft="${esc(draft.materialized_draft_id)}">Открыть черновик</button>` : ""}
+    </article>
+  `).join("") : `<p class="muted">Кандидаты писем появятся после завершения исследования. Отправка не запускается.</p>`;
+  return `
+    <div class="company-research-head">
+      <div><p class="eyebrow">${esc(companyResearchPriorityLabel(run))}</p><h3>${esc(run.company || run.email)}</h3><p>${esc(run.email)}${run.website ? ` · ${esc(run.website)}` : ""}</p></div>
+      <div>${pill(run.status)}${["failed", "review"].includes(run.status) ? `<button data-retry-company-research="${esc(run.id)}">Вернуть в очередь</button>` : ""}</div>
+    </div>
+    ${run.last_error ? `<p class="warn-text">${esc(run.last_error)}</p>` : ""}
+    <div class="research-evidence-grid">
+      <section><h4>Источники (${sources.length}/10)</h4><ul>${sourceList}</ul></section>
+      <section><h4>Факты</h4><ul>${factList}</ul></section>
+      <section><h4>Руководители и контакты</h4><ul>${contactList}</ul></section>
+    </div>
+    <section class="research-drafts"><h4>Подготовленные тексты</h4>${draftList}</section>
+    <p class="muted">Это только исследование и черновики. Для запуска рассылки всё равно потребуется отдельная проверка и разрешение.</p>
+  `;
+}
+
+function renderCompanyResearchDetail() {
+  const node = $("#companyResearchDetail");
+  if (!node) return;
+  node.innerHTML = state.companyResearchDetail
+    ? companyResearchCard(state.companyResearchDetail)
+    : `<p class="muted">Выбери компанию, чтобы увидеть источники, контакты и подготовленные тексты.</p>`;
+}
+
+async function loadCompanyResearchDetail(runId) {
+  if (!runId) {
+    state.selectedCompanyResearchRunId = null;
+    state.companyResearchDetail = null;
+    renderCompanyResearchRuns();
+    renderCompanyResearchDetail();
+    return;
+  }
+  state.selectedCompanyResearchRunId = runId;
+  state.companyResearchDetail = await api(`/api/company-research/runs/${runId}`);
+  renderCompanyResearchRuns();
+  renderCompanyResearchDetail();
+}
+
+async function loadCompanyResearchRuns() {
+  if (!$("#companyResearchRuns")) return;
+  const query = new URLSearchParams({ page: "1", pageSize: "100" });
+  if (state.companyResearchFilter !== "all") query.set("status", state.companyResearchFilter);
+  const result = await api(`/api/company-research/runs?${query}`);
+  state.companyResearchRuns = result.rows || [];
+  if (state.selectedCompanyResearchRunId && !state.companyResearchRuns.some((run) => run.id === state.selectedCompanyResearchRunId)) {
+    state.selectedCompanyResearchRunId = null;
+    state.companyResearchDetail = null;
+  }
+  $$(`[data-company-research-filter]`).forEach((button) => button.classList.toggle("active", button.dataset.companyResearchFilter === state.companyResearchFilter));
+  renderCompanyResearchRuns();
+  if (state.selectedCompanyResearchRunId) await loadCompanyResearchDetail(state.selectedCompanyResearchRunId);
+  else renderCompanyResearchDetail();
+}
+
 async function refresh() {
   await Promise.all([
     loadHealth(),
@@ -4689,6 +4813,7 @@ async function refresh() {
     loadOutreachImports(),
     loadOutreachDrafts(),
     loadPersonalizationPilots(),
+    loadCompanyResearchRuns(),
     loadRuns(),
     loadParticipation(),
     loadMailboxes(),
@@ -4770,6 +4895,92 @@ $("#startPersonalizationBtn")?.addEventListener("click", (event) => {
       details: result,
     });
   });
+});
+
+$("#previewCompanyResearchBtn")?.addEventListener("click", (event) => runAction({
+  title: "Предварительный охват исследования",
+  button: event.currentTarget,
+}, async () => {
+  state.companyResearchPreview = await api("/api/company-research/queue/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  renderCompanyResearchPreview();
+  setActionResult({
+    status: "success",
+    title: "Охват исследования готов",
+    message: `Найдено ${state.companyResearchPreview.counts.selected} уникальных компаний. Пока ничего не создано и не отправлено.`,
+  });
+}));
+
+$("#startCompanyResearchBtn")?.addEventListener("click", (event) => {
+  const preview = state.companyResearchPreview;
+  if (!preview?.companies?.length) return;
+  if (!window.confirm(`Создать очередь исследования для ${preview.companies.length} компаний? Письма и отправка не создаются.`)) return;
+  runAction({ title: "Создание очереди исследования", button: event.currentTarget }, async () => {
+    const result = await api("/api/company-research/queue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rulesVersion: preview.rulesVersion,
+        leadIds: preview.companies.map((company) => company.id),
+        selectionToken: preview.selectionToken,
+      }),
+    });
+    state.companyResearchPreview = null;
+    renderCompanyResearchPreview();
+    await loadCompanyResearchRuns();
+    setActionResult({
+      status: "success",
+      title: "Очередь исследования создана",
+      message: `Новых задач: ${result.created}; уже существовало: ${result.existing}. Письма не отправляются.`,
+      details: result,
+    });
+  });
+});
+
+document.body.addEventListener("click", async (event) => {
+  const selectedRunId = event.target.closest("[data-select-company-research]")?.dataset.selectCompanyResearch;
+  const filter = event.target.closest("[data-company-research-filter]")?.dataset.companyResearchFilter;
+  const retryRunId = event.target.dataset.retryCompanyResearch;
+  const researchDraftId = event.target.dataset.materializeResearchDraft;
+  if (selectedRunId) {
+    await loadCompanyResearchDetail(selectedRunId);
+    return;
+  }
+  if (filter) {
+    state.companyResearchFilter = filter;
+    await loadCompanyResearchRuns();
+    return;
+  }
+  if (retryRunId) {
+    await runAction({ title: "Повтор исследования", button: event.target }, async () => {
+      await api(`/api/company-research/runs/${retryRunId}/retry`, { method: "POST" });
+      await loadCompanyResearchRuns();
+      setActionResult({ status: "success", title: "Исследование возвращено в очередь", message: "Агент сможет взять эту компанию повторно." });
+    });
+    return;
+  }
+  if (researchDraftId) {
+    await runAction({ title: "Подготовка обычного черновика", button: event.target }, async () => {
+      const preview = await api("/api/company-research/drafts/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIds: [researchDraftId] }),
+      });
+      const candidate = preview.drafts?.[0];
+      if (!candidate) throw new Error("Кандидат черновика уже изменился");
+      if (!window.confirm(`Создать обычный черновик для ${candidate.to_email}? Отправка не начнётся.`)) return;
+      const result = await api("/api/company-research/drafts/materialize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIds: [researchDraftId], selectionToken: preview.selectionToken }),
+      });
+      await Promise.all([loadCompanyResearchDetail(state.selectedCompanyResearchRunId), loadOutreachDrafts()]);
+      setActionResult({ status: "success", title: "Черновик создан", message: "Обычный черновик появился в разделе «Черновики». Отправка не запускалась.", details: result });
+    });
+  }
 });
 
 document.body.addEventListener("click", async (event) => {

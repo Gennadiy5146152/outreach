@@ -137,12 +137,147 @@
   justify-content: flex-start;
 }
 
+.company-research-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.company-research-filters {
+  margin: 0;
+}
+
+.company-research-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 2.2fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.company-research-runs {
+  display: grid;
+  gap: 8px;
+  max-height: 760px;
+  overflow: auto;
+}
+
+.company-research-run {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.company-research-run > span,
+.company-research-head,
+.company-research-head > div:last-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.company-research-run small {
+  color: var(--muted);
+}
+
+.company-research-run.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.company-research-detail {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.company-research-head {
+  align-items: flex-start;
+}
+
+.company-research-head h3,
+.company-research-head p {
+  margin: 0 0 5px;
+}
+
+.company-research-head > div:last-child {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.research-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.research-evidence-grid > section,
+.research-drafts {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.research-evidence-grid h4,
+.research-drafts h4 {
+  margin: 0 0 8px;
+}
+
+.research-evidence-grid ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.research-evidence-grid p,
+.research-draft-card p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+
+.research-evidence-grid small {
+  color: var(--muted);
+}
+
+.research-drafts {
+  display: grid;
+  gap: 10px;
+}
+
+.research-draft-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.research-draft-card details {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
 @media (max-width: 900px) {
   .personalization-hero .form-actions {
     min-width: 0;
   }
 
   .personalization-evidence {
+    grid-template-columns: 1fr;
+  }
+
+  .company-research-layout,
+  .research-evidence-grid {
     grid-template-columns: 1fr;
   }
 }
