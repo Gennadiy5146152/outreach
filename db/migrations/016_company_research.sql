@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS company_research_facts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   research_run_id uuid NOT NULL REFERENCES company_research_runs(id) ON DELETE CASCADE,
   source_id uuid NOT NULL REFERENCES company_research_sources(id) ON DELETE CASCADE,
+  contact_key text NOT NULL,
   fact_type text NOT NULL DEFAULT 'other',
   fact_text text NOT NULL,
   evidence text NOT NULL CHECK (char_length(evidence) <= 500),
@@ -60,7 +61,8 @@ CREATE TABLE IF NOT EXISTS company_contacts (
   confidence numeric(4,3) NOT NULL DEFAULT 0.5 CHECK (confidence BETWEEN 0 AND 1),
   evidence text NOT NULL CHECK (char_length(evidence) <= 500),
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (research_run_id, contact_key)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS company_contacts_email_unique
@@ -95,4 +97,3 @@ CREATE INDEX IF NOT EXISTS company_research_facts_run_idx
   ON company_research_facts(research_run_id, selected_for_copy DESC, confidence DESC);
 CREATE INDEX IF NOT EXISTS company_contacts_run_idx
   ON company_contacts(research_run_id, email_status, confidence DESC);
-

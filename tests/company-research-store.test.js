@@ -16,6 +16,7 @@ test("company research migration defines runs, evidence, contacts, and non-senda
   assert.match(sql, /UNIQUE\s*\(company_key, rules_version\)/i);
   assert.match(sql, /UNIQUE\s*\(research_run_id, canonical_url\)/i);
   assert.match(sql, /CHECK\s*\(char_length\(excerpt\) <= 500\)/i);
+  assert.match(sql, /UNIQUE\s*\(research_run_id, contact_key\)/i);
   assert.match(sql, /UNIQUE\s*\(research_run_id, audience_key\)/i);
   assert.doesNotMatch(sql, /REFERENCES\s+(?:sending_queue|messages|enrollments)/i);
 });
@@ -38,6 +39,8 @@ test("queue insertion is idempotent and claim uses a skip-locked lease", async (
   assert.equal(queued.created, 1);
   const insert = calls.find((entry) => /INSERT INTO company_research_runs/i.test(entry.sql));
   assert.match(insert.sql, /ON CONFLICT \(company_key, rules_version\) DO NOTHING/i);
+  assert.equal(calls[0].sql, "BEGIN");
+  assert.equal(calls.findLast((entry) => entry.sql === "COMMIT")?.sql, "COMMIT");
 
   const claimed = await claimResearchRun(client, { workerId: "agent-1", leaseMinutes: 15 });
   assert.equal(claimed.claimed_by, "agent-1");
@@ -52,7 +55,7 @@ test("evidence write checks lease ownership and caps source count before inserts
   const client = {
     async query(sql, params = []) {
       calls.push({ sql: String(sql), params });
-      if (/SELECT run\.id/i.test(sql)) return { rows: [{ id: "run-1", source_count: 10 }], rowCount: 1 };
+      if (/SELECT run\.id/i.test(sql)) return { rows: [{ id: "run-1", source_urls: Array.from({ length: 10 }, (_, index) => `https://source-${index}.example/`) }], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     },
   };
@@ -68,4 +71,37 @@ test("evidence write checks lease ownership and caps source count before inserts
   const leaseCheck = calls.find((entry) => /SELECT run\.id/i.test(entry.sql));
   assert.match(leaseCheck.sql, /claimed_by = \$2/);
   assert.match(leaseCheck.sql, /lease_expires_at > now\(\)/);
+  assert.match(leaseCheck.sql, /array_agg\(canonical_url/i);
+  assert.doesNotMatch(leaseCheck.sql, /GROUP BY/i);
+});
+
+test("duplicate source inputs consume one slot and name-only contacts use a stable conflict key", async () => {
+  const { saveResearchBundle } = await import("../src/services/company-research.js");
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql: String(sql), params });
+      if (/SELECT run\.id/i.test(sql)) return { rows: [{ id: "run-1", source_urls: Array.from({ length: 9 }, (_, index) => `https://old-${index}.example/`) }], rowCount: 1 };
+      if (/INSERT INTO company_research_sources/i.test(sql)) return { rows: [{ id: "source-1" }], rowCount: 1 };
+      if (/INSERT INTO company_contacts/i.test(sql)) return { rows: [{ id: "contact-1" }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const result = await saveResearchBundle(client, {
+    runId: "run-1",
+    workerId: "agent-1",
+    sources: [
+      { sourceKey: "official", url: "https://new.example", excerpt: "x", sourceType: "official", trustTier: 1 },
+      { sourceKey: "duplicate", url: "https://new.example", excerpt: "x", sourceType: "official", trustTier: 1 },
+    ],
+    facts: [],
+    contacts: [{ sourceId: "official", name: "Иван Петров", role: "Технический директор", emailStatus: "needs_review", evidence: "Иван Петров — технический директор" }],
+    validateUrl: async (source) => ({ ...source, url: "https://new.example/" }),
+  });
+  assert.deepEqual(result, { sources: 1, facts: 0, contacts: 1 });
+  assert.equal(calls.filter((entry) => /INSERT INTO company_research_sources/i.test(entry.sql)).length, 1);
+  const contactInsert = calls.find((entry) => /INSERT INTO company_contacts/i.test(entry.sql));
+  assert.match(contactInsert.sql, /contact_key/i);
+  assert.match(contactInsert.sql, /ON CONFLICT \(research_run_id, contact_key\)/i);
+  assert.match(String(contactInsert.params[2]), /^person:/);
 });

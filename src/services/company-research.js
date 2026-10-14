@@ -95,6 +95,12 @@ export function validateResearchContact(input = {}) {
   const emailStatus = clean(input.emailStatus || "needs_review");
   if (!["confirmed", "needs_review", "rejected"].includes(emailStatus)) throw new Error("research_contact_status_invalid");
   const email = normalizedEmail(input.email);
+  const name = boundedText(input.name, "research_contact_name", 200, { required: false });
+  const role = boundedText(input.role, "research_contact_role", 200, { required: false });
+  if (!email && !name && !role) throw new Error("research_contact_identity_required");
+  const contactKey = email
+    ? `email:${email}`
+    : `person:${name.toLowerCase()}|${role.toLowerCase()}`;
   const evidence = boundedText(input.evidence, "research_contact_evidence", 500);
   if (emailStatus === "confirmed" && !email) throw new Error("research_contact_confirmed_email_required");
   if (emailStatus === "confirmed" && !evidence.toLowerCase().includes(email)) {
@@ -104,8 +110,9 @@ export function validateResearchContact(input = {}) {
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw new Error("research_contact_confidence_invalid");
   return {
     sourceId,
-    name: boundedText(input.name, "research_contact_name", 200, { required: false }),
-    role: boundedText(input.role, "research_contact_role", 200, { required: false }),
+    contactKey,
+    name,
+    role,
     email,
     emailStatus,
     confidence,
@@ -176,23 +183,25 @@ export async function createResearchRuns(client, { leads = [], rulesVersion = CO
     const companyKey = companyResearchKey(lead);
     if (!unique.has(companyKey)) unique.set(companyKey, lead);
   }
-  let created = 0;
-  const ids = [];
-  for (const [companyKey, lead] of unique) {
-    const priority = researchPriority(lead);
-    const result = await client.query(
-      `
-        INSERT INTO company_research_runs(lead_id, company_key, rules_version, priority_tier, priority_reason)
-        VALUES ($1,$2,$3,$4,$5)
-        ON CONFLICT (company_key, rules_version) DO NOTHING
-        RETURNING id
-      `,
-      [lead.id, companyKey, rulesVersion, priority.tier, priority.reason],
-    );
-    created += result.rowCount || 0;
-    if (result.rows[0]?.id) ids.push(result.rows[0].id);
-  }
-  return { created, existing: unique.size - created, selected: unique.size, ids };
+  return transaction(client, async () => {
+    let created = 0;
+    const ids = [];
+    for (const [companyKey, lead] of unique) {
+      const priority = researchPriority(lead);
+      const result = await client.query(
+        `
+          INSERT INTO company_research_runs(lead_id, company_key, rules_version, priority_tier, priority_reason)
+          VALUES ($1,$2,$3,$4,$5)
+          ON CONFLICT (company_key, rules_version) DO NOTHING
+          RETURNING id
+        `,
+        [lead.id, companyKey, rulesVersion, priority.tier, priority.reason],
+      );
+      created += result.rowCount || 0;
+      if (result.rows[0]?.id) ids.push(result.rows[0].id);
+    }
+    return { created, existing: unique.size - created, selected: unique.size, ids };
+  });
 }
 
 export async function claimResearchRun(client, { workerId, leaseMinutes = 15 } = {}) {
@@ -234,25 +243,42 @@ export async function saveResearchBundle(client, {
   contacts = [],
   validateUrl = validateResearchSource,
 } = {}) {
-  const safeSources = [];
-  for (const source of sources) safeSources.push(await validateUrl(source));
+  const sourcesByUrl = new Map();
+  for (const source of sources) {
+    const validated = await validateUrl(source);
+    const existing = sourcesByUrl.get(validated.url);
+    if (existing) {
+      if (validated.sourceKey) existing.sourceKeys.add(validated.sourceKey);
+      continue;
+    }
+    sourcesByUrl.set(validated.url, {
+      ...validated,
+      sourceKeys: new Set(validated.sourceKey ? [validated.sourceKey] : []),
+    });
+  }
+  const safeSources = [...sourcesByUrl.values()];
   const safeFacts = facts.map(validateResearchFact);
   const safeContacts = contacts.map(validateResearchContact);
   return transaction(client, async () => {
     const run = (await client.query(
       `
-        SELECT run.id, count(source.id)::int AS source_count
+        SELECT run.id,
+               COALESCE((
+                 SELECT array_agg(canonical_url ORDER BY canonical_url)
+                 FROM company_research_sources
+                 WHERE research_run_id = run.id
+               ), ARRAY[]::text[]) AS source_urls
         FROM company_research_runs run
-        LEFT JOIN company_research_sources source ON source.research_run_id = run.id
         WHERE run.id = $1 AND run.status = 'researching'
           AND run.claimed_by = $2 AND run.lease_expires_at > now()
-        GROUP BY run.id
         FOR UPDATE OF run
       `,
       [runId, workerId],
     )).rows[0];
     if (!run) throw new Error("research_claim_invalid_or_expired");
-    if (Number(run.source_count || 0) + safeSources.length > MAX_RESEARCH_SOURCES) {
+    const existingUrls = new Set(run.source_urls || []);
+    const newSourceCount = safeSources.filter((source) => !existingUrls.has(source.url)).length;
+    if (existingUrls.size + newSourceCount > MAX_RESEARCH_SOURCES) {
       throw new Error("research_source_limit_exceeded");
     }
     const sourceIds = new Map();
@@ -273,7 +299,7 @@ export async function saveResearchBundle(client, {
         `,
         [runId, source.url, source.sourceType, source.title, source.publisher, source.publishedAt, source.excerpt, source.trustTier, JSON.stringify(source.metadata)],
       )).rows[0];
-      if (source.sourceKey) sourceIds.set(source.sourceKey, inserted.id);
+      for (const sourceKey of source.sourceKeys) sourceIds.set(sourceKey, inserted.id);
       sourceIds.set(source.url, inserted.id);
     }
     for (const fact of safeFacts) {
@@ -296,16 +322,17 @@ export async function saveResearchBundle(client, {
       const sourceId = sourceReference(contact.sourceId, sourceIds);
       const result = await client.query(
         `
-          INSERT INTO company_contacts(research_run_id, source_id, name, role, email, normalized_email, email_status, confidence, evidence)
-          SELECT $1,$2,$3,$4,$5,$5,$6,$7,$8
+          INSERT INTO company_contacts(research_run_id, source_id, contact_key, name, role, email, normalized_email, email_status, confidence, evidence)
+          SELECT $1,$2,$3,$4,$5,$6,$6,$7,$8,$9
           WHERE EXISTS (SELECT 1 FROM company_research_sources WHERE id = $2 AND research_run_id = $1)
-          ON CONFLICT (research_run_id, normalized_email) WHERE normalized_email IS NOT NULL DO UPDATE SET
+          ON CONFLICT (research_run_id, contact_key) DO UPDATE SET
             source_id = EXCLUDED.source_id, name = EXCLUDED.name, role = EXCLUDED.role,
+            email = EXCLUDED.email, normalized_email = EXCLUDED.normalized_email,
             email_status = EXCLUDED.email_status, confidence = EXCLUDED.confidence,
             evidence = EXCLUDED.evidence, updated_at = now()
           RETURNING id
         `,
-        [runId, sourceId, contact.name, contact.role, contact.email, contact.emailStatus, contact.confidence, contact.evidence],
+        [runId, sourceId, contact.contactKey, contact.name, contact.role, contact.email, contact.emailStatus, contact.confidence, contact.evidence],
       );
       if (!result.rowCount) throw new Error("research_contact_source_not_found");
     }

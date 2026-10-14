@@ -88,6 +88,9 @@ test("facts and confirmed contacts require stored evidence and exact public emai
     sourceId: "source-1",
     evidence: "Технический директор Иван Петров",
   }).email, null);
+  const first = validateResearchContact({ name: " Иван  Петров ", role: "Технический директор", emailStatus: "needs_review", sourceId: "source-1", evidence: "Иван Петров — технический директор" });
+  const repeated = validateResearchContact({ name: "иван петров", role: "технический директор", emailStatus: "needs_review", sourceId: "source-1", evidence: "Иван Петров — технический директор" });
+  assert.equal(first.contactKey, repeated.contactKey);
 });
 
 test("draft candidates keep one general recipient and only distinct confirmed executives", async () => {
@@ -110,4 +113,3 @@ test("draft candidates keep one general recipient and only distinct confirmed ex
   assert.match(candidates[0].bodyText, /Альфа/);
   assert.match(candidates[1].bodyText, /Иван/);
 });
-
