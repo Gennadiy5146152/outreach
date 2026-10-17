@@ -184,6 +184,19 @@ test("draft candidates keep one general recipient and only distinct confirmed ex
   assert.match(candidates[1].bodyText, /Иван/);
 });
 
+test("draft candidates use a numbered reply prompt in the follow-up", async () => {
+  const { buildResearchDraftCandidates } = await import("../src/services/company-research.js");
+  const [candidate] = buildResearchDraftCandidates({
+    company: "Альфа",
+    generalEmail: "info@alpha.ru",
+  });
+
+  assert.match(candidate.followupBodyText, /1 — актуально, можно обсудить/);
+  assert.match(candidate.followupBodyText, /2 — вернуться через несколько месяцев/);
+  assert.match(candidate.followupBodyText, /3 — неактуально, больше не писать/);
+  assert.match(candidate.followupBodyText, /Если выберете 2, напишите примерный месяц/);
+});
+
 test("draft candidates preserve every unique unsent company recipient", async () => {
   const { buildResearchDraftCandidates } = await import("../src/services/company-research.js");
   const candidates = buildResearchDraftCandidates({

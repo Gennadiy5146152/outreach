@@ -163,7 +163,17 @@ export function buildResearchDraftCandidates({ company, generalEmail, generalRec
   const fact = facts.find((item) => item?.selectedForCopy)?.text || facts[0]?.text || "";
   const subject = "Как защитить данные сайта и резервные копии";
   const followupSubject = "Re: как защитить данные сайта и резервные копии";
-  const followupBodyText = "Добрый день! Напоминаю о предложении организовать резервное хранение данных вашего сайта по принципу 3-2-1. Подскажите, это актуально? Если нет, больше не буду вас беспокоить.";
+  const followupBodyText = `Добрый день!
+
+Напоминаю о предложении организовать резервное хранение данных вашего сайта по принципу 3-2-1.
+
+Чтобы я правильно закрыл вопрос, ответьте, пожалуйста, одной цифрой:
+
+1 — актуально, можно обсудить;
+2 — вернуться через несколько месяцев;
+3 — неактуально, больше не писать.
+
+Если выберете 2, напишите примерный месяц :)`;
   const candidates = [];
   const seen = new Set();
   for (const recipient of recipients) {
