@@ -46,6 +46,21 @@ test("preview selects at most 30 diverse eligible leads and performs no writes",
   assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/i);
 });
 
+test("small previews scan enough candidates to get past large excluded prefixes", async () => {
+  const { createPersonalizationApi } = await import("../src/services/personalization-api.js");
+  const statements = [];
+  const api = createPersonalizationApi({
+    query: async (sql, params) => {
+      statements.push({ sql: String(sql), params });
+      return { rows: candidates(6), rowCount: 6 };
+    },
+  });
+
+  await api.previewPilot({ limit: 6, rulesVersion: "backup-v1" });
+
+  assert.equal(statements[0].params[1], 1000);
+});
+
 test("bulk preview supports 1000 addresses and removes hard exclusions for an entire company", async () => {
   const { createPersonalizationApi } = await import("../src/services/personalization-api.js");
   const rows = [

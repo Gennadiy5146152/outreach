@@ -158,7 +158,7 @@ export function createPersonalizationApi({
       const selection = selectTargetLeads(result.rows);
       return { ...selection, leads: orderedRows(selection.leads, leadIds) };
     }
-    const result = await queryFn(eligibleLeadsSql(), [ACTIVE_CONVERSATION_STATUSES, Math.max(limit * 8, 100)]);
+    const result = await queryFn(eligibleLeadsSql(), [ACTIVE_CONVERSATION_STATUSES, Math.max(limit * 8, 1000)]);
     const selection = selectTargetLeads(result.rows);
     return { ...selection, leads: selectDiverseLeads(selection.leads, limit) };
   }
