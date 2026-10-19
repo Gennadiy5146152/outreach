@@ -68,6 +68,16 @@ test("entity identifiers reject URL path injection", () => {
   assert.equal(result.success, false);
 });
 
+test("launch schema accepts the scoped immediate delivery mode", () => {
+  const launch = TOOL_DEFINITIONS.find((item) => item.name === "launch_prepare");
+  const result = launch.inputSchema.safeParse({
+    source: "drafts",
+    draft_ids: ["11111111-1111-4111-8111-111111111111"],
+    mode: "immediate",
+  });
+  assert.equal(result.success, true);
+});
+
 test("read handlers map to the existing Outreach API and cap pagination", async () => {
   const { client, calls } = fakeClient();
   const handlers = createToolHandlers({ client, confirmations: {} });

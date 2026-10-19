@@ -34,6 +34,7 @@ test("released running reservation restores one slot", () => {
 
 test("dry-run and test sends never reserve real outreach quota", () => {
   assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "auto" }), true);
+  assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "immediate" }), true);
   assert.equal(shouldReserveOutreachQuota({ dryRun: true, mode: "auto" }), false);
   assert.equal(shouldReserveOutreachQuota({ dryRun: false, mode: "test" }), false);
 });

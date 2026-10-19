@@ -145,6 +145,47 @@ test("draft launch requires prepare and exact unchanged preflight before mutatio
   });
 });
 
+test("immediate draft launch remains protected by prepare and explicit confirmation", async () => {
+  const { handlers, calls, state } = createProtectedFixture();
+  state.draftPreflight.items[0].followup_count = 0;
+  state.draftPreflight.stats.withFollowups = 0;
+  state.drafts[0].steps = [state.drafts[0].steps[0]];
+
+  const prepared = await handlers.launch_prepare({ source: "drafts", draft_ids: ["draft-1"], mode: "immediate" });
+  const token = tokenOf(prepared);
+  assert.equal(calls.some((call) => call.endpoint === "/api/outreach/drafts/start"), false);
+
+  const executed = await handlers.launch_execute({ confirmation_token: token, confirm: true });
+  assert.equal(executed.isError, undefined, executed.content?.[0]?.text);
+  assert.deepEqual(calls.at(-1), {
+    method: "post",
+    endpoint: "/api/outreach/drafts/start",
+    body: { draft_ids: ["draft-1"], mode: "immediate" },
+  });
+});
+
+test("immediate draft launch rejects sequences with follow-ups", async () => {
+  const { handlers } = createProtectedFixture();
+  const result = await handlers.launch_prepare({ source: "drafts", draft_ids: ["draft-1"], mode: "immediate" });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.data.code, "immediate_followups_not_allowed");
+});
+
+test("immediate draft launch rejects day bucketing", async () => {
+  const { handlers, state } = createProtectedFixture();
+  state.draftPreflight.items[0].followup_count = 0;
+  state.draftPreflight.stats.withFollowups = 0;
+  state.drafts[0].steps = [state.drafts[0].steps[0]];
+  const result = await handlers.launch_prepare({
+    source: "drafts",
+    draft_ids: ["draft-1"],
+    mode: "immediate",
+    daily_first_limit: 1,
+  });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.data.code, "immediate_daily_limit_not_allowed");
+});
+
 test("personalization pilot requires an unchanged prepared snapshot and explicit confirmation", async () => {
   const { handlers, calls, state } = createProtectedFixture();
   const prepared = await handlers.personalization_pilot_prepare({ limit: 30 });

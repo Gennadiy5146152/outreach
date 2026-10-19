@@ -505,8 +505,25 @@ export function createToolHandlers({ client, confirmations }) {
           ? { draft_ids: required(input.draft_ids, "draft_ids"), ...(input.daily_first_limit ? { daily_first_limit: input.daily_first_limit } : {}) }
           : { campaign_id: required(input.campaign_id, "campaign_id") }),
       };
+      if (payload.mode === "immediate" && payload.source !== "drafts") {
+        throw new OutreachApiError("Immediate delivery is supported only for exact draft batches", {
+          code: "immediate_drafts_only",
+        });
+      }
+      if (payload.mode === "immediate" && payload.daily_first_limit) {
+        throw new OutreachApiError("Immediate delivery cannot be split into daily batches", {
+          code: "immediate_daily_limit_not_allowed",
+        });
+      }
       const state = input.source === "drafts" ? await draftLaunchState(payload) : await campaignLaunchState(payload);
       ensurePreflight(state.preflight);
+      const hasFollowups = Number(state.preflight?.stats?.withFollowups || 0) > 0
+        || (state.preflight?.items || []).some((item) => Number(item.followup_count || 0) > 0);
+      if (payload.mode === "immediate" && hasFollowups) {
+        throw new OutreachApiError("Immediate delivery is allowed only for one-step drafts without follow-ups", {
+          code: "immediate_followups_not_allowed",
+        });
+      }
       const count = state.preflight?.stats?.selected ?? state.preflight?.stats?.enrollments ?? state.preflight?.items?.length ?? 0;
       const delivery = state.snapshot.dryRun ? "dry-run" : "реальная отправка";
       return prepareConfirmation(

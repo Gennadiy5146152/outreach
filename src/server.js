@@ -23,6 +23,7 @@ import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 import { createAuth, timingSafeEqualText } from "./http/auth.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
 import { createCompanyResearchApi } from "./services/company-research-api.js";
+import { normalizeCampaignLaunchMode, normalizeDraftLaunchMode } from "./services/outreach-delivery-mode.js";
 
 await fs.mkdir(env.attachmentDir, { recursive: true });
 
@@ -2521,9 +2522,10 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
 
 app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
   const draftIds = parseArray(req.body.draft_ids).filter(isUuid);
-  const mode = req.body.mode === "manual" ? "manual" : "auto";
+  const mode = normalizeDraftLaunchMode(req.body.mode);
   const dailyFirstLimit = optionalPositiveInteger(req.body.daily_first_limit, "daily_first_limit");
   if (!draftIds.length) return res.status(400).json({ error: "draft_ids_required" });
+  if (mode === "immediate" && dailyFirstLimit) return res.status(400).json({ error: "immediate_daily_limit_not_allowed" });
 
   const summary = await withClient(async (client) => {
     await client.query("BEGIN");
@@ -2531,7 +2533,16 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
       await lockOutreachQueueMutation(client);
       const drafts = (await client.query(
         `
-          SELECT d.*, s.id AS step_id, s.subject AS step_subject, s.body_text AS step_body_text, s.body_html AS step_body_html
+          SELECT d.*, s.id AS step_id, s.subject AS step_subject, s.body_text AS step_body_text, s.body_html AS step_body_html,
+                 EXISTS (
+                   SELECT 1
+                   FROM outreach_draft_steps followup
+                   WHERE followup.draft_id = d.id
+                     AND followup.position > 1
+                     AND followup.status <> 'blocked'
+                     AND NULLIF(followup.subject, '') IS NOT NULL
+                     AND NULLIF(followup.body_text, '') IS NOT NULL
+                 ) AS has_followups
           FROM outreach_drafts d
           JOIN outreach_draft_steps s ON s.draft_id = d.id AND s.position = 1
           WHERE d.id = ANY($1::uuid[])
@@ -2539,6 +2550,11 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
         `,
         [draftIds],
       )).rows;
+      if (mode === "immediate" && drafts.some((draft) => draft.has_followups)) {
+        const error = new Error("immediate_followups_not_allowed");
+        error.status = 400;
+        throw error;
+      }
       const fallbackMailboxes = (await client.query(
         `
           SELECT id, email
@@ -2608,7 +2624,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
         const batchDate = new Date();
         batchDate.setDate(batchDate.getDate() + batchDay);
         const requestedDate = draft.send_after ? new Date(draft.send_after) : null;
-        const scheduledAt = requestedDate && requestedDate > batchDate ? requestedDate : batchDate;
+        const scheduledAt = mode === "immediate" ? new Date() : (requestedDate && requestedDate > batchDate ? requestedDate : batchDate);
         const queue = await client.query(
           `
             INSERT INTO sending_queue(
@@ -5699,7 +5715,9 @@ app.post("/api/campaigns/:id/preflight/fix", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/campaigns/:id/start", asyncHandler(async (req, res) => {
-  const mode = req.body.mode || "manual";
+  const requestedMode = req.body.mode || "manual";
+  if (!["manual", "auto", "test"].includes(requestedMode)) return res.status(400).json({ error: "invalid_campaign_launch_mode" });
+  const mode = normalizeCampaignLaunchMode(requestedMode);
   const preflight = await campaignPreflight(req.params.id);
   if (!preflight.ok && !toBool(req.body.force)) return res.status(400).json(preflight);
 

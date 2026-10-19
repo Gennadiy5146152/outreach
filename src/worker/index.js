@@ -14,6 +14,7 @@ import { getRuntimeSettings } from "../services/runtime.js";
 import { claimJob, DELIVERY_JOB_TYPES, failJob as failQueuedJob, finishJob as finishQueuedJob } from "../services/job-queue.js";
 import { cleanReplyText, htmlToText, markdownToHtml, renderTemplate, renderTemplateHtml } from "../services/template.js";
 import { persistValidation, validateEmail } from "../services/validation.js";
+import { isImmediateDraftQueueItem } from "../services/outreach-delivery-mode.js";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -488,6 +489,12 @@ async function lockNextSend() {
           AND (
             q.mode = 'test'
             OR (
+              q.mode = 'immediate'
+              AND q.outreach_draft_id IS NOT NULL
+              AND q.campaign_id IS NULL
+              AND ods.position = 1
+            )
+            OR (
               NOT EXISTS (
                 SELECT 1
                 FROM messages spacing_msg
@@ -560,7 +567,14 @@ async function lockNextSend() {
               )
             )
           )
-        ORDER BY CASE WHEN COALESCE(ods.position, s.position, 1) > 1 THEN 0 ELSE 1 END,
+        ORDER BY CASE
+                   WHEN q.mode = 'immediate'
+                     AND q.outreach_draft_id IS NOT NULL
+                     AND q.campaign_id IS NULL
+                     AND ods.position = 1 THEN -1
+                   WHEN COALESCE(ods.position, s.position, 1) > 1 THEN 0
+                   ELSE 1
+                 END,
                  q.scheduled_at ASC
         FOR UPDATE OF q SKIP LOCKED
         LIMIT 1
@@ -618,7 +632,7 @@ async function processSendUnlocked(item) {
     selectedDryRun: item.delivery_dry_run,
     currentDryRun: runtime.dryRun,
   });
-  if (!isWithinWindow(item, runtime.timeZone)) {
+  if (!isImmediateDraftQueueItem(item) && !isWithinWindow(item, runtime.timeZone)) {
     const nextAt = nextSendWindowAt(item, new Date(), runtime.timeZone);
     await query(
       "UPDATE sending_queue SET status = 'pending', scheduled_at = $2, last_error = $3, quota_reservation_active = false, quota_reserved_at = NULL, updated_at = now() WHERE id = $1",
@@ -817,7 +831,7 @@ async function processSendUnlocked(item) {
       )
     ).rows[0];
 
-    if (!["paused", "cancelled"].includes(draftState?.status) && nextOutreachStep && nextOutreachStep.subject && nextOutreachStep.body_text) {
+    if (!["paused", "cancelled"].includes(draftState?.status) && item.mode !== "immediate" && nextOutreachStep && nextOutreachStep.subject && nextOutreachStep.body_text) {
       const delay = randomDelayMinutes(item.min_delay_minutes, item.max_delay_minutes);
       const nextQueue = await query(
         `

@@ -111,7 +111,7 @@ for (const expected of [
   "j.payload->>'mailboxId' = mailbox_id::text",
   "проверенным SMTP или успешной историей отправки",
   "const requestedDate = draft.send_after ? new Date(draft.send_after) : null",
-  "const scheduledAt = requestedDate && requestedDate > batchDate ? requestedDate : batchDate",
+  "const scheduledAt = mode === \"immediate\" ? new Date() : (requestedDate && requestedDate > batchDate ? requestedDate : batchDate)",
   "first_step_body_text",
   "items: rows.map",
   "app.post(\"/api/outreach/imports\"",
