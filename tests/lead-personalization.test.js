@@ -17,7 +17,7 @@ function validCopy(overrides = {}) {
     subject: "Резервные копии для сайта «Альфа»",
     bodyText,
     followupSubject: "Re: Резервные копии для сайта «Альфа»",
-    followupBodyText: "Добрый день! Напоминаю о предложении организовать независимые резервные копии сайта. Подскажите, задача сейчас актуальна?",
+    followupBodyText: "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Чтобы я правильно закрыл вопрос, ответьте одной цифрой: 1 — актуально, можно обсудить; 2 — вернуться через несколько месяцев; 3 — неактуально, больше не писать. Если выберете 2, напишите примерный месяц :)",
     usedEvidence: ["process-1"],
     ...overrides,
   };
@@ -106,6 +106,9 @@ test("copy validator accepts grounded copy and rejects invented evidence, names,
   assert.ok(validatePersonalizedCopy(validCopy({ subject: "{{company}}" }), enrichment).errors.includes("unresolved_marker"));
   assert.ok(validatePersonalizedCopy(validCopy({ bodyText: `${validBody()} ${"длинный текст ".repeat(30)}` }), enrichment).errors.includes("body_length_out_of_range"));
   assert.ok(validatePersonalizedCopy(validCopy({ followupBodyText: "Одно предложение." }), enrichment).errors.includes("followup_sentence_count"));
+  assert.ok(validatePersonalizedCopy(validCopy({
+    followupBodyText: "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Актуальна ли сейчас такая задача? Если нет — больше не буду вас беспокоить.",
+  }), enrichment).errors.includes("numbered_followup_required"));
   assert.ok(validatePersonalizedCopy(validCopy({ bodyText: validBody().replace("?", ".") }), enrichment).errors.includes("closing_question_required"));
 });
 
@@ -162,7 +165,9 @@ test("fallback generation creates valid grounded copy when no language model is 
   assert.match(copy.bodyText, /на вашем сайте работает онлайн-запись/i);
   assert.doesNotMatch(copy.bodyText, /Онлайн-запись к врачу/);
   assert.doesNotMatch(copy.bodyText, /Клиника Альфа/);
-  assert.equal(copy.followupBodyText, "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Актуальна ли сейчас такая задача? Если нет — больше не буду вас беспокоить.");
+  assert.match(copy.followupBodyText, /1\s*—\s*актуально/i);
+  assert.match(copy.followupBodyText, /2\s*—\s*вернуться/i);
+  assert.match(copy.followupBodyText, /3\s*—\s*неактуально/i);
   assert.deepEqual(copy.usedEvidence, ["process-1"]);
 });
 

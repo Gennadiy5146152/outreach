@@ -23,6 +23,8 @@ const GENERIC_MAILBOXES = new Set([
   "team",
 ]);
 
+const NUMBERED_FOLLOWUP = "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Чтобы я правильно закрыл вопрос, ответьте одной цифрой: 1 — актуально, можно обсудить; 2 — вернуться через несколько месяцев; 3 — неактуально, больше не писать. Если выберете 2, напишите примерный месяц :)";
+
 function clean(value) {
   return String(value || "").trim();
 }
@@ -186,6 +188,9 @@ export function validatePersonalizedCopy(copy = {}, enrichment = {}) {
   if (bodyText.length < 300 || bodyText.length > 700) errors.push("body_length_out_of_range");
   const followupSentences = sentenceCount(followupBodyText);
   if (followupSentences < 3 || followupSentences > 4) errors.push("followup_sentence_count");
+  if (!/1\s*[—-]\s*актуально[\s\S]*2\s*[—-]\s*вернуться[\s\S]*3\s*[—-]\s*неактуально/iu.test(followupBodyText)) {
+    errors.push("numbered_followup_required");
+  }
   if (containsMarker(allText)) errors.push("unresolved_marker");
 
   const questionCount = (bodyText.match(/\?/g) || []).length;
@@ -222,6 +227,7 @@ function personalizationPrompt(lead, enrichment) {
       subject: "конкретная тема без кликбейта",
       bodyLength: "300-700 characters",
       followupSentences: "3-4",
+      followupResponseOptions: "Обязательно предложить ответ одной цифрой: 1 — актуально, можно обсудить; 2 — вернуться через несколько месяцев; 3 — неактуально, больше не писать. Для варианта 2 попросить указать примерный месяц.",
       closingQuestions: 1,
       greeting: confirmedName ? `Добрый день, ${confirmedName}!` : "Добрый день!",
       noInventedFacts: true,
@@ -283,7 +289,7 @@ export function generateFallbackPersonalizedCopy({ lead = {}, enrichment = {} } 
     subject,
     bodyText,
     followupSubject: `Re: ${subject}`,
-    followupBodyText: "Добрый день! Возвращаюсь к вопросу о независимых резервных копиях сайта. Актуальна ли сейчас такая задача? Если нет — больше не буду вас беспокоить.",
+    followupBodyText: NUMBERED_FOLLOWUP,
     usedEvidence: [evidenceId],
   };
 }
