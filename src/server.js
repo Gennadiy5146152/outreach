@@ -15,7 +15,7 @@ import { logEvent } from "./services/events.js";
 import { campaignPreflight } from "./services/preflight.js";
 import { getRuntimeSettings, isValidTimeZone, saveRuntimeSettings } from "./services/runtime.js";
 import { affectedLeadIds, cancelOutreachForScope } from "./services/outreach-stop.js";
-import { lockOutreachQueueMutation, outreachStopAllImpact, stopAllOutreach } from "./services/outreach-control.js";
+import { lockOutreachQueueMutation, OUTREACH_DELIVERY_LOCK, outreachStopAllImpact, stopAllOutreach } from "./services/outreach-control.js";
 import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
 import { saveSecretToDotenv } from "./services/secret-file.js";
@@ -1460,6 +1460,60 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
+      const rejectEdit = (message, status = 409) => {
+        const error = new Error(message);
+        error.status = status;
+        throw error;
+      };
+      // Actual SMTP delivery holds this lock shared, even after a queue cancel.
+      const deliveryLock = await client.query(
+        "SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked",
+        [OUTREACH_DELIVERY_LOCK],
+      );
+      if (!deliveryLock.rows[0]?.locked) rejectEdit("draft_delivery_in_progress");
+      // Lock the queue before the step/card: the worker claims queue rows first.
+      // A running row already has an SMTP payload and cannot safely be edited.
+      const queued = (await client.query(
+        `
+          SELECT id, status, sent_message_id
+          FROM sending_queue
+          WHERE outreach_draft_id = $1
+            AND (outreach_step_id = (
+              SELECT id FROM outreach_draft_steps WHERE draft_id = $1 AND position = 1
+            ) OR outreach_step_id IS NULL)
+          ORDER BY id
+          FOR UPDATE NOWAIT
+        `,
+        [req.params.id],
+      )).rows;
+      const firstStep = (await client.query(
+        "SELECT * FROM outreach_draft_steps WHERE draft_id = $1 AND position = 1 FOR UPDATE NOWAIT",
+        [req.params.id],
+      )).rows[0];
+      const current = (await client.query(
+        "SELECT * FROM outreach_drafts WHERE id = $1 FOR UPDATE NOWAIT",
+        [req.params.id],
+      )).rows[0];
+      if (!current) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (firstStep?.status === "sent" || firstStep?.sent_message_id || queued.some((item) => item.status === "sent" || item.sent_message_id)) {
+        rejectEdit("sent_step_cannot_be_edited");
+      }
+      if (queued.some((item) => item.status === "running")) rejectEdit("draft_delivery_in_progress");
+      const hasPendingQueue = queued.some((item) => ["pending", "retrying"].includes(item.status));
+      const preserveDraftStatus = ["queued", "active_sequence", "paused", "cancelled", "completed"].includes(current.status);
+      if ((hasPendingQueue || preserveDraftStatus) && check.errors.length) rejectEdit("queued_draft_invalid", 400);
+      const sameDate = (left, right) => (left ? new Date(left).getTime() : null) === (right ? new Date(right).getTime() : null);
+      if (hasPendingQueue && (
+        email.toLowerCase() !== String(current.to_email).toLowerCase()
+        || mailboxId !== (current.mailbox_id || null)
+        || !sameDate(sendAfter, current.send_after)
+      )) rejectEdit("queued_draft_routing_cannot_be_edited");
+      const nextDraftStatus = preserveDraftStatus ? current.status : check.status;
+      const nextStepStatus = ["queued", "needs_approval", "paused", "cancelled"].includes(firstStep?.status)
+        ? firstStep.status : check.status === "ready" ? "draft" : "blocked";
       const updated = await client.query(
         `
           UPDATE outreach_drafts
@@ -1479,13 +1533,13 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
           WHERE id = $1
           RETURNING *
         `,
-        [req.params.id, email, company, contactName, segment, subject, bodyText, bodyHtml, mailboxId, sendAfter, check.status, check.errors.join("; ")],
+        [req.params.id, email, company, contactName, segment, subject, bodyText, bodyHtml, mailboxId, sendAfter, nextDraftStatus, check.errors.join("; ")],
       );
       if (!updated.rowCount) {
         await client.query("ROLLBACK");
         return null;
       }
-      await client.query(
+      const savedStep = await client.query(
         `
           INSERT INTO outreach_draft_steps(draft_id, position, subject, body_text, body_html, delay_days, status)
           VALUES ($1,1,$2,$3,$4,0,$5)
@@ -1495,13 +1549,31 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
             body_html = EXCLUDED.body_html,
             status = EXCLUDED.status,
             updated_at = now()
+          RETURNING id
         `,
-        [req.params.id, subject, bodyText, bodyHtml, check.status === "ready" ? "draft" : "blocked"],
+        [req.params.id, subject, bodyText, bodyHtml, nextStepStatus],
+      );
+      await client.query(
+        `
+          UPDATE sending_queue
+          SET subject_override = $3,
+              body_text_override = $4,
+              body_html_override = $5,
+              updated_at = now()
+          WHERE outreach_draft_id = $1
+            AND (outreach_step_id = $2 OR outreach_step_id IS NULL)
+            AND status IN ('pending','retrying')
+        `,
+        [req.params.id, savedStep.rows[0].id, subject, bodyText, bodyHtml],
       );
       await client.query("COMMIT");
       return updated.rows[0];
     } catch (error) {
       await client.query("ROLLBACK");
+      if (error.code === "55P03") {
+        error.message = "draft_edit_conflict_retry";
+        error.status = 409;
+      }
       throw error;
     }
   });
