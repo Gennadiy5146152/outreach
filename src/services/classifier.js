@@ -9,8 +9,8 @@ export function classifyInbound({ subject = "", body = "", headers = {} }) {
   if (bounce.some((item) => text.includes(item))) return "bounce";
   if (unsubscribe.some((item) => text.includes(item))) return "unsubscribe";
   if (autoReply.some((item) => text.includes(item))) return "auto_reply";
+  if (/^3[.)!\s]*$/.test(body.trim()) || negative.some((item) => body.toLowerCase().includes(item))) return "negative_reply";
   if (positive.some((item) => text.includes(item))) return "positive_reply";
-  if (negative.some((item) => text.includes(item))) return "negative_reply";
   if (text.trim()) return "neutral_reply";
   return "unknown";
 }

@@ -29,6 +29,7 @@
           <button data-view="runs">Запуски</button>
           <button data-view="participation">Участие</button>
           <button data-view="queue">Очередь</button>
+          <button data-view="outreachChannels">Мессенджеры</button>
         </div>
         <div class="nav-group">
           <span>Ответы</span>
@@ -225,6 +226,24 @@
             </div>
           </div>
           <div class="table-wrap"><table id="outreachImportsTable"></table></div>
+        </section>
+      </section>
+
+      <section class="view" id="outreachChannelsView">
+        <section class="panel">
+          <div class="panel-head">
+            <div><h2>Расписание сообщений</h2><p>Контакты добавляются в карточке компании в «Базе». В назначенное время здесь появится действие для отправки из приложения.</p></div>
+            <button type="button" id="channelTasksRefresh">Обновить</button>
+          </div>
+          <label>Задачи <select id="channelTaskStatus">
+            <option value="scheduled">Запланированные</option>
+            <option value="">Все</option>
+            <option value="sent">Отправленные</option>
+            <option value="replied">Получен ответ</option>
+            <option value="declined">Получен отказ</option>
+            <option value="cancelled">Отменённые</option>
+          </select></label>
+          <div id="channelTaskList" class="cards" aria-live="polite"></div>
         </section>
       </section>
 

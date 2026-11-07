@@ -54,6 +54,9 @@ export async function outreachStopAllImpact(client) {
         FROM outreach_drafts draft
         WHERE draft.status IN ('queued','active_sequence','paused')
       ),
+      active_channels AS (
+        SELECT id FROM outreach_channel_tasks WHERE status IN ('waiting', 'scheduled')
+      ),
       affected_entities AS (
         SELECT 'queue:' || id::text || ':step:' || step_position::text AS entity_key FROM active_queue
         UNION
@@ -62,6 +65,8 @@ export async function outreachStopAllImpact(client) {
         SELECT 'enrollment:' || id::text FROM active_enrollments
         UNION
         SELECT 'draft:' || id::text FROM active_drafts
+        UNION
+        SELECT 'channel:' || id::text FROM active_channels
       )
       SELECT
         (SELECT count(*)::int FROM active_queue) AS active_queue,
@@ -70,6 +75,7 @@ export async function outreachStopAllImpact(client) {
         (SELECT count(*)::int FROM active_runs) AS active_runs,
         (SELECT count(*)::int FROM active_enrollments) AS active_enrollments,
         (SELECT count(*)::int FROM active_drafts) AS active_drafts,
+        (SELECT count(*)::int FROM active_channels) AS active_channel_tasks,
         md5(COALESCE(
           (SELECT string_agg(entity_key, ',' ORDER BY entity_key) FROM affected_entities),
           ''
@@ -83,6 +89,7 @@ export async function outreachStopAllImpact(client) {
     active_runs: 0,
     active_enrollments: 0,
     active_drafts: 0,
+    active_channel_tasks: 0,
     snapshot_token: "d41d8cd98f00b204e9800998ecf8427e",
   };
 }
@@ -158,6 +165,10 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
         [draftIds],
       )).rowCount;
     }
+    const cancelledChannelTasks = await client.query(
+      `UPDATE outreach_channel_tasks
+       SET status = 'cancelled', completed_at = now() WHERE status IN ('waiting', 'scheduled')`,
+    );
     const stoppedRuns = await client.query(
       `
         UPDATE outreach_runs
@@ -171,6 +182,7 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
     return {
       stopped: true,
       cancelled_queue: cancelled.rowCount,
+      cancelled_channel_tasks: cancelledChannelTasks.rowCount,
       cancelled_steps: cancelledSteps,
       paused_enrollments: pausedEnrollments.rowCount,
       cancelled_drafts: cancelledDrafts.rowCount,

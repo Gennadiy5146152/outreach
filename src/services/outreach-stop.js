@@ -89,7 +89,7 @@ export async function cancelOutreachForScope(db, { leadId, scope, reason }) {
   return { affectedLeads: leadIds.length, cancelledQueue: cancelled.rowCount, cancelledSteps, leadIds };
 }
 
-export async function holdOutreachForScope(db, { leadId, scope, reason }) {
+export async function holdOutreachForScope(db, { leadId, scope, reason, allowCompanySequence = false }) {
   const leadIds = await affectedLeadIds(db, leadId, scope);
   if (!leadIds.length) return { affectedLeads: 0, heldQueue: 0, heldSteps: 0, leadIds };
 
@@ -104,9 +104,12 @@ export async function holdOutreachForScope(db, { leadId, scope, reason }) {
       WHERE lead_id = ANY($1::uuid[])
         AND outreach_draft_id IS NOT NULL
         AND status IN ('pending','retrying')
+        AND (NOT $3::boolean OR NOT EXISTS (
+          SELECT 1 FROM outreach_drafts d WHERE d.id = outreach_draft_id AND d.company_sequence_enabled
+        ))
       RETURNING outreach_step_id
     `,
-    [leadIds, reason],
+    [leadIds, reason, allowCompanySequence],
   );
   const stepIds = held.rows.map((row) => row.outreach_step_id).filter(Boolean);
   let heldSteps = 0;

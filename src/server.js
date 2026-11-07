@@ -22,6 +22,8 @@ import { saveSecretToDotenv } from "./services/secret-file.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 import { createAuth, timingSafeEqualText } from "./http/auth.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
+import { companySequencePlan, saveCompanySequence } from "./services/company-outreach-sequence.js";
+import { createOutreachChannelTasks } from "./services/outreach-channel-tasks.js";
 import { createCompanyResearchApi } from "./services/company-research-api.js";
 import { normalizeCampaignLaunchMode, normalizeDraftLaunchMode } from "./services/outreach-delivery-mode.js";
 
@@ -53,6 +55,7 @@ const {
   requireAuth,
 } = createAuth(env);
 const personalizationApi = createPersonalizationApi({ query, withClient });
+const outreachChannelTasks = createOutreachChannelTasks({ query, withClient });
 const companyResearchApi = createCompanyResearchApi({ query, withClient });
 
 function cleanText(value) {
@@ -581,6 +584,30 @@ app.post("/api/auth/logout", (_req, res) => {
 
 app.use(requireAuth);
 app.use(express.static("public"));
+
+app.get("/api/outreach/channels/company/:id", asyncHandler(async (req, res) => {
+  res.json(await outreachChannelTasks.getCompany(req.params.id));
+}));
+
+app.post("/api/outreach/channels/company/:id/contacts", asyncHandler(async (req, res) => {
+  res.status(201).json(await outreachChannelTasks.saveContact(req.params.id, req.body));
+}));
+
+app.get("/api/outreach/channels/tasks", asyncHandler(async (req, res) => {
+  res.json(await outreachChannelTasks.listTasks({ status: req.query.status }));
+}));
+
+app.post("/api/outreach/channels/tasks", asyncHandler(async (req, res) => {
+  res.status(201).json(await outreachChannelTasks.schedule(req.body));
+}));
+
+app.get("/api/outreach/channels/tasks/:id/ready", asyncHandler(async (req, res) => {
+  res.json(await outreachChannelTasks.getReady(req.params.id));
+}));
+
+app.patch("/api/outreach/channels/tasks/:id", asyncHandler(async (req, res) => {
+  res.json(await outreachChannelTasks.finish(req.params.id, req.body.status));
+}));
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const [db, runtime] = await Promise.all([query("SELECT now() AS now"), getRuntimeSettings()]);
@@ -1326,6 +1353,7 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
                    'body_text', ods.body_text,
                    'body_html', ods.body_html,
                    'delay_days', ods.delay_days,
+                   'recipient_email', ods.recipient_email,
                    'status', ods.status,
                    'queue_id', ods.queue_id,
                    'attachments', COALESCE((
@@ -1403,7 +1431,26 @@ app.get("/api/outreach/drafts/:id/review", asyncHandler(async (req, res) => {
     `,
     [req.params.id],
   )).rows;
-  res.json({ ...draft, steps });
+  const messenger = draft.company_sequence_enabled ? await companySequencePlan(query, draft.id) : null;
+  res.json({ ...draft, steps, messenger });
+}));
+
+app.put("/api/outreach/drafts/:id/company-sequence", asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.id) || (req.body.messenger_contact_id && !isUuid(req.body.messenger_contact_id))
+      || (req.body.alternate_email && typeof req.body.alternate_email !== "string")) {
+    return res.status(400).json({ error: "company_sequence_input_invalid" });
+  }
+  await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await saveCompanySequence(client, req.params.id, req.body, personalizationGuardErrors);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
+  res.json({ saved: true });
 }));
 
 app.post("/api/outreach/imports/preview", csvUpload.single("file"), asyncHandler(async (req, res) => {
@@ -1497,6 +1544,9 @@ app.patch("/api/outreach/drafts/:id", asyncHandler(async (req, res) => {
       if (!current) {
         await client.query("ROLLBACK");
         return null;
+      }
+      if (current.company_sequence_enabled && (email !== current.to_email || company !== (current.company || ""))) {
+        rejectEdit("company_sequence_recipient_locked");
       }
       if (firstStep?.status === "sent" || firstStep?.sent_message_id || queued.some((item) => item.status === "sent" || item.sent_message_id)) {
         rejectEdit("sent_step_cannot_be_edited");
@@ -1602,10 +1652,13 @@ app.put("/api/outreach/drafts/:id/steps/:position", asyncHandler(async (req, res
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
-      const draft = (await client.query("SELECT * FROM outreach_drafts WHERE id = $1", [req.params.id])).rows[0];
+      const draft = (await client.query("SELECT * FROM outreach_drafts WHERE id = $1 FOR UPDATE", [req.params.id])).rows[0];
       if (!draft) {
         await client.query("ROLLBACK");
         return null;
+      }
+      if (draft.company_sequence_enabled && (position > 2 || !bodyText || guardErrors.length)) {
+        throw Object.assign(new Error("company_sequence_steps_locked"), { status: 409 });
       }
       const existing = (await client.query(
         "SELECT * FROM outreach_draft_steps WHERE draft_id = $1 AND position = $2",
@@ -1702,11 +1755,12 @@ app.post("/api/outreach/drafts/:id/html-files", htmlUpload.array("files", 4), as
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
-      const draft = (await client.query("SELECT * FROM outreach_drafts WHERE id = $1", [req.params.id])).rows[0];
+      const draft = (await client.query("SELECT * FROM outreach_drafts WHERE id = $1 FOR UPDATE", [req.params.id])).rows[0];
       if (!draft) {
         await client.query("ROLLBACK");
         return null;
       }
+      if (draft.company_sequence_enabled) throw Object.assign(new Error("company_sequence_steps_locked"), { status: 409 });
       const existingSteps = (await client.query(
         "SELECT * FROM outreach_draft_steps WHERE draft_id = $1 AND position = ANY($2::int[])",
         [draft.id, bodies.map((_, index) => index + 1)],
@@ -1854,9 +1908,13 @@ app.post("/api/outreach/drafts/bulk-html-assets", bulkHtmlAssetsUpload.fields([
           FROM outreach_drafts
           WHERE id = ANY($1::uuid[])
           ORDER BY created_at ASC
+          FOR UPDATE
         `,
         [draftIds],
       )).rows;
+      if (drafts.some((draft) => draft.company_sequence_enabled)) {
+        throw Object.assign(new Error("company_sequence_steps_locked"), { status: 409 });
+      }
       const foundIds = new Set(drafts.map((draft) => draft.id));
       const missing = draftIds.filter((id) => !foundIds.has(id));
       const positions = bodies.map((body) => body.position);
@@ -2410,7 +2468,10 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
     query(
       `
         SELECT d.id, d.to_email, d.company, d.contact_name, d.subject, d.body_text, d.body_html,
-               d.send_after, d.status, d.error_reason, d.mailbox_id,
+               d.send_after, d.status, d.error_reason, d.mailbox_id, d.company_sequence_enabled,
+               alternate.recipient_email AS alternate_email, alternate.delay_days AS alternate_delay_days,
+               alternate_lead.validation_status AS alternate_validation_status,
+               task.delay_days AS messenger_delay_days, contact.channel AS messenger_channel, contact.address AS messenger_address,
                m.email AS mailbox_email, m.is_active AS mailbox_active,
                m.smtp_verified_at, m.imap_verified_at, m.last_inbox_sync_at,
                mailbox_sent.last_sent_at,
@@ -2435,6 +2496,10 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
             AND msg.direction = 'outbound'
             AND msg.status = 'sent'
         ) mailbox_sent ON true
+        LEFT JOIN outreach_draft_steps alternate ON alternate.draft_id = d.id AND alternate.recipient_lead_id IS NOT NULL
+        LEFT JOIN leads alternate_lead ON alternate_lead.id = alternate.recipient_lead_id
+        LEFT JOIN outreach_channel_tasks task ON task.draft_id = d.id
+        LEFT JOIN outreach_channel_contacts contact ON contact.id = task.contact_id
         LEFT JOIN outreach_draft_steps first_step ON first_step.draft_id = d.id AND first_step.position = 1
         LEFT JOIN LATERAL (
           SELECT count(*) AS followup_count
@@ -2511,6 +2576,9 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
       ));
     if (draft.status !== "ready") rowErrors.push(`статус “${draftStatusText[draft.status] || draft.status}”, запускать можно только готовые черновики`);
     if (!draft.first_step_id) rowErrors.push("нет первого письма");
+    if (draft.alternate_email && !["valid","risky"].includes(draft.alternate_validation_status)) {
+      rowErrors.push("второй email ещё не прошёл проверку");
+    }
     if (draft.first_step_already_queued) rowErrors.push("первое письмо уже есть в очереди или уже отправлено");
     rowErrors.push(...stepGuardErrors);
     if (draft.mailbox_id) {
@@ -2578,6 +2646,10 @@ app.post("/api/outreach/drafts/preflight", asyncHandler(async (req, res) => {
         warnings: issues.warnings,
         followup_count: row.followup_count,
         first_step_already_queued: row.first_step_already_queued,
+        ...(row.company_sequence_enabled ? {
+          alternate_email: row.alternate_email, alternate_delay_days: row.alternate_delay_days,
+          messenger_channel: row.messenger_channel, messenger_address: row.messenger_address, messenger_delay_days: row.messenger_delay_days,
+        } : {}),
       };
     }),
     stats: {
@@ -2619,6 +2691,7 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
           JOIN outreach_draft_steps s ON s.draft_id = d.id AND s.position = 1
           WHERE d.id = ANY($1::uuid[])
           ORDER BY d.created_at ASC
+          FOR UPDATE OF d
         `,
         [draftIds],
       )).rows;
@@ -2678,6 +2751,29 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
           continue;
         }
 
+        if (draft.company_sequence_enabled) {
+          const invalidAlternate = await client.query(`
+            SELECT 1 FROM outreach_draft_steps s JOIN leads l ON l.id = s.recipient_lead_id
+            WHERE s.draft_id = $1 AND (l.validation_status NOT IN ('valid','risky')
+              OR lower(l.email) <> lower(s.recipient_email) OR l.suppressed_at IS NOT NULL OR l.status = 'suppressed')
+          `, [draft.id]);
+          if (invalidAlternate.rowCount) {
+            errors.push({ id: draft.id, email: draft.to_email, error: "Второй адрес ещё не прошёл проверку или заблокирован." });
+            continue;
+          }
+          const { rows: [task] } = await client.query(
+            "SELECT company_key, status FROM outreach_channel_tasks WHERE draft_id = $1", [draft.id],
+          );
+          if (task?.status === "draft") {
+            const conflict = await client.query(
+              "SELECT 1 FROM outreach_channel_tasks WHERE company_key = $1 AND status IN ('waiting','scheduled')", [task.company_key],
+            );
+            if (conflict.rowCount) {
+              errors.push({ id: draft.id, email: draft.to_email, error: "У компании уже есть активная задача в мессенджере." });
+              continue;
+            }
+          }
+        }
         const lead = await client.query(
           `
             INSERT INTO leads(company, email, contact_name, domain, segment, source)
@@ -2732,6 +2828,9 @@ app.post("/api/outreach/drafts/start", asyncHandler(async (req, res) => {
         }
         await client.query("UPDATE outreach_drafts SET lead_id = $2, mailbox_id = $3, status = 'queued', updated_at = now() WHERE id = $1", [draft.id, leadId, mailboxId]);
         await client.query("UPDATE outreach_draft_steps SET status = 'queued', queue_id = $2, updated_at = now() WHERE id = $1", [draft.step_id, queue.rows[0].id]);
+        if (draft.company_sequence_enabled) {
+          await client.query("UPDATE outreach_channel_tasks SET status = 'waiting' WHERE draft_id = $1 AND status = 'draft'", [draft.id]);
+        }
         queued.push({ id: draft.id, email: draft.to_email, queueId: queue.rows[0].id, scheduledAt });
       }
 
@@ -3276,6 +3375,7 @@ app.post("/api/outreach/runs/:id/stop", asyncHandler(async (req, res) => {
   const result = await withClient(async (client) => {
     await client.query("BEGIN");
     try {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [OUTREACH_DELIVERY_LOCK]);
       const run = (await client.query("SELECT * FROM outreach_runs WHERE id = $1 FOR UPDATE", [req.params.id])).rows[0];
       if (!run) {
         await client.query("ROLLBACK");
@@ -3310,6 +3410,12 @@ app.post("/api/outreach/runs/:id/stop", asyncHandler(async (req, res) => {
         `,
         [req.params.id],
       );
+      await client.query(`
+        UPDATE outreach_channel_tasks t SET status = 'cancelled', completed_at = now()
+        WHERE t.status IN ('waiting','scheduled') AND EXISTS (
+          SELECT 1 FROM sending_queue q WHERE q.run_id = $1 AND q.outreach_draft_id = t.draft_id
+        )
+      `, [req.params.id]);
       const cancelledDrafts = await client.query(
         `
           UPDATE outreach_drafts

@@ -21,6 +21,7 @@ function stopClient({ failOnCancel = false } = {}) {
             active_runs: 2,
             active_enrollments: 4,
             active_drafts: 5,
+            active_channel_tasks: 2,
             snapshot_token: "snapshot-1",
           }],
           rowCount: 1,
@@ -41,6 +42,7 @@ function stopClient({ failOnCancel = false } = {}) {
         return { rows: [{ id: "draft-1" }, { id: "draft-2" }], rowCount: 2 };
       }
       if (String(sql).includes("UPDATE outreach_draft_steps")) return { rows: [], rowCount: 2 };
+      if (String(sql).includes("UPDATE outreach_channel_tasks")) return { rows: [], rowCount: 2 };
       if (String(sql).includes("UPDATE outreach_runs")) {
         assert.match(sql, /mode <> 'test'/);
         return { rows: [], rowCount: 1 };
@@ -60,6 +62,7 @@ test("global stop impact separates first touches from follow-ups", async () => {
     active_runs: 2,
     active_enrollments: 4,
     active_drafts: 5,
+    active_channel_tasks: 2,
     snapshot_token: "snapshot-1",
   });
 });
@@ -69,6 +72,7 @@ test("global stop cancels every real outreach queue and pauses future chains", a
   assert.deepEqual(await stopAllOutreach(client, "snapshot-1"), {
     stopped: true,
     cancelled_queue: 3,
+    cancelled_channel_tasks: 2,
     cancelled_steps: 2,
     paused_enrollments: 2,
     cancelled_drafts: 2,

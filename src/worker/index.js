@@ -9,6 +9,8 @@ import { createImapClient, sendMail } from "../services/mail.js";
 import { effectiveOutreachDryRun } from "../services/outreach-quota.js";
 import { shouldReserveOutreachQuota } from "../services/outreach-quota.js";
 import { lockOutreachQueueMutation, OUTREACH_MIN_SPACING_MINUTES, withOutreachDeliveryLock } from "../services/outreach-control.js";
+import { releaseCompanyMessengerTasks, stopDeclinedCompanySequences } from "../services/company-outreach-sequence.js";
+import { cancelScheduledChannelTasksForEmailReply } from "../services/outreach-channel-tasks.js";
 import { cancelOutreachForScope, holdOutreachForScope } from "../services/outreach-stop.js";
 import { getRuntimeSettings } from "../services/runtime.js";
 import { claimJob, DELIVERY_JOB_TYPES, failJob as failQueuedJob, finishJob as finishQueuedJob } from "../services/job-queue.js";
@@ -453,6 +455,7 @@ async function lockNextSend() {
         )
         SELECT q.*, l.email AS lead_email, l.company, l.contact_name, l.position, l.website, l.domain, l.segment, l.city, l.pain,
                l.validation_status, l.suppressed_at,
+               d.company_sequence_enabled, ods.recipient_email,
                COALESCE(c.tracking_enabled, false) AS tracking_enabled,
                c.daily_limit AS campaign_daily_limit,
                COALESCE(c.send_window_start, m.send_window_start) AS send_window_start,
@@ -471,6 +474,7 @@ async function lockNextSend() {
         LEFT JOIN campaigns c ON c.id = q.campaign_id
         LEFT JOIN campaign_steps s ON s.id = q.campaign_step_id
         LEFT JOIN outreach_draft_steps ods ON ods.id = q.outreach_step_id
+        LEFT JOIN outreach_drafts d ON d.id = q.outreach_draft_id
         JOIN mailboxes m ON m.id = q.mailbox_id
         WHERE q.status IN ('pending','retrying')
           AND q.scheduled_at <= now()
@@ -627,11 +631,39 @@ async function processSendUnlocked(item) {
     throw nonMailboxError("Lead is invalid or suppressed");
   }
 
+  if (item.recipient_email && item.recipient_email.toLowerCase() !== item.lead_email.toLowerCase()) {
+    throw nonMailboxError("Адрес второго получателя изменился после подготовки цепочки");
+  }
+  if (item.company_sequence_enabled) {
+    const { rowCount } = await query(`
+      SELECT 1 FROM outreach_drafts d JOIN leads anchor ON anchor.id = d.lead_id
+      JOIN leads related ON (related.id = anchor.id OR (btrim(anchor.company) <> '' AND lower(btrim(related.company)) = lower(btrim(anchor.company))))
+      WHERE d.id = $1 AND (related.suppressed_at IS NOT NULL OR related.status = 'suppressed'
+        OR EXISTS (SELECT 1 FROM suppressions s WHERE lower(s.email) = lower(related.email)
+          OR lower(s.domain) = lower(related.domain))
+        OR EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = related.id AND m.direction = 'inbound'
+          AND m.reply_classification IN ('negative_reply','unsubscribe','not_target')
+          AND COALESCE(m.received_at, m.created_at) >= now() - interval '30 days')
+        OR EXISTS (SELECT 1 FROM outreach_channel_tasks t
+          WHERE t.company_key = COALESCE(NULLIF(lower(btrim(anchor.company)), ''), anchor.id::text) AND t.status = 'declined'))
+      LIMIT 1
+    `, [item.outreach_draft_id]);
+    if (rowCount) throw nonMailboxError("По компании получен отказ или действует стоп-лист");
+  }
+
   const runtime = await getRuntimeSettings();
   const deliveryDryRun = effectiveOutreachDryRun({
     selectedDryRun: item.delivery_dry_run,
     currentDryRun: runtime.dryRun,
   });
+  if (item.company_sequence_enabled && !deliveryDryRun && item.outreach_step_position > 1) {
+    const { rowCount } = await query(`
+      SELECT 1 FROM outreach_draft_steps s JOIN messages m ON m.id = s.sent_message_id
+      WHERE s.draft_id = $1 AND s.position = $2 AND m.status = 'sent'
+        AND COALESCE(m.provider_message_id, '') <> 'dry-run'
+    `, [item.outreach_draft_id, item.outreach_step_position - 1]);
+    if (!rowCount) throw nonMailboxError("Предыдущее письмо цепочки не было реально отправлено");
+  }
   if (!isImmediateDraftQueueItem(item) && !isWithinWindow(item, runtime.timeZone)) {
     const nextAt = nextSendWindowAt(item, new Date(), runtime.timeZone);
     await query(
@@ -699,10 +731,11 @@ async function processSendUnlocked(item) {
             AND msg.status = 'sent'
             AND msg.message_id_header <> ''
             AND ods.position < $2
+            AND msg.lead_id = $3
           ORDER BY ods.position DESC, msg.sent_at DESC NULLS LAST, msg.created_at DESC
           LIMIT 1
         `,
-        [item.outreach_draft_id, Number(item.outreach_step_position || 1)],
+        [item.outreach_draft_id, Number(item.outreach_step_position || 1), item.lead_id],
       )
     ).rows[0] || null;
     if (parentMessage) {
@@ -843,7 +876,7 @@ async function processSendUnlocked(item) {
           RETURNING id
         `,
         [
-          item.lead_id,
+          nextOutreachStep.recipient_lead_id || item.lead_id,
           item.mailbox_id,
           item.mode,
           nextOutreachStep.delay_days,
@@ -1142,8 +1175,9 @@ async function syncInbox(mailbox, { forceRecent = false } = {}) {
             body: bodyText,
             fallbackClassification,
           });
-      const classification = aiAnalysis.classification;
-      const classificationSource = aiAnalysis.source;
+      const explicitStop = ["unsubscribe", "negative_reply"].includes(fallbackClassification);
+      const classification = explicitStop ? fallbackClassification : aiAnalysis.classification;
+      const classificationSource = explicitStop ? "auto" : aiAnalysis.source;
       const existingInbound = await findExistingInbound(mailbox.id, parsed.messageId);
       const { linked, aiThread } = isWarmup
         ? { linked: null, aiThread: null }
@@ -1832,6 +1866,7 @@ async function applyInboundEffects(message, classification) {
       leadId: message.lead_id,
       scope: stopScope,
       reason: "Остановлено до ручного решения после ответа",
+      allowCompanySequence: !["negative_reply", "not_target"].includes(classification),
     });
     const updatedConversation = await query(
       `
@@ -1851,6 +1886,19 @@ async function applyInboundEffects(message, classification) {
     message.affected_leads = scoped.affectedLeads;
   }
 
+  if (["negative_reply", "unsubscribe", "not_target"].includes(classification)) {
+    await withClient(async (client) => {
+      await client.query("BEGIN");
+      try {
+        await stopDeclinedCompanySequences(client, message.lead_id);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+  const cancelledChannelTasks = await cancelScheduledChannelTasksForEmailReply(query, message.lead_id, classification);
   await applyAiConversationInsights(message);
 
   await logEvent(eventType, {
@@ -1867,6 +1915,7 @@ async function applyInboundEffects(message, classification) {
       cancelledQueue: message.cancelled_queue,
       heldQueue: message.held_queue,
       affectedLeads: message.affected_leads,
+      cancelledChannelTasks,
       stopScope,
     },
   });
@@ -2019,6 +2068,16 @@ async function sendWarmup() {
 
 async function tick() {
   await scheduleDueEnrollments();
+  await withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await releaseCompanyMessengerTasks(client);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
   await scheduleMaintenance();
 
   const sendItem = await lockNextSend();

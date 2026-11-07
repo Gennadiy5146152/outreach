@@ -155,6 +155,7 @@ const VIEW_TITLES = {
   outreachImport: "Импорт Excel",
   personalization: "Персонализация",
   outreachDrafts: "Черновики",
+  outreachChannels: "Мессенджеры",
   runs: "Запуски",
   participation: "Участие",
   review: "Требуют решения",
@@ -176,6 +177,7 @@ const VIEW_GROUPS = {
   outreachImport: "Аутрич",
   personalization: "Аутрич",
   outreachDrafts: "Аутрич",
+  outreachChannels: "Аутрич",
   runs: "Аутрич",
   participation: "Аутрич",
   queue: "Аутрич",
@@ -1837,7 +1839,7 @@ async function stopRun(runId, button) {
 
 async function stopAllOutreach(button) {
   const impact = await api("/api/outreach/stop-all/impact");
-  if (Number(impact.active_queue || 0) === 0 && Number(impact.active_runs || 0) === 0 && Number(impact.active_enrollments || 0) === 0 && Number(impact.active_drafts || 0) === 0) {
+  if (Number(impact.active_queue || 0) === 0 && Number(impact.active_runs || 0) === 0 && Number(impact.active_enrollments || 0) === 0 && Number(impact.active_drafts || 0) === 0 && Number(impact.active_channel_tasks || 0) === 0) {
     setActionResult({
       status: "success",
       title: "Остановка всей рассылки",
@@ -1847,7 +1849,7 @@ async function stopAllOutreach(button) {
     return;
   }
   const confirmed = window.confirm(
-    `Остановить всю рассылку? Будут отменены ${Number(impact.active_queue || 0)} писем: ${Number(impact.first_touches || 0)} первых и ${Number(impact.followups || 0)} follow-up. Уже отправленные письма останутся в истории.`,
+    `Остановить всю рассылку? Будут отменены ${Number(impact.active_queue || 0)} писем: ${Number(impact.first_touches || 0)} первых и ${Number(impact.followups || 0)} follow-up. Задач в мессенджерах: ${Number(impact.active_channel_tasks || 0)}. Уже отправленные письма останутся в истории.`,
   );
   if (!confirmed) return;
   await runAction({
@@ -1866,7 +1868,7 @@ async function stopAllOutreach(button) {
     setActionResult({
       status: "success",
       title: "Вся рассылка остановлена",
-      message: `Отменено писем: ${result.cancelled_queue}. Остановлено запусков: ${result.stopped_runs}.`,
+      message: `Отменено писем: ${result.cancelled_queue}. Остановлено запусков: ${result.stopped_runs}. Отменено задач в мессенджерах: ${result.cancelled_channel_tasks || 0}.`,
       details: result,
     });
   });
@@ -2125,6 +2127,7 @@ function switchView(view, options = {}) {
   if ($("#viewEyebrow")) $("#viewEyebrow").textContent = VIEW_GROUPS[nextView] || "Outreach Desk";
   document.body.classList.remove("nav-open");
   rememberView(nextView, options);
+  if (nextView === "outreachChannels") void loadChannelTasks();
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
 
@@ -2627,7 +2630,9 @@ function renderOutreachDraftLaunchReview() {
           <tr>
             <td>${pill(item.status)}</td>
             <td><strong>${esc(item.email)}</strong><br><span class="muted">${esc(item.company || "Без компании")} ${item.contact_name ? `· ${esc(item.contact_name)}` : ""}</span></td>
-            <td><strong>${esc(item.subject || "Без темы")}</strong><br><span class="muted">${esc(item.body_preview || "")}${item.body_preview && item.body_preview.length >= 180 ? "..." : ""}</span><br><span class="muted">Follow-up: ${Number(item.followup_count || 0)}</span></td>
+            <td><strong>${esc(item.subject || "Без темы")}</strong><br><span class="muted">${esc(item.body_preview || "")}${item.body_preview && item.body_preview.length >= 180 ? "..." : ""}</span><br><span class="muted">Follow-up: ${Number(item.followup_count || 0) - (item.alternate_email ? 1 : 0)}</span>
+              ${item.alternate_email ? `<br><span>Второй адрес: ${esc(item.alternate_email)} · через ${Number(item.alternate_delay_days)} дн.</span>` : ""}
+              ${item.messenger_address ? `<br><span>${esc(channelNames[item.messenger_channel])}: ${esc(item.messenger_address)} · через ${Number(item.messenger_delay_days)} дн.</span>` : ""}</td>
             <td>${esc(item.mailbox || "нет готовой почты")}</td>
             <td>${item.scheduled_at ? fmtDate(item.scheduled_at) : "при ближайшем запуске"}</td>
             <td>
@@ -2733,13 +2738,13 @@ function outreachDraftStepForm(draft, position, { isNew = false } = {}) {
 function renderOutreachDraftFollowups(draft) {
   const positions = new Set((draft.steps || [])
     .map((step) => Number(step.position))
-    .filter((position) => position > 1));
+    .filter((position) => position > 1 && (!draft.company_sequence_enabled || position === 2)));
   const existingForms = [...positions]
     .sort((left, right) => left - right)
     .map((position) => outreachDraftStepForm(draft, position))
     .join("");
   const nextPosition = [2, 3, 4].find((position) => !positions.has(position));
-  const addForm = nextPosition
+  const addForm = draft.company_sequence_enabled ? "" : nextPosition
     ? `
       <details class="add-followup-card">
         <summary>Добавить follow-up ${nextPosition - 1}</summary>
@@ -2760,7 +2765,7 @@ function renderOutreachDraftDrawer(draft) {
   $("#outreachDraftDrawerBody").innerHTML = `
     <section class="drawer-section">
       <h3>Основное письмо</h3>
-      ${renderHtmlChainUpload(draft)}
+      ${draft.company_sequence_enabled ? "" : renderHtmlChainUpload(draft)}
       <form class="form outreach-draft-edit-form" data-outreach-draft-form="${draft.id}">
         <label class="field">
           <span>Email получателя</span>
@@ -2823,8 +2828,69 @@ function renderOutreachDraftDrawer(draft) {
       <div class="draft-followups">
         ${renderOutreachDraftFollowups(draft)}
       </div>
+      ${draft.lead_id && draft.status === "ready" ? `<details data-company-sequence><summary>Второй адрес и мессенджер</summary><div data-company-sequence-form>Загружаю контакты…</div></details>` : ""}
     </section>
   `;
+  const sequence = $("[data-company-sequence]");
+  if (sequence) sequence.addEventListener("toggle", () => {
+    if (sequence.open && !sequence.querySelector("form")) void loadCompanySequenceForm(sequence, draft);
+  });
+}
+
+async function loadCompanySequenceForm(section, draft) {
+  const root = section.querySelector("[data-company-sequence-form]");
+  try {
+    const [company, review] = await Promise.all([
+      api(`/api/outreach/channels/company/${draft.lead_id}`),
+      api(`/api/outreach/drafts/${draft.id}/review`),
+    ]);
+    if (!root.isConnected) return;
+    const alternate = review.steps.find((step) => step.recipient_email) || {};
+    const savedEmails = company.contacts.filter((item) => ["email_general", "email_personal"].includes(item.channel)).map((item) => item.address);
+    const emailChoices = [...new Set([...company.emails.map((item) => item.email), ...savedEmails].map((email) => email.toLowerCase()))]
+      .filter((email) => email !== draft.to_email.toLowerCase());
+    const contacts = company.contacts.filter((item) => ["telegram", "max", "vk"].includes(item.channel));
+    const messenger = review.messenger || {};
+    root.innerHTML = `
+      <p>После фоллоу-апа отправим отдельное письмо на второй адрес, если он выбран. После последнего письма появится задача в мессенджере. Отказ и отписка останавливают цепочку.</p>
+      <form class="form">
+        <label class="field">Второй email <select name="alternate_email">
+          <option value="">Пропустить</option>
+          ${emailChoices.map((email) => `<option value="${esc(email)}" ${email === alternate.recipient_email ? "selected" : ""}>${esc(email)}</option>`).join("")}
+        </select></label>
+        <label class="field">Тема второго письма <input name="alternate_subject" value="${esc(alternate.subject || "")}"></label>
+        <label class="field">Текст второго письма <textarea name="alternate_body" rows="4">${esc(alternate.body_text || "")}</textarea></label>
+        <label class="field">Дней после фоллоу-апа <input type="number" name="alternate_delay_days" min="1" max="90" value="${Number(alternate.delay_days || 4)}"></label>
+        <label class="field">Мессенджер <select name="messenger_contact_id">
+          <option value="">Пропустить</option>
+          ${contacts.map((item) => `<option value="${esc(item.id)}" ${item.id === messenger.contact_id ? "selected" : ""}>${esc(channelNames[item.channel])} · ${esc(item.name || item.address)}</option>`).join("")}
+        </select></label>
+        <label class="field">Текст сообщения <textarea name="messenger_body" rows="4" maxlength="4000">${esc(messenger.body || "")}</textarea></label>
+        <label class="field">Дней после последнего письма <input type="number" name="messenger_delay_days" min="1" max="90" value="${Number(messenger.delay_days || 4)}"></label>
+        <button type="submit">Сохранить цепочку</button>
+        <output aria-live="polite"></output>
+      </form>`;
+    const form = root.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      event.submitter.disabled = true;
+      try {
+        await api(`/api/outreach/drafts/${draft.id}/company-sequence`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formJson(form)),
+        });
+        clearOutreachDraftLaunchReview();
+        await loadOutreachDrafts();
+        refreshOpenOutreachDraftDrawer(draft.id);
+        toast("Цепочка сохранена");
+      } catch (error) {
+        form.querySelector("output").textContent = channelError(error);
+      } finally {
+        event.submitter.disabled = false;
+      }
+    });
+  } catch (error) {
+    if (root.isConnected) root.textContent = channelError(error);
+  }
 }
 
 function openOutreachDraftDrawer(draftId) {
@@ -5355,6 +5421,206 @@ document.body.addEventListener("click", (event) => {
   }
 });
 
+const channelNames = {
+  email_general: "Общий email",
+  email_personal: "Именной email",
+  telegram: "Telegram",
+  max: "MAX",
+  vk: "ВКонтакте",
+};
+
+const channelErrors = {
+  company_sequence_followup_required: "Сначала сохрани первое письмо и один фоллоу-ап.",
+  company_sequence_alternate_unavailable: "Второй email должен быть проверенным лидом этой же компании.",
+  company_sequence_alternate_text_invalid: "Заполни тему и текст отдельного письма на второй адрес.",
+  company_sequence_messenger_unavailable: "Выбери контакт в мессенджере из карточки этой компании.",
+  company_sequence_existing_followups: "Сначала оставь в этом черновике один фоллоу-ап.",
+  company_sequence_steps_locked: "Управляй дополнительными шагами в разделе «Второй адрес и мессенджер».",
+  company_sequence_recipient_locked: "Основной получатель уже связан с цепочкой компании.",
+  company_sequence_draft_not_ready: "Выбери готовый черновик, связанный с лидом.",
+  channel_address_invalid: "Проверь адрес или прямую ссылку на профиль.",
+  channel_source_required: "Добавь ссылку на источник контакта.",
+  channel_source_invalid: "Ссылка на источник должна начинаться с https:// или http://.",
+  channel_schedule_invalid: "Выбери дату и время в будущем.",
+  channel_message_invalid: "Введи текст сообщения до 4000 знаков.",
+  channel_company_unavailable: "По компании есть ответ, недавнее сообщение или ограничение на связь.",
+  channel_company_already_scheduled: "На компанию уже запланировано касание в мессенджере.",
+  channel_task_not_due: "Задача ещё не наступила или уже закрыта.",
+  channel_email_still_active: "По компании есть письма в очереди. Проверь их перед касанием в мессенджере.",
+  channel_task_status_changed: "Статус задачи уже изменился. Обнови список.",
+};
+
+function channelError(error) {
+  return channelErrors[error.message] || errorMessage(error);
+}
+
+function channelRequest(path, method, payload) {
+  return api(`/api/outreach/channels/${path}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function loadLeadChannels(leadId) {
+  const root = $("#leadChannels");
+  try {
+    const { contacts, emails } = await api(`/api/outreach/channels/company/${leadId}`);
+    if (!root?.isConnected) return;
+    const savedAddresses = new Set(contacts.map((contact) => contact.address));
+    const messengerContacts = contacts.filter((contact) => ["telegram", "max", "vk"].includes(contact.channel));
+    root.innerHTML = `
+      <h3>Контакты компании</h3>
+      <div class="cards">
+        ${emails.filter((email) => !savedAddresses.has(email.email.toLowerCase())).map((email) => `<div>${esc(email.email)} ${esc([email.contact_name, email.position].filter(Boolean).join(" · "))}</div>`).join("")}
+        ${contacts.map((contact) => `<div>
+          <strong>${esc(channelNames[contact.channel])}</strong> · ${esc(contact.address)}
+          ${esc([contact.name, contact.role].filter(Boolean).join(" · "))}
+          <a href="${esc(contact.source_url)}" target="_blank" rel="noopener noreferrer">Источник</a> · ${fmtDate(contact.checked_at)}
+        </div>`).join("")}
+      </div>
+      <details>
+        <summary>Добавить рабочий контакт</summary>
+        <form id="leadChannelContactForm" class="form-grid">
+          <label>Канал <select name="channel">${Object.entries(channelNames).map(([key, name]) => `<option value="${key}">${esc(name)}</option>`).join("")}</select></label>
+          <label>Рабочий адрес или профиль <input name="address" required maxlength="500"></label>
+          <label>Имя <input name="name" maxlength="200"></label>
+          <label>Должность <input name="role" maxlength="200"></label>
+          <label>Источник <input type="url" name="source_url" required maxlength="1500"></label>
+          <button type="submit">Сохранить контакт</button>
+          <output aria-live="polite"></output>
+        </form>
+      </details>
+      ${messengerContacts.length ? `<details>
+        <summary>Запланировать сообщение</summary>
+        <form id="leadChannelTaskForm" class="form-grid">
+          <label>Кому <select name="contact_id">${messengerContacts.map((contact) => `<option value="${esc(contact.id)}">${esc(channelNames[contact.channel])} · ${esc(contact.name || contact.address)}</option>`).join("")}</select></label>
+          <label>Дата и время по часам устройства <input type="datetime-local" name="scheduled_at" required></label>
+          <label>Текст <textarea name="body" rows="5" maxlength="4000" required></textarea></label>
+          <button type="submit">Добавить в расписание</button>
+          <output aria-live="polite"></output>
+        </form>
+      </details>` : ""}
+    `;
+    const contactForm = root.querySelector("#leadChannelContactForm");
+    contactForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      button.disabled = true;
+      try {
+        await channelRequest(`company/${leadId}/contacts`, "POST", formJson(contactForm));
+        await loadLeadChannels(leadId);
+      } catch (error) {
+        contactForm.querySelector("output").textContent = channelError(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    const taskForm = root.querySelector("#leadChannelTaskForm");
+    taskForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      button.disabled = true;
+      try {
+        const values = formJson(taskForm);
+        values.scheduled_at = new Date(values.scheduled_at).toISOString();
+        await channelRequest("tasks", "POST", values);
+        taskForm.reset();
+        taskForm.querySelector("output").textContent = "Сообщение добавлено в раздел «Мессенджеры».";
+      } catch (error) {
+        taskForm.querySelector("output").textContent = channelError(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  } catch (error) {
+    if (root?.isConnected) root.textContent = channelError(error);
+  }
+}
+
+async function loadChannelTasks() {
+  const root = $("#channelTaskList");
+  const filter = $("#channelTaskStatus").value;
+  try {
+    const tasks = await api(`/api/outreach/channels/tasks?status=${encodeURIComponent(filter)}`);
+    if (filter !== $("#channelTaskStatus").value) return;
+    const labels = {
+      waiting: "Ждёт последнего письма", scheduled: "Запланировано", sent: "Отправлено", cancelled: "Отменено",
+      replied: "Получен ответ", declined: "Получен отказ",
+    };
+    root.innerHTML = tasks.map((task) => `
+      <article class="card" data-channel-task="${esc(task.id)}">
+        <strong>${esc(task.company || task.name || task.address)}</strong>
+        <p>${esc(channelNames[task.channel])} · ${esc(task.name || task.address)} · ${fmtDate(task.scheduled_at)} · ${task.due ? "К отправке" : labels[task.status]}</p>
+        <div class="actions">
+          ${task.due ? '<button type="button" data-channel-action="ready">Открыть текст и профиль</button>' : ""}
+          ${["waiting", "scheduled"].includes(task.status) ? '<button type="button" data-channel-action="cancelled">Отменить</button>' : ""}
+          ${["scheduled", "sent"].includes(task.status) ? '<button type="button" data-channel-action="replied">Получен ответ</button><button type="button" data-channel-action="declined">Получен отказ</button>' : ""}
+        </div>
+        <div data-channel-task-body></div>
+        <output aria-live="polite"></output>
+      </article>
+    `).join("") || '<p class="muted">Задач по этому фильтру нет.</p>';
+  } catch (error) {
+    root.textContent = channelError(error);
+  }
+}
+
+$("#channelTasksRefresh").addEventListener("click", () => void loadChannelTasks());
+$("#channelTaskStatus").addEventListener("change", () => void loadChannelTasks());
+
+window.setInterval(() => {
+  if ($("#outreachChannelsView").classList.contains("active") && !$("#channelTaskList textarea") && !document.hidden) {
+    void loadChannelTasks();
+  }
+}, 30000);
+
+$("#channelTaskList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-channel-action]");
+  const card = button?.closest("[data-channel-task]");
+  if (!card) return;
+  const id = card.dataset.channelTask;
+  const action = button.dataset.channelAction;
+  const output = card.querySelector("output");
+  button.disabled = true;
+  output.textContent = "";
+  try {
+    if (action === "copy") {
+      const text = card.querySelector("textarea");
+      try {
+        await navigator.clipboard.writeText(text.value);
+        output.textContent = "Текст скопирован.";
+      } catch {
+        text.focus();
+        text.select();
+        output.textContent = "Текст выделен. Скопируй его сочетанием клавиш.";
+      }
+    } else if (action === "ready") {
+      const task = await api(`/api/outreach/channels/tasks/${id}/ready`);
+      const profile = task.channel === "telegram"
+        ? `tg://resolve?${new URLSearchParams({ domain: new URL(task.address).pathname.slice(1), text: task.body })}`
+        : task.address;
+      card.querySelector("[data-channel-task-body]").innerHTML = `
+        <label>Текст сообщения <textarea readonly rows="5">${esc(task.body)}</textarea></label>
+        <div class="actions">
+          <button type="button" data-channel-action="copy">Скопировать</button>
+          <a href="${esc(profile)}" ${task.channel === "telegram" ? "" : 'target="_blank" rel="noopener noreferrer"'}>Открыть ${esc(channelNames[task.channel])}</a>
+          <button type="button" data-channel-action="sent">Отметить отправку</button>
+        </div>
+      `;
+    } else {
+      if (["replied", "declined"].includes(action) && !window.confirm("Закрыть касание и остановить оставшиеся касания по этой компании?")) return;
+      if (action === "sent" && !window.confirm("Сообщение уже отправлено из приложения?")) return;
+      await channelRequest(`tasks/${id}`, "PATCH", { status: action });
+      await loadChannelTasks();
+    }
+  } catch (error) {
+    output.textContent = channelError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("#leadsTable").addEventListener("click", async (event) => {
   const row = event.target.closest("tr[data-lead-id]");
   if (!row) return;
@@ -5368,6 +5634,7 @@ $("#leadsTable").addEventListener("click", async (event) => {
         <p>${esc(detail.lead.contact_name || "")} ${esc(detail.lead.position || "")}</p>
         <p>${esc(detail.lead.segment || "")} · ${esc(detail.lead.city || "")}</p>
         <p>${esc(detail.lead.pain || "")}</p>
+        ${detail.lead.notes ? `<details><summary>Заметки и источники</summary><pre>${esc(detail.lead.notes)}</pre></details>` : ""}
       </section>
       <section>
         <h3>Открытия</h3>
@@ -5375,6 +5642,7 @@ $("#leadsTable").addEventListener("click", async (event) => {
         <p>Первые: ${detail.opens.filter((item) => item.is_first_open).length}</p>
       </section>
     </div>
+    <section id="leadChannels" data-company-lead="${esc(detail.lead.id)}"><h3>Контакты компании</h3><p>Загружаю…</p></section>
     <h3>Переписка</h3>
     <div class="cards">${detail.messages
       .map(
@@ -5393,6 +5661,7 @@ $("#leadsTable").addEventListener("click", async (event) => {
       .join("")}</div>
   `;
   $("#leadDialog").showModal();
+  void loadLeadChannels(detail.lead.id);
 });
 
 $("#leadForm").addEventListener("submit", (event) => runAction({

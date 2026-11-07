@@ -275,6 +275,26 @@ export function createToolHandlers({ client, confirmations }) {
       });
       return success("Подтверждённый пилот персонализации создан; письма не отправлялись.", data, ["personalization_pilot_get"]);
     }),
+    channel_company_get: safeTool(async ({ lead_id: leadId }) => success(
+      "Рабочие контакты компании.", await client.get(`/api/outreach/channels/company/${pathId(leadId, "lead_id")}`), ["channel_contact_save"],
+    )),
+    channel_contact_save: safeTool(async ({ lead_id: leadId, ...contact }) => success(
+      "Рабочий контакт сохранён.", await client.post(`/api/outreach/channels/company/${pathId(leadId, "lead_id")}/contacts`, contact), ["channel_task_schedule"],
+    )),
+    channel_tasks_list: safeTool(async ({ status }) => success(
+      "Расписание сообщений.", await client.get("/api/outreach/channels/tasks", { status }), ["channel_task_get_ready"],
+    )),
+    channel_task_schedule: safeTool(async (task) => success(
+      "Ручное сообщение добавлено в расписание.", await client.post("/api/outreach/channels/tasks", task), ["channel_tasks_list"],
+    )),
+    company_sequence_save: safeTool(async ({ draft_id: draftId, ...plan }) => success(
+      "Цепочка сохранена. Для запуска подготовьте подтверждение отправки.",
+      await client.put(`/api/outreach/drafts/${pathId(draftId, "draft_id")}/company-sequence`, plan),
+      ["drafts_preflight"],
+    )),
+    channel_task_get_ready: safeTool(async ({ task_id: taskId }) => success(
+      "Текст и профиль готовы к проверке перед отправкой.", await client.get(`/api/outreach/channels/tasks/${pathId(taskId, "task_id")}/ready`),
+    )),
     company_research_list: safeTool(async (input) => success(
       "Очередь исследования компаний получена.",
       await client.get("/api/company-research/runs", { query: filteredQuery(input, ["status"]) }),
@@ -664,7 +684,7 @@ export function createToolHandlers({ client, confirmations }) {
         const action = required(input.action, "action");
         if (action === "stop_all") {
           const impact = await client.get("/api/outreach/stop-all/impact");
-          return prepareConfirmation(confirmations, "run_control", { action }, impact, `Подготовлена остановка всей рассылки: ${impact.active_queue || 0} писем в очереди, включая ${impact.followups || 0} follow-up.`, ["run_control"]);
+          return prepareConfirmation(confirmations, "run_control", { action }, impact, `Подготовлена остановка всей рассылки: ${impact.active_queue || 0} писем в очереди, включая ${impact.followups || 0} follow-up, и ${impact.active_channel_tasks || 0} задач в мессенджерах.`, ["run_control"]);
         }
         const runId = required(input.run_id, "run_id");
         if (action !== "stop" && !input.lead_ids?.length) throw new OutreachApiError("lead_ids are required for follow-up control", { code: "lead_ids_required" });
