@@ -2133,6 +2133,7 @@ function switchView(view, options = {}) {
   if (nextView === "outreachChannels") {
     void loadMessengerDrafts();
     void loadChannelTasks();
+    void loadTelegramQueue();
   }
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
@@ -5732,12 +5733,48 @@ async function loadChannelTasks() {
   }
 }
 
+const telegramQueueLabels = {
+  pending: "В очереди",
+  sending: "Отправляется",
+  sent: "Отправлено",
+  skipped: "Пропущено",
+  failed: "Ошибка Telegram",
+  uncertain: "Проверить отправку",
+  cancelled: "Отменено",
+};
+
+const telegramQueueDate = new Intl.DateTimeFormat("ru-RU", {
+  dateStyle: "short", timeStyle: "short", timeZone: "Europe/Moscow",
+});
+
+async function loadTelegramQueue() {
+  const format = (value) => telegramQueueDate.format(new Date(value));
+  const root = $("#telegramQueue");
+  try {
+    const rows = await api("/api/outreach/channels/telegram-queue");
+    root.innerHTML = rows.length ? `
+      <table>
+        <thead><tr><th>Кому</th><th>Откуда</th><th>Запланировано</th><th>Статус</th></tr></thead>
+        <tbody>${rows.map((row) => `<tr>
+          <td>${esc(row.name)} · ${esc(row.company)}<br>${esc(row.address)}</td>
+          <td>@${esc(row.sender)}</td>
+          <td>${esc(format(row.scheduled_at))}</td>
+          <td>${esc(telegramQueueLabels[row.status])}${row.completed_at ? `<br>${esc(format(row.completed_at))}` : ""}</td>
+        </tr>`).join("")}</tbody>
+      </table>` : '<p class="muted">Очередь пуста.</p>';
+  } catch (error) {
+    root.textContent = channelError(error);
+  }
+}
+
+$("#telegramQueueRefresh").addEventListener("click", () => void loadTelegramQueue());
 $("#channelTasksRefresh").addEventListener("click", () => void loadChannelTasks());
 $("#channelTaskStatus").addEventListener("change", () => void loadChannelTasks());
 
 window.setInterval(() => {
   if ($("#outreachChannelsView").classList.contains("active") && !$("#channelTaskList textarea") && !document.hidden) {
     void loadChannelTasks();
+    void loadTelegramQueue();
   }
 }, 30000);
 

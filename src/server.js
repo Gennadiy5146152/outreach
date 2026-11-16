@@ -611,6 +611,20 @@ app.patch("/api/outreach/channels/tasks/:id", asyncHandler(async (req, res) => {
   res.json(await outreachChannelTasks.finish(req.params.id, req.body.status));
 }));
 
+app.get("/api/outreach/channels/telegram-queue", asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT delivery.id, delivery.sender, delivery.address, delivery.scheduled_at, delivery.status,
+           delivery.completed_at, delivery.telegram_message_id, delivery.detail, draft.name, draft.company
+    FROM outreach_telegram_deliveries delivery
+    JOIN outreach_messenger_drafts draft ON draft.id = delivery.draft_id
+    ORDER BY (delivery.status IN ('pending', 'sending')) DESC,
+             CASE WHEN delivery.status IN ('pending', 'sending') THEN delivery.scheduled_at END,
+             delivery.completed_at DESC NULLS LAST, delivery.id
+    LIMIT 200
+  `);
+  res.json(rows);
+}));
+
 app.get("/api/outreach/channels/drafts", asyncHandler(async (req, res) => {
   res.json(await messengerDrafts.list(req.query));
 }));

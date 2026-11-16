@@ -265,6 +265,13 @@
         </section>
         <section class="panel">
           <div class="panel-head">
+            <div><h2>Автоотправка в Telegram</h2><p class="muted">До 10 сообщений в день, с 09:30 до 11:30 по Москве.</p></div>
+            <button type="button" id="telegramQueueRefresh">Обновить</button>
+          </div>
+          <div class="table-wrap" id="telegramQueue" aria-live="polite"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
             <div><h2>Расписание сообщений</h2><p>Контакты добавляются в карточке компании в «Базе». В назначенное время здесь появится действие для отправки из приложения.</p></div>
             <button type="button" id="channelTasksRefresh">Обновить</button>
           </div>

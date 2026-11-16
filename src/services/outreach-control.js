@@ -55,7 +55,9 @@ export async function outreachStopAllImpact(client) {
         WHERE draft.status IN ('queued','active_sequence','paused')
       ),
       active_channels AS (
-        SELECT id FROM outreach_channel_tasks WHERE status IN ('waiting', 'scheduled')
+        SELECT 'channel:' || id::text AS entity_key FROM outreach_channel_tasks WHERE status IN ('waiting', 'scheduled')
+        UNION ALL
+        SELECT 'telegram:' || id::text FROM outreach_telegram_deliveries WHERE status IN ('pending', 'sending')
       ),
       affected_entities AS (
         SELECT 'queue:' || id::text || ':step:' || step_position::text AS entity_key FROM active_queue
@@ -66,7 +68,7 @@ export async function outreachStopAllImpact(client) {
         UNION
         SELECT 'draft:' || id::text FROM active_drafts
         UNION
-        SELECT 'channel:' || id::text FROM active_channels
+        SELECT entity_key FROM active_channels
       )
       SELECT
         (SELECT count(*)::int FROM active_queue) AS active_queue,
@@ -169,6 +171,12 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
       `UPDATE outreach_channel_tasks
        SET status = 'cancelled', completed_at = now() WHERE status IN ('waiting', 'scheduled')`,
     );
+    const cancelledTelegram = await client.query(
+      `UPDATE outreach_telegram_deliveries
+       SET status = CASE WHEN status = 'sending' THEN 'uncertain' ELSE 'cancelled' END,
+           completed_at = now(), detail = 'outreach_stopped'
+       WHERE status IN ('pending', 'sending')`,
+    );
     const stoppedRuns = await client.query(
       `
         UPDATE outreach_runs
@@ -182,7 +190,7 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
     return {
       stopped: true,
       cancelled_queue: cancelled.rowCount,
-      cancelled_channel_tasks: cancelledChannelTasks.rowCount,
+      cancelled_channel_tasks: cancelledChannelTasks.rowCount + cancelledTelegram.rowCount,
       cancelled_steps: cancelledSteps,
       paused_enrollments: pausedEnrollments.rowCount,
       cancelled_drafts: cancelledDrafts.rowCount,

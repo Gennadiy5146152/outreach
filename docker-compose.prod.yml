@@ -78,5 +78,29 @@ services:
       postgres:
         condition: service_healthy
 
+  telegram:
+    image: outreach-telegram-worker:local
+    build:
+      context: ./deploy/telegram-connection
+    entrypoint: ["python", "-B", "/app/queue_worker.py"]
+    command: ["--account", "${OUTREACH_TELEGRAM_ACCOUNT:-ideamen51}", "run", "--session-file", "/run/secrets/telegram.json"]
+    profiles: ["telegram"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+    volumes:
+      - type: bind
+        source: ${OUTREACH_TELEGRAM_SESSION_FILE:-/root/.local/share/outreach-telegram/session.json}
+        target: /run/secrets/telegram.json
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
