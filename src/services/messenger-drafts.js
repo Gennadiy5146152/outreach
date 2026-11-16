@@ -2,6 +2,7 @@ import { channelContactInput } from "./outreach-channel-tasks.js";
 
 const channels = new Set(["telegram", "max", "vk"]);
 const statuses = new Set(["ready", "review", "sent"]);
+const audiences = new Set(["business", "partnership", "excluded"]);
 const uuidPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const statusSql = "CASE WHEN sent_at IS NOT NULL THEN 'sent' WHEN review_reason <> '' THEN 'review' ELSE 'ready' END";
 
@@ -58,6 +59,7 @@ function normalizeRow(row) {
     case_reason: text(row.case_reason, 4000),
     opportunity: text(row.opportunity, 4000),
     partnership: row.partnership === true,
+    technology_product: row.technology_product === true,
     review_reason: status === "review" ? text(row.review_reason, 4000, true).trim() : "",
     body: text(row.body ?? row.draft, 4000, true),
   };
@@ -86,24 +88,26 @@ export function createMessengerDrafts({ query }) {
       const { rowCount } = await query(`
         INSERT INTO outreach_messenger_drafts (
           collection, channel, address, name, role, source_url, company, region, website,
-          fact, fact_url, case_url, case_reason, opportunity, partnership, review_reason, body
+          fact, fact_url, case_url, case_reason, opportunity, partnership, technology_product, review_reason, body
         )
         SELECT $1, channel, address, name, role, source_url, company, region, website,
-          fact, fact_url, case_url, case_reason, opportunity, partnership, review_reason, body
+          fact, fact_url, case_url, case_reason, opportunity, partnership, technology_product, review_reason, body
         FROM jsonb_to_recordset($2::jsonb) AS input(
           channel text, address text, name text, role text, source_url text, company text,
           region text, website text, fact text, fact_url text, case_url text, case_reason text,
-          opportunity text, partnership boolean, review_reason text, body text
+          opportunity text, partnership boolean, technology_product boolean, review_reason text, body text
         )
         ON CONFLICT (collection, channel, address) DO NOTHING
       `, [name, JSON.stringify(input)]);
       return { inserted: rowCount, existing: input.length - rowCount };
     },
 
-    async list({ status, search, page, pageSize } = {}) {
+    async list({ status, search, page, pageSize, audience } = {}) {
       const filter = text(status, 20).trim();
       if (filter && !statuses.has(filter)) throw error("messenger_status_invalid");
       const term = text(search, 200).trim().replace(/^@/, "");
+      const audienceFilter = text(audience, 20);
+      if (audienceFilter && !audiences.has(audienceFilter)) throw error("messenger_audience_invalid");
       const pageNumber = Number(page ?? 1);
       const limit = Number(pageSize ?? 50);
       if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > 10000) {
@@ -112,18 +116,25 @@ export function createMessengerDrafts({ query }) {
       if (![25, 50, 100].includes(limit)) throw error("messenger_page_invalid");
       const { rows: [result] } = await query(`
         WITH filtered AS (
-          SELECT id, collection, channel, address, name, company, sent_at, partnership, updated_at, ${statusSql} AS status
+          SELECT id, collection, channel, address, name, company, sent_at, partnership, technology_product,
+            updated_at, ${statusSql} AS status
           FROM outreach_messenger_drafts
           WHERE ($1 = '' OR $1 = ${statusSql})
             AND ($2 = '' OR strpos(lower(concat_ws(' ', name, company, address, collection,
               CASE WHEN partnership THEN 'сотрудничество' END)), lower($2)) > 0)
+            AND CASE $5
+              WHEN 'business' THEN NOT partnership AND NOT technology_product
+              WHEN 'partnership' THEN partnership
+              WHEN 'excluded' THEN NOT partnership AND technology_product
+              ELSE true
+            END
         ), page AS (
           SELECT * FROM filtered ORDER BY updated_at DESC, id LIMIT $3 OFFSET $4
         )
         SELECT (SELECT count(*)::int FROM filtered) AS total,
           COALESCE(jsonb_agg(page ORDER BY updated_at DESC, id), '[]'::jsonb) AS items
         FROM page
-      `, [filter, term, limit, (pageNumber - 1) * limit]);
+      `, [filter, term, limit, (pageNumber - 1) * limit, audienceFilter]);
       return { ...result, page: pageNumber, pageSize: limit };
     },
 

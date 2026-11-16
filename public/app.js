@@ -5439,6 +5439,7 @@ const channelErrors = {
   messenger_draft_invalid: "Проверь контакт, ссылки и текст сообщения.",
   messenger_batch_invalid: "Нужен JSON-файл с массивом от 1 до 500 черновиков.",
   messenger_batch_duplicates: "В файле повторяются профили одного канала.",
+  messenger_audience_invalid: "Выбери аудиторию из списка.",
   messenger_draft_not_found: "Черновик не найден.",
   messenger_draft_sent: "Отправка уже отмечена. Открой карточку заново.",
   company_sequence_followup_required: "Сначала сохрани первое письмо и один фоллоу-ап.",
@@ -5497,7 +5498,7 @@ async function loadMessengerDrafts() {
       <tbody>${data.items.map((row) => `
         <tr>
           <td><strong>${esc(row.name)}</strong><br>${esc(channelNames[row.channel])} · ${esc(row.address)}</td>
-          <td>${esc(row.company)}</td><td>${esc(row.collection)}${row.partnership ? " · Сотрудничество" : ""}</td>
+          <td>${esc(row.company)}</td><td>${esc(row.collection)}${row.partnership ? " · Сотрудничество" : ""}${row.technology_product ? " · IT-продукт" : ""}</td>
           <td>${esc(messengerDraftLabels[row.status])}${row.sent_at ? `<br>${esc(fmtDate(row.sent_at))}` : ""}</td>
           <td><button type="button" data-messenger-draft="${esc(row.id)}">Открыть</button></td>
         </tr>`).join("")}</tbody>` : "";
@@ -5583,7 +5584,9 @@ $("#messengerDraftFilters").addEventListener("submit", (event) => {
   state.messengerDraftPagination.page = 1;
   void loadMessengerDrafts();
 });
-$("#messengerDraftFilters select").addEventListener("change", () => $("#messengerDraftFilters").requestSubmit());
+for (const filter of $$("#messengerDraftFilters select")) {
+  filter.addEventListener("change", () => filter.form.requestSubmit());
+}
 $("#messengerDraftList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-messenger-draft]");
   if (!button) return;

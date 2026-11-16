@@ -35,6 +35,7 @@ test("a sent snapshot preserves the exact text and time through edits and reimpo
     await client.query("BEGIN");
     await client.query("CREATE SCHEMA messenger_test; SET LOCAL search_path TO messenger_test, public");
     await client.query(await readFile(new URL("../db/migrations/021_messenger_drafts.sql", import.meta.url), "utf8"));
+    await client.query(await readFile(new URL("../db/migrations/022_messenger_technology_product.sql", import.meta.url), "utf8"));
     const { createMessengerDrafts } = await import("../src/services/messenger-drafts.js");
     const drafts = createMessengerDrafts({ query: client.query.bind(client) });
     assert.deepEqual(await drafts.importBatch(input), { inserted: 1, existing: 0 });
@@ -56,6 +57,15 @@ test("a sent snapshot preserves the exact text and time through edits and reimpo
     assert.equal(final.body, originalBody);
     assert.equal(final.sent_body, sentBody);
     assert.equal(final.sent_at.getTime(), sent.sent_at.getTime());
+
+    await drafts.importBatch({ collection: "Аудитории", rows: [
+      { ...input.rows[0], telegram: "https://t.me/soft_company", technology_product: true },
+      { ...input.rows[0], telegram: "https://t.me/our_partner", technology_product: true, partnership: true },
+    ] });
+    const byAudience = async (audience) => (await drafts.list({ audience })).items.map((item) => item.address);
+    assert.deepEqual(await byAudience("business"), ["https://t.me/work_contact"]);
+    assert.deepEqual(await byAudience("excluded"), ["https://t.me/soft_company"]);
+    assert.deepEqual(await byAudience("partnership"), ["https://t.me/our_partner"]);
   } finally {
     await client.query("ROLLBACK");
     await client.end();
