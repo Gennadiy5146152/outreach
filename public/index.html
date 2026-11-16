@@ -232,6 +232,33 @@
       <section class="view" id="outreachChannelsView">
         <section class="panel">
           <div class="panel-head">
+            <div><h2>Черновики и история отправки</h2><p class="muted">Рабочие контакты, сообщения и отметки о ручной отправке.</p></div>
+          </div>
+          <form id="messengerDraftFilters" class="lead-filters">
+            <label>Поиск <input name="search" type="search" placeholder="Имя, компания или профиль" maxlength="200"></label>
+            <label>Статус <select name="status">
+              <option value="">Все</option>
+              <option value="ready">Готовые</option>
+              <option value="review">На проверке</option>
+              <option value="sent">Отправленные</option>
+            </select></label>
+            <button type="submit">Найти</button>
+          </form>
+          <details>
+            <summary>Загрузить черновики</summary>
+            <form id="messengerDraftImport" class="form-grid">
+              <label>Подборка <input name="collection" maxlength="200" required></label>
+              <label>Файл с контактами и текстами <input name="file" type="file" accept=".json,application/json" required></label>
+              <button type="submit">Загрузить</button>
+              <output aria-live="polite"></output>
+            </form>
+          </details>
+          <p id="messengerDraftListStatus" class="muted" aria-live="polite"></p>
+          <div class="table-wrap"><table id="messengerDraftList"></table></div>
+          <div id="messengerDraftPagination" class="pagination"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
             <div><h2>Расписание сообщений</h2><p>Контакты добавляются в карточке компании в «Базе». В назначенное время здесь появится действие для отправки из приложения.</p></div>
             <button type="button" id="channelTasksRefresh">Обновить</button>
           </div>
@@ -1053,6 +1080,16 @@
         </section>
       </section>
     </main>
+
+    <dialog id="messengerDraftDialog" aria-labelledby="messengerDraftTitle">
+      <div class="dialog-card">
+        <div class="panel-head">
+          <h2 id="messengerDraftTitle">Сообщение</h2>
+          <form method="dialog"><button>Закрыть</button></form>
+        </div>
+        <div id="messengerDraftDetail"></div>
+      </div>
+    </dialog>
 
     <dialog id="leadDialog">
       <div class="dialog-card">

@@ -24,6 +24,7 @@ import { createAuth, timingSafeEqualText } from "./http/auth.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
 import { companySequencePlan, saveCompanySequence } from "./services/company-outreach-sequence.js";
 import { createOutreachChannelTasks } from "./services/outreach-channel-tasks.js";
+import { createMessengerDrafts } from "./services/messenger-drafts.js";
 import { createCompanyResearchApi } from "./services/company-research-api.js";
 import { normalizeCampaignLaunchMode, normalizeDraftLaunchMode } from "./services/outreach-delivery-mode.js";
 
@@ -56,6 +57,7 @@ const {
 } = createAuth(env);
 const personalizationApi = createPersonalizationApi({ query, withClient });
 const outreachChannelTasks = createOutreachChannelTasks({ query, withClient });
+const messengerDrafts = createMessengerDrafts({ query });
 const companyResearchApi = createCompanyResearchApi({ query, withClient });
 
 function cleanText(value) {
@@ -607,6 +609,26 @@ app.get("/api/outreach/channels/tasks/:id/ready", asyncHandler(async (req, res) 
 
 app.patch("/api/outreach/channels/tasks/:id", asyncHandler(async (req, res) => {
   res.json(await outreachChannelTasks.finish(req.params.id, req.body.status));
+}));
+
+app.get("/api/outreach/channels/drafts", asyncHandler(async (req, res) => {
+  res.json(await messengerDrafts.list(req.query));
+}));
+
+app.post("/api/outreach/channels/drafts/import", asyncHandler(async (req, res) => {
+  res.status(201).json(await messengerDrafts.importBatch(req.body));
+}));
+
+app.get("/api/outreach/channels/drafts/:id", asyncHandler(async (req, res) => {
+  res.json(await messengerDrafts.get(req.params.id));
+}));
+
+app.patch("/api/outreach/channels/drafts/:id", asyncHandler(async (req, res) => {
+  res.json(await messengerDrafts.update(req.params.id, req.body));
+}));
+
+app.post("/api/outreach/channels/drafts/:id/sent", asyncHandler(async (req, res) => {
+  res.json(await messengerDrafts.recordSent(req.params.id, req.body));
 }));
 
 app.get("/api/health", asyncHandler(async (_req, res) => {

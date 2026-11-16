@@ -5,6 +5,8 @@ const state = {
   outreachImports: [],
   outreachDrafts: [],
   allOutreachDrafts: [],
+  messengerDraftPagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
+  messengerDraftRequestId: 0,
   outreachDraftFilter: "ready",
   selectedOutreachDraftIds: new Set(),
   outreachDraftLaunchReview: null,
@@ -119,6 +121,7 @@ function renderPagination(targetId, pagination, scope) {
 
 function paginationScope(scope) {
   return {
+    messengerDrafts: [state.messengerDraftPagination, loadMessengerDrafts],
     queue: [state.queuePagination, loadQueue],
     runs: [state.runPagination, () => loadRunDetail(state.activeRunId)],
     participation: [state.participationPagination, loadParticipation],
@@ -2127,7 +2130,10 @@ function switchView(view, options = {}) {
   if ($("#viewEyebrow")) $("#viewEyebrow").textContent = VIEW_GROUPS[nextView] || "Outreach Desk";
   document.body.classList.remove("nav-open");
   rememberView(nextView, options);
-  if (nextView === "outreachChannels") void loadChannelTasks();
+  if (nextView === "outreachChannels") {
+    void loadMessengerDrafts();
+    void loadChannelTasks();
+  }
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
 
@@ -5430,6 +5436,11 @@ const channelNames = {
 };
 
 const channelErrors = {
+  messenger_draft_invalid: "Проверь контакт, ссылки и текст сообщения.",
+  messenger_batch_invalid: "Нужен JSON-файл с массивом от 1 до 500 черновиков.",
+  messenger_batch_duplicates: "В файле повторяются профили одного канала.",
+  messenger_draft_not_found: "Черновик не найден.",
+  messenger_draft_sent: "Отправка уже отмечена. Открой карточку заново.",
   company_sequence_followup_required: "Сначала сохрани первое письмо и один фоллоу-ап.",
   company_sequence_alternate_unavailable: "Второй email должен быть проверенным лидом этой же компании.",
   company_sequence_alternate_text_invalid: "Заполни тему и текст отдельного письма на второй адрес.",
@@ -5461,6 +5472,158 @@ function channelRequest(path, method, payload) {
     body: JSON.stringify(payload),
   });
 }
+
+const messengerDraftLabels = { ready: "Готово", review: "На проверке", sent: "Отправлено" };
+
+async function loadMessengerDrafts() {
+  const requestId = ++state.messengerDraftRequestId;
+  const form = $("#messengerDraftFilters");
+  const table = $("#messengerDraftList");
+  const summary = $("#messengerDraftListStatus");
+  const pagination = state.messengerDraftPagination;
+  const params = new URLSearchParams({ ...formJson(form), ...paginationQuery(pagination) });
+  try {
+    const data = await api(`/api/outreach/channels/drafts?${params}`);
+    if (!data || requestId !== state.messengerDraftRequestId) return;
+    const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    if (data.page > totalPages) {
+      pagination.page = totalPages;
+      return loadMessengerDrafts();
+    }
+    Object.assign(pagination, { page: data.page, pageSize: data.pageSize, total: data.total, totalPages });
+    summary.textContent = data.total ? `Сообщений: ${data.total}` : "По этому фильтру сообщений нет.";
+    table.innerHTML = data.items.length ? `
+      <thead><tr><th>Контакт</th><th>Компания</th><th>Подборка</th><th>Статус</th><th></th></tr></thead>
+      <tbody>${data.items.map((row) => `
+        <tr>
+          <td><strong>${esc(row.name)}</strong><br>${esc(channelNames[row.channel])} · ${esc(row.address)}</td>
+          <td>${esc(row.company)}</td><td>${esc(row.collection)}${row.partnership ? " · Сотрудничество" : ""}</td>
+          <td>${esc(messengerDraftLabels[row.status])}${row.sent_at ? `<br>${esc(fmtDate(row.sent_at))}` : ""}</td>
+          <td><button type="button" data-messenger-draft="${esc(row.id)}">Открыть</button></td>
+        </tr>`).join("")}</tbody>` : "";
+    renderPagination("messengerDraftPagination", pagination, "messengerDrafts");
+  } catch (error) {
+    if (requestId === state.messengerDraftRequestId) summary.textContent = channelError(error);
+  }
+}
+
+function showMessengerDraft(draft, actualBody = null) {
+  const marked = draft.status === "sent";
+  const recording = actualBody !== null;
+  const root = $("#messengerDraftDetail");
+  $("#messengerDraftTitle").textContent = draft.name;
+  root.innerHTML = `
+    <p>${esc([draft.company, draft.role, draft.region].filter(Boolean).join(" · "))}</p>
+    <div class="actions">
+      <a href="${esc(draft.address)}" target="_blank" rel="noopener noreferrer">Открыть профиль в ${esc(channelNames[draft.channel])}</a>
+      <a href="${esc(draft.source_url)}" target="_blank" rel="noopener noreferrer">Источник контакта</a>
+      ${draft.website ? `<a href="${esc(draft.website)}" target="_blank" rel="noopener noreferrer">Сайт</a>` : ""}
+    </div>
+    ${draft.fact || draft.opportunity ? `<details><summary>Факты и предложение</summary>
+      ${draft.fact ? `<p>${esc(draft.fact)} ${draft.fact_url ? `<a href="${esc(draft.fact_url)}" target="_blank" rel="noopener noreferrer">Источник</a>` : ""}</p>` : ""}
+      ${draft.opportunity ? `<p>${esc(draft.opportunity)}</p>` : ""}
+      ${draft.case_url ? `<a href="${esc(draft.case_url)}" target="_blank" rel="noopener noreferrer">Кейс</a><p>${esc(draft.case_reason)}</p>` : ""}
+    </details>` : ""}
+    ${draft.review_reason ? `<p class="muted">${esc(draft.review_reason)}</p>` : ""}
+    ${marked ? `<p>Отправка отмечена ${esc(fmtDate(draft.sent_at))}</p>` : ""}
+    ${marked && draft.body !== draft.sent_body ? `<details><summary>Исходный черновик</summary>
+      <p style="white-space: pre-wrap">${esc(draft.body)}</p>
+    </details>` : ""}
+    <form class="form-grid">
+      <label>${marked || recording ? "Фактически отправленный текст" : "Черновик"}<textarea name="body" rows="12" maxlength="4000" required ${marked ? "readonly" : ""}></textarea></label>
+      ${recording ? '<p class="muted">Сверь текст с сообщением в переписке перед сохранением отметки.</p>' : ""}
+      ${!marked && !recording && draft.review_reason ? '<label><input type="checkbox" name="reviewed"> Контакт проверен</label>' : ""}
+      <div class="actions">
+        <button type="button" data-message-copy>Скопировать текст</button>
+        ${!marked && !recording ? '<button type="submit">Сохранить черновик</button><button type="button" data-message-record>Отметить отправку</button>' : ""}
+        ${recording ? '<button type="submit">Сохранить отметку</button><button type="button" data-message-back>Назад</button>' : ""}
+      </div>
+      <output aria-live="polite"></output>
+    </form>
+  `;
+  const form = root.querySelector("form");
+  const body = form.elements.body;
+  const output = form.querySelector("output");
+  body.value = actualBody ?? draft.sent_body ?? draft.body;
+  form.querySelector("[data-message-copy]").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(body.value);
+      output.textContent = "Текст скопирован.";
+    } catch {
+      body.focus();
+      body.select();
+      output.textContent = "Текст выделен. Скопируй его сочетанием клавиш.";
+    }
+  });
+  form.querySelector("[data-message-record]")?.addEventListener("click", () => showMessengerDraft(draft, body.value));
+  form.querySelector("[data-message-back]")?.addEventListener("click", () => showMessengerDraft(draft));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (marked) return;
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      const data = recording
+        ? await channelRequest(`drafts/${draft.id}/sent`, "POST", { body: body.value })
+        : await channelRequest(`drafts/${draft.id}`, "PATCH", { body: body.value, reviewed: form.elements.reviewed?.checked === true });
+      if (!data) return;
+      showMessengerDraft(data);
+      root.querySelector("output").textContent = recording ? "Отправка отмечена." : "Черновик сохранён.";
+      void loadMessengerDrafts();
+    } catch (error) {
+      output.textContent = channelError(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+$("#messengerDraftFilters").addEventListener("submit", (event) => {
+  event.preventDefault();
+  state.messengerDraftPagination.page = 1;
+  void loadMessengerDrafts();
+});
+$("#messengerDraftFilters select").addEventListener("change", () => $("#messengerDraftFilters").requestSubmit());
+$("#messengerDraftList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-messenger-draft]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const draft = await api(`/api/outreach/channels/drafts/${button.dataset.messengerDraft}`);
+    if (!draft) return;
+    showMessengerDraft(draft);
+    const dialog = $("#messengerDraftDialog");
+    if (!dialog.open) dialog.showModal();
+  } catch (error) {
+    $("#messengerDraftListStatus").textContent = channelError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#messengerDraftImport").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = event.submitter;
+  const output = form.querySelector("output");
+  button.disabled = true;
+  try {
+    let rows;
+    try {
+      rows = JSON.parse(await form.elements.file.files[0].text());
+    } catch {
+      throw new Error("messenger_batch_invalid");
+    }
+    const result = await channelRequest("drafts/import", "POST", { collection: form.elements.collection.value, rows });
+    if (!result) return;
+    output.textContent = `Загружено: ${result.inserted}. Уже в подборке: ${result.existing}.`;
+    state.messengerDraftPagination.page = 1;
+    void loadMessengerDrafts();
+  } catch (error) {
+    output.textContent = channelError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function loadLeadChannels(leadId) {
   const root = $("#leadChannels");
