@@ -265,10 +265,35 @@
         </section>
         <section class="panel">
           <div class="panel-head">
-            <div><h2>Автоотправка в Telegram</h2><p class="muted">До 10 сообщений в день, с 09:30 до 11:30 по Москве.</p></div>
+            <div><h2>Автоотправка в Telegram</h2><p class="muted">Отдельный лимит и расписание для каждого профиля. Все часы по Москве. История и защита от дублей общие.</p></div>
             <button type="button" id="telegramQueueRefresh">Обновить</button>
           </div>
+          <div id="telegramProfiles" aria-live="polite"></div>
+          <details><summary>Добавить Telegram-профиль</summary>
+            <form id="telegramProfileCreate" class="form-grid">
+              <label>Имя пользователя <input name="sender" placeholder="@username" pattern="@?[a-zA-Z][a-zA-Z0-9_]{3,31}" required></label>
+              <label>Название <input name="label" maxlength="100"></label>
+              <p class="muted">Новый профиль появится на паузе. Для него нужна отдельная авторизация MTProto. Пароль и код здесь не вводятся.</p>
+              <button type="submit">Добавить профиль</button><output aria-live="polite"></output>
+            </form>
+          </details>
+          <details><summary>Подготовить отправку</summary>
+            <form id="telegramLaunch" class="form-grid">
+              <label>Отправитель <select name="sender" id="telegramLaunchSender" required></select></label>
+              <label>Первый день по Москве <input name="start_date" type="date" required></label>
+              <label>Подтверждённые получатели <input name="file" type="file" accept=".json,application/json" required></label>
+              <p class="muted">JSON-массив: draft_id, recipient_id, permission_kind (request или consent), permission_evidence. На следующем шаге будут показаны все тексты и даты. Данные сессий сюда не загружайте.</p>
+              <button type="submit">Проверить и показать план</button><output aria-live="polite"></output>
+            </form>
+          </details>
+          <div id="telegramPlan" aria-live="polite"></div>
+          <form id="telegramQueueFilters" class="lead-filters">
+            <label>Профиль <select name="sender" id="telegramQueueSender"><option value="">Все профили</option></select></label>
+            <label>Статус <select name="status"><option value="">Все</option><option value="pending">В очереди</option><option value="sent">Отправлено</option><option value="failed">Ошибки</option><option value="uncertain">Проверить отправку</option><option value="cancelled">Отменено</option><option value="skipped">Пропущено</option></select></label>
+            <button type="submit">Показать</button>
+          </form>
           <div class="table-wrap" id="telegramQueue" aria-live="polite"></div>
+          <div class="actions"><button id="telegramQueuePrev" type="button">Назад</button><span id="telegramQueuePage"></span><button id="telegramQueueNext" type="button">Далее</button></div>
         </section>
         <section class="panel">
           <div class="panel-head">

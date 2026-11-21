@@ -83,18 +83,19 @@ services:
     build:
       context: ./deploy/telegram-connection
     entrypoint: ["python", "-B", "/app/queue_worker.py"]
-    command: ["--account", "${OUTREACH_TELEGRAM_ACCOUNT:-ideamen51}", "run", "--session-file", "/run/secrets/telegram.json"]
+    command: ["profiles", "--session-dir", "/run/secrets/telegram"]
     profiles: ["telegram"]
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:
+      OUTREACH_TELEGRAM_ACCOUNT: ${OUTREACH_TELEGRAM_ACCOUNT:-ideamen51}
       DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
     volumes:
       - type: bind
-        source: ${OUTREACH_TELEGRAM_SESSION_FILE:-/root/.local/share/outreach-telegram/session.json}
-        target: /run/secrets/telegram.json
+        source: ${OUTREACH_TELEGRAM_SESSION_DIR:-/root/.local/share/outreach-telegram}
+        target: /run/secrets/telegram
         read_only: true
         bind:
           create_host_path: false

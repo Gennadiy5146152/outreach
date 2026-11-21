@@ -48,6 +48,7 @@ function stopClient({ failOnCancel = false } = {}) {
         assert.match(sql, /WHEN status = 'sending' THEN 'uncertain'/);
         return { rows: [], rowCount: 1 };
       }
+      if (String(sql).includes("UPDATE outreach_telegram_profiles")) return { rows: [], rowCount: 2 };
       if (String(sql).includes("UPDATE outreach_runs")) {
         assert.match(sql, /mode <> 'test'/);
         return { rows: [], rowCount: 1 };

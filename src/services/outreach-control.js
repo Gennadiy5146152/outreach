@@ -177,6 +177,8 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
            completed_at = now(), detail = 'outreach_stopped'
        WHERE status IN ('pending', 'sending')`,
     );
+    // Invalidate prepared Telegram launches as well as the existing queue.
+    await client.query("UPDATE outreach_telegram_profiles SET revision = revision + 1, updated_at = now()");
     const stoppedRuns = await client.query(
       `
         UPDATE outreach_runs

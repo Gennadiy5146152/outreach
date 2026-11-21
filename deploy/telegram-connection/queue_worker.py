@@ -69,11 +69,12 @@ SELECT EXISTS (
 """
 
 
-def slots(first_day, count):
+def slots(first_day, count, daily_limit=DAILY_LIMIT, window_start=WINDOW_START, window_end=WINDOW_END):
     for index in range(count):
-        day, slot = divmod(index, DAILY_LIMIT)
-        beginning = datetime.combine(first_day + timedelta(days=day), WINDOW_START, MOSCOW)
-        yield beginning + timedelta(minutes=slot * 12 + 1 + secrets.randbelow(10))
+        day, slot = divmod(index, daily_limit)
+        beginning = datetime.combine(first_day + timedelta(days=day), window_start, MOSCOW)
+        width = int((datetime.combine(first_day, window_end) - datetime.combine(first_day, window_start)).total_seconds() / daily_limit)
+        yield beginning + timedelta(seconds=slot * width + 1 + secrets.randbelow(max(1, width - 121)))
 
 
 def normalize_recipient(row):
@@ -106,12 +107,15 @@ def blocked(conn, draft, delivery, own_id=None):
     return conn.execute("""
         SELECT EXISTS (
           SELECT 1 FROM outreach_telegram_deliveries q
+          JOIN outreach_messenger_drafts other ON other.id = q.draft_id
           WHERE (%s::uuid IS NULL OR q.id <> %s::uuid)
-            AND (q.recipient_id = %s OR q.address = %s)
+            AND (q.recipient_id = %s OR lower(q.address) = lower(%s)
+              OR lower(btrim(other.company)) = lower(btrim(%s))
+              OR (%s <> '' AND other.website = %s))
             AND (q.status IN ('pending','sending','uncertain')
                 OR (q.status = 'sent' AND q.completed_at >= now() - interval '30 days'))
         ) AS blocked
-    """, (own_id, own_id, delivery["recipient_id"], address)).fetchone()["blocked"]
+    """, (own_id, own_id, delivery["recipient_id"], address, draft["company"], draft["website"], draft["website"])).fetchone()["blocked"]
 
 
 def eligible(conn, draft, job, own_id=None):
@@ -123,6 +127,9 @@ def eligible(conn, draft, job, own_id=None):
 
 
 def prepare(conn, sender, rows, start):
+    profile = profile_config(conn, sender)
+    if profile["paused"]:
+        raise ValueError("Telegram profile is paused")
     if not isinstance(rows, list) or not 1 <= len(rows) <= 500:
         raise ValueError("Expected an array of 1–500 recipients with evidence.")
     ready, excluded, companies = [], [], set()
@@ -146,8 +153,8 @@ def prepare(conn, sender, rows, start):
     """, (sender,)).fetchone()["day"]
     if last_active and last_active >= day:
         day = last_active + timedelta(days=1)
-    jobs = [dict(job, scheduled_at=slot.isoformat()) for job, slot in zip(ready, slots(day, len(ready)))]
-    plan = {"sender": sender, "jobs": jobs, "excluded": excluded}
+    jobs = [dict(job, scheduled_at=slot.isoformat()) for job, slot in zip(ready, slots(day, len(ready), profile["daily_limit"], profile["window_start"], profile["window_end"]))]
+    plan = {"sender": sender, "jobs": jobs, "excluded": excluded, "profile_revision": profile["revision"]}
     return {"approval": fingerprint(plan), "plan": plan}
 
 
@@ -159,6 +166,9 @@ def enqueue(conn, sender, approval, package):
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock_shared(hashtext(%s))", (STOP_LOCK,))
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (QUEUE_LOCK,))
+        profile = profile_config(conn, sender, lock=True)
+        if profile["paused"] or profile["revision"] != plan.get("profile_revision"):
+            raise ValueError("Profile settings changed; prepare again")
         for job in jobs:
             normalized = normalize_recipient(job)
             draft = conn.execute(DRAFT + " FOR UPDATE", (normalized["draft_id"],)).fetchone()
@@ -174,7 +184,8 @@ def enqueue(conn, sender, approval, package):
                 WHERE sender = %s AND status IN ('pending','sending','sent','uncertain')
                   AND (scheduled_at AT TIME ZONE 'Europe/Moscow')::date = %s
             """, (stamp, sender, scheduled.date())).fetchone()
-            if count["total"] >= DAILY_LIMIT or count["overlaps"]:
+            if (count["total"] >= profile["daily_limit"] or count["overlaps"]
+                    or not profile["window_start"] <= scheduled.time() < profile["window_end"]):
                 raise ValueError("The sender already has messages scheduled at these times. Prepare the batch again.")
             conn.execute("""
                 INSERT INTO outreach_telegram_deliveries
@@ -198,8 +209,10 @@ def complete(conn, job, status, detail, message_id=None):
         """, (job["body"], job["draft_id"]))
 
 
-async def send_to_telegram(client, job):
+async def send_to_telegram(client, job, window_start=WINDOW_START, window_end=WINDOW_END):
     from telethon import errors, functions, types
+    window_start = job.get("_window_start", window_start)
+    window_end = job.get("_window_end", window_end)
     username = PROFILE.fullmatch(job["address"])[1]
     try:
         result = await asyncio.wait_for(client(functions.contacts.ResolveUsernameRequest(username)), 15)
@@ -211,7 +224,7 @@ async def send_to_telegram(client, job):
     if (not isinstance(result.peer, types.PeerUser) or result.peer.user_id != job["recipient_id"]
             or not isinstance(user, types.User) or user.bot or user.access_hash is None):
         return "skipped", "recipient_identity_changed", None
-    if not WINDOW_START <= datetime.now(MOSCOW).time() < WINDOW_END:
+    if not window_start <= datetime.now(MOSCOW).time() < window_end:
         return "skipped", "window_closed", None
     request = functions.messages.SendMessageRequest(
         peer=types.InputPeerUser(user.id, user.access_hash), message=job["body"],
@@ -250,18 +263,21 @@ async def tick(conn, sender, deliver):
 async def process_due(conn, sender, deliver):
     now = datetime.now(MOSCOW)
     with conn.transaction():
+        profile = profile_config(conn, sender, lock=True)
+        if profile["paused"]:
+            return
         conn.execute("""
             UPDATE outreach_telegram_deliveries SET status = 'uncertain', completed_at = now(), detail = 'interrupted'
             WHERE sender = %s AND status = 'sending'
         """, (sender,))
-        end = datetime.combine(now.date(), WINDOW_END, MOSCOW)
+        end = datetime.combine(now.date(), profile["window_end"], MOSCOW)
         conn.execute("""
             UPDATE outreach_telegram_deliveries SET status = 'skipped', completed_at = now(), detail = 'window_closed'
             WHERE sender = %s AND status = 'pending' AND (
                 (scheduled_at AT TIME ZONE 'Europe/Moscow')::date < %s
                 OR (scheduled_at < %s AND %s >= %s))
         """, (sender, now.date(), end, now, end))
-        if not WINDOW_START <= now.time() < WINDOW_END:
+        if not profile["window_start"] <= now.time() < profile["window_end"]:
             return
         if conn.execute("""
             SELECT EXISTS (SELECT 1 FROM settings WHERE key = 'runtime' AND
@@ -273,7 +289,7 @@ async def process_due(conn, sender, deliver):
             FROM outreach_telegram_deliveries
             WHERE sender = %s AND (attempted_at AT TIME ZONE 'Europe/Moscow')::date = %s
         """, (sender, now.date())).fetchone()
-        if attempts["total"] >= DAILY_LIMIT or (attempts["latest"] and now - attempts["latest"] < timedelta(minutes=2)):
+        if attempts["total"] >= profile["daily_limit"] or (attempts["latest"] and now - attempts["latest"] < timedelta(minutes=2)):
             return
         job = conn.execute("""
             SELECT * FROM outreach_telegram_deliveries
@@ -294,6 +310,7 @@ async def process_due(conn, sender, deliver):
             complete(conn, job, "skipped", "draft_or_contact_changed")
             return
         try:
+            job["_window_start"], job["_window_end"] = profile["window_start"], profile["window_end"]
             state, detail, message_id = await deliver(job)
         except Exception as error:
             state, detail, message_id = "uncertain", type(error).__name__, None
@@ -305,6 +322,16 @@ async def process_due(conn, sender, deliver):
             """, (detail, sender))
 
 
+def profile_config(conn, sender, lock=False):
+    profile = conn.execute(
+        "SELECT * FROM outreach_telegram_profiles WHERE sender = %s" + (" FOR UPDATE" if lock else ""),
+        (sender,),
+    ).fetchone()
+    if not profile:
+        raise ValueError("Telegram profile is not registered")
+    return profile
+
+
 def db_connect():
     import psycopg
     from psycopg.rows import dict_row
@@ -314,29 +341,83 @@ def db_connect():
 async def run_worker(sender, session_path):
     from telethon import TelegramClient
     from telethon.sessions import StringSession
-    config = json.loads(session_path.read_text(encoding="utf-8"))
-    client = TelegramClient(
-        StringSession(config["session"]), config["api_id"], config["api_hash"], device_model="KorDevTeam Outreach",
-        receive_updates=False, connection_retries=1, request_retries=0, flood_sleep_threshold=0,
-    )
+    worker_lock = db_connect()
+    if not worker_lock.execute("SELECT pg_try_advisory_lock(hashtext(%s)) AS locked", ("telegram_profile:" + sender,)).fetchone()["locked"]:
+        worker_lock.close()
+        return
+    client = None
     try:
+        config = json.loads(session_path.read_text(encoding="utf-8"))
+        client = TelegramClient(
+            StringSession(config["session"]), config["api_id"], config["api_hash"], device_model="KorDevTeam Outreach",
+            receive_updates=False, connection_retries=1, request_retries=0, flood_sleep_threshold=0,
+        )
         await asyncio.wait_for(client.connect(), 20)
         account = await asyncio.wait_for(client.get_me(), 15)
         if not account or account.bot or (account.username or "").casefold() != sender.casefold():
             raise ValueError("The authorized Telegram account does not match the configured sender.")
+        with db_connect() as conn:
+            current = profile_config(conn, sender)
+            if current["telegram_user_id"] not in (None, account.id):
+                raise ValueError("Authorized Telegram identity changed")
+            conn.execute("""UPDATE outreach_telegram_profiles SET telegram_user_id=%s,
+                connection_status='connected', heartbeat_at=now(), last_error=NULL WHERE sender=%s""", (account.id, sender))
         print(f"Connected Telegram sender @{account.username}.", flush=True)
         while True:
             with db_connect() as conn:
-                await tick(conn, sender, lambda job: send_to_telegram(client, job))
+                profile = profile_config(conn, sender)
+                conn.execute("UPDATE outreach_telegram_profiles SET connection_status='connected', heartbeat_at=now(), last_error=NULL WHERE sender=%s", (sender,))
+                await tick(conn, sender, lambda job: send_to_telegram(client, job, profile["window_start"], profile["window_end"]))
             await asyncio.sleep(10)
     finally:
-        await client.disconnect()
+        try:
+            if client is not None:
+                await client.disconnect()
+        finally:
+            worker_lock.close()
+
+
+async def run_profiles(session_dir):
+    tasks, retry_at = {}, {}
+    legacy_account = os.environ.get("OUTREACH_TELEGRAM_ACCOUNT", "ideamen51").removeprefix("@").lower()
+    try:
+        while True:
+            with db_connect() as conn:
+                profiles = conn.execute("SELECT sender FROM outreach_telegram_profiles ORDER BY sender").fetchall()
+                for row in profiles:
+                    sender = row["sender"]
+                    if sender in tasks and not tasks[sender].done():
+                        continue
+                    if sender in tasks:
+                        try:
+                            tasks.pop(sender).result()
+                        except Exception as error:
+                            code = type(error).__name__
+                            print(f"Telegram @{sender}: {code}", file=sys.stderr, flush=True)
+                            conn.execute("UPDATE outreach_telegram_profiles SET connection_status='error', last_error=%s, heartbeat_at=now() WHERE sender=%s", (code, sender))
+                        retry_at[sender] = asyncio.get_running_loop().time() + 60
+                    if asyncio.get_running_loop().time() < retry_at.get(sender, 0):
+                        continue
+                    session_path = session_dir / (sender + ".json")
+                    if not session_path.is_file() and sender == legacy_account:
+                        session_path = session_dir / "session.json"
+                    if not session_path.is_file():
+                        conn.execute("UPDATE outreach_telegram_profiles SET connection_status='awaiting_session', last_error=NULL WHERE sender=%s", (sender,))
+                        continue
+                    tasks[sender] = asyncio.create_task(run_worker(sender, session_path))
+            await asyncio.sleep(10)
+    finally:
+        for task in tasks.values():
+            task.cancel()
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--account", required=True)
+    parser.add_argument("--account")
     sub = parser.add_subparsers(dest="action", required=True)
+    profiles_command = sub.add_parser("profiles")
+    profiles_command.add_argument("--session-dir", type=Path, required=True)
     prepare_command = sub.add_parser("prepare")
     prepare_command.add_argument("--start", type=date.fromisoformat)
     execute_command = sub.add_parser("enqueue")
@@ -344,6 +425,11 @@ def main():
     run_command = sub.add_parser("run")
     run_command.add_argument("--session-file", type=Path, required=True)
     args = parser.parse_args()
+    if args.action == "profiles":
+        asyncio.run(run_profiles(args.session_dir))
+        return 0
+    if not args.account:
+        parser.error("--account is required")
     sender = args.account.removeprefix("@").lower()
     if args.action == "run":
         try:

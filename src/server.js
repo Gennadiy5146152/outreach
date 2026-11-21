@@ -24,6 +24,7 @@ import { createAuth, timingSafeEqualText } from "./http/auth.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
 import { companySequencePlan, saveCompanySequence } from "./services/company-outreach-sequence.js";
 import { createOutreachChannelTasks } from "./services/outreach-channel-tasks.js";
+import { createTelegramProfiles } from "./services/telegram-profiles.js";
 import { createMessengerDrafts } from "./services/messenger-drafts.js";
 import { createCompanyResearchApi } from "./services/company-research-api.js";
 import { normalizeCampaignLaunchMode, normalizeDraftLaunchMode } from "./services/outreach-delivery-mode.js";
@@ -58,6 +59,7 @@ const {
 const personalizationApi = createPersonalizationApi({ query, withClient });
 const outreachChannelTasks = createOutreachChannelTasks({ query, withClient });
 const messengerDrafts = createMessengerDrafts({ query });
+const telegramProfiles = createTelegramProfiles({ query, withClient });
 const companyResearchApi = createCompanyResearchApi({ query, withClient });
 
 function cleanText(value) {
@@ -611,18 +613,28 @@ app.patch("/api/outreach/channels/tasks/:id", asyncHandler(async (req, res) => {
   res.json(await outreachChannelTasks.finish(req.params.id, req.body.status));
 }));
 
-app.get("/api/outreach/channels/telegram-queue", asyncHandler(async (_req, res) => {
-  const { rows } = await query(`
-    SELECT delivery.id, delivery.sender, delivery.address, delivery.scheduled_at, delivery.status,
-           delivery.completed_at, delivery.telegram_message_id, delivery.detail, draft.name, draft.company
-    FROM outreach_telegram_deliveries delivery
-    JOIN outreach_messenger_drafts draft ON draft.id = delivery.draft_id
-    ORDER BY (delivery.status IN ('pending', 'sending')) DESC,
-             CASE WHEN delivery.status IN ('pending', 'sending') THEN delivery.scheduled_at END,
-             delivery.completed_at DESC NULLS LAST, delivery.id
-    LIMIT 200
-  `);
-  res.json(rows);
+app.get("/api/outreach/channels/telegram-profiles", asyncHandler(async (_req, res) => {
+  res.json(await telegramProfiles.list());
+}));
+app.post("/api/outreach/channels/telegram-profiles", asyncHandler(async (req, res) => {
+  res.status(201).json(await telegramProfiles.create(req.body));
+}));
+app.post("/api/outreach/channels/telegram-profiles/:sender/prepare", asyncHandler(async (req, res) => {
+  res.json(await telegramProfiles.settingsPrepare(req.params.sender, req.body));
+}));
+app.post("/api/outreach/channels/telegram-profiles/execute", asyncHandler(async (req, res) => {
+  if (req.body.confirm !== true) return res.status(400).json({ error: "confirmation_required" });
+  res.json(await telegramProfiles.settingsExecute(req.body.confirmation_token));
+}));
+app.get("/api/outreach/channels/telegram-queue", asyncHandler(async (req, res) => {
+  res.json(await telegramProfiles.queueList(req.query));
+}));
+app.post("/api/outreach/channels/telegram-launch/prepare", asyncHandler(async (req, res) => {
+  res.json(await telegramProfiles.launchPrepare(req.body));
+}));
+app.post("/api/outreach/channels/telegram-launch/execute", asyncHandler(async (req, res) => {
+  if (req.body.confirm !== true) return res.status(400).json({ error: "confirmation_required" });
+  res.status(201).json(await telegramProfiles.launchExecute(req.body.confirmation_token));
 }));
 
 app.get("/api/outreach/channels/drafts", asyncHandler(async (req, res) => {

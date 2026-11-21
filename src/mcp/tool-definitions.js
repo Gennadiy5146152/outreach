@@ -45,12 +45,30 @@ const readAnnotations = { readOnlyHint: true, destructiveHint: false, idempotent
 const writeAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const prepareAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const executeAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+const telegramSender = z.string().regex(/^@?[a-z][a-z0-9_]{3,31}$/i);
+const telegramSettings = z.object({
+  label: z.string().max(100), paused: z.boolean(), daily_limit: z.number().int().min(1).max(100),
+  window_start: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/), window_end: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+}).strict();
 
 function definition(name, description, inputSchema, annotations) {
   return { name, description, inputSchema, annotations };
 }
 
 export const TOOL_DEFINITIONS = [
+  definition("messenger_drafts_list", "Получить сохранённые черновики мессенджеров для исследования и подготовки отправки.", z.object({ page, page_size: z.union([z.literal(25),z.literal(50),z.literal(100)]).default(50), search: z.string().max(200).optional(), status: z.enum(["ready","review","sent"]).optional(), audience: z.enum(["business","partnership","excluded"]).optional() }).strict(), readAnnotations),
+  definition("messenger_draft_get", "Получить фактуру, источники, контакт и полный текст сообщения из раздела Мессенджеры.", z.object({ draft_id: id }).strict(), readAnnotations),
+  definition("messenger_draft_update", "Сохранить проверенный текст неотправленного сообщения. Изменение поставленного в очередь текста потребует подготовки нового запуска.", z.object({ draft_id: id, body: z.string().min(1).max(4000), reviewed: z.boolean().default(false) }).strict(), writeAnnotations),
+  definition("telegram_profiles_list", "Получить Telegram-профили: подключение, пауза, отдельные лимиты, расписания и счётчики. Сессии и секреты не возвращаются.", empty, readAnnotations),
+  definition("telegram_profile_create", "Добавить Telegram-профиль в ожидании отдельной авторизации. Новый профиль на паузе; отправка не включается. Не передавайте пароль, код или MTProto-сессию в MCP.", z.object({ sender: telegramSender, label: z.string().max(100).optional() }).strict(), writeAnnotations),
+  definition("telegram_profile_settings_prepare", "Подготовить изменение лимита, окна по Москве или паузы отдельного Telegram-профиля. Существующие задания сохраняют назначенные даты.", z.object({ sender: telegramSender, settings: telegramSettings }).strict(), prepareAnnotations),
+  definition("telegram_profile_settings_execute", "Применить ранее подготовленные настройки Telegram-профиля только после явного подтверждения пользователя.", confirm, executeAnnotations),
+  definition("telegram_queue_list", "Просмотреть Telegram-очередь, тексты и историю с фильтром по отправителю; лимиты считаются отдельно, дубли и стоп-лист общие.", z.object({ sender: telegramSender.optional(), status: z.enum(["pending","sending","sent","skipped","failed","uncertain","cancelled"]).optional(), page, page_size: pageSize }).strict(), readAnnotations),
+  definition("telegram_launch_prepare", "Подготовить точные тексты, получателей и расписание выбранного Telegram-профиля без отправки. Нужны подтверждённые числовые Telegram ID и основания получения сообщения. Покажите весь план пользователю перед execute.", z.object({ sender: telegramSender, start_date: z.iso.date().optional(), recipients: z.array(z.object({
+    draft_id: id, recipient_id: z.string().regex(/^[1-9]\d{0,18}$/), permission_kind: z.enum(["request","consent"]),
+    permission_evidence: z.string().min(3).max(1000),
+  }).strict()).min(1).max(500) }).strict(), prepareAnnotations),
+  definition("telegram_launch_execute", "Поставить ранее подготовленные Telegram-сообщения в очередь только после явного разрешения пользователя в текущем диалоге. Отправка пойдёт по расписанию выбранного профиля.", confirm, executeAnnotations),
   definition("outreach_status", "Проверить доступность Outreach Desk, dry-run и безопасные runtime-настройки.", empty, readAnnotations),
   definition("outreach_dashboard", "Получить сводные метрики аутрича.", empty, readAnnotations),
   definition("events_list", "Получить журнал событий с ограниченной пагинацией.", z.object({ page, page_size: pageSize }).strict(), readAnnotations),

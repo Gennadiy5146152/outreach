@@ -5437,6 +5437,16 @@ const channelNames = {
 };
 
 const channelErrors = {
+  telegram_profile_invalid: "Укажи имя пользователя Telegram без ссылки.",
+  telegram_profile_exists: "Этот профиль уже добавлен.",
+  telegram_profile_paused: "Профиль на паузе. Для запуска подготовь изменение настроек.",
+  telegram_profile_not_connected: "Профиль не подключён. Нужна отдельная авторизация MTProto и работающий обработчик.",
+  telegram_settings_invalid: "Проверь лимит и часы: окно должно вмещать минимум 3 минуты на сообщение.",
+  telegram_plan_changed: "Очередь или текст изменились. Подготовь новый план.",
+  telegram_recipient_invalid: "Проверь ID черновика, числовой ID пользователя и основание получения сообщения.",
+  telegram_batch_invalid: "Нужен JSON-массив от 1 до 500 подтверждённых получателей.",
+  telegram_no_eligible_contacts: "Нет подходящих получателей: проверь историю, стоп-лист и карточки.",
+  telegram_start_invalid: "Выбери сегодняшний или будущий день по Москве.",
   messenger_draft_invalid: "Проверь контакт, ссылки и текст сообщения.",
   messenger_batch_invalid: "Нужен JSON-файл с массивом от 1 до 500 черновиков.",
   messenger_batch_duplicates: "В файле повторяются профили одного канала.",
@@ -5747,27 +5757,107 @@ const telegramQueueDate = new Intl.DateTimeFormat("ru-RU", {
   dateStyle: "short", timeStyle: "short", timeZone: "Europe/Moscow",
 });
 
+let telegramQueuePage = 1;
+let telegramProfilesLoaded = false;
+const telegramConnectionLabels = { connected: "Подключён", offline: "Нет связи с обработчиком", awaiting_session: "Ожидает авторизации", error: "Ошибка подключения" };
+
+async function loadTelegramProfiles() {
+  const profiles = await api("/api/outreach/channels/telegram-profiles");
+  const root = $("#telegramProfiles");
+  root.innerHTML = profiles.map(p => `<details><summary>@${esc(p.sender)} · ${esc(p.label)} · ${esc(telegramConnectionLabels[p.connection_status] || p.connection_status)} · ${p.paused ? "Пауза" : "Работает"} · сегодня ${p.sent_today}/${p.daily_limit}, в очереди ${p.pending}</summary>
+    <form class="form-grid" data-telegram-profile="${esc(p.sender)}">
+      <label>Название <input name="label" maxlength="100" value="${esc(p.label)}"></label>
+      <label>Лимит в день <input name="daily_limit" type="number" min="1" max="100" value="${p.daily_limit}" required></label>
+      <label>Начало (МСК) <input name="window_start" type="time" value="${esc(p.window_start.slice(0,5))}" required></label>
+      <label>Конец (МСК) <input name="window_end" type="time" value="${esc(p.window_end.slice(0,5))}" required></label>
+      <label><input name="paused" type="checkbox" ${p.paused ? "checked" : ""}> Пауза отправки</label>
+      <p class="muted">В окне должно быть минимум 3 минуты на сообщение. Существующие задания сохранят даты; уменьшение лимита может оставить часть заданий неотправленными. При возобновлении проверь просроченные задания.</p>
+      <button type="submit">Проверить настройки</button><output aria-live="polite"></output>
+    </form>
+  </details>`).join("") || '<p>Профили ещё не добавлены.</p>';
+  const options = profiles.map(p => `<option value="${esc(p.sender)}">@${esc(p.sender)}</option>`).join("");
+  const selected = $("#telegramQueueSender").value;
+  $("#telegramQueueSender").innerHTML = '<option value="">Все профили</option>' + options;
+  $("#telegramQueueSender").value = selected;
+  $("#telegramLaunchSender").innerHTML = options;
+  telegramProfilesLoaded = true;
+}
+
+function showTelegramPlan(prepared, action, after) {
+  const root = $("#telegramPlan");
+  root.innerHTML = `<p>${esc(prepared.summary)}</p>
+    ${prepared.preview.jobs ? prepared.preview.jobs.map(job => `<details><summary>@${esc(prepared.preview.sender)} → ${esc(job.name)} · ${esc(job.company)} · ${esc(telegramQueueDate.format(new Date(job.scheduled_at)))}</summary><p>${esc(job.address)}</p><p style="white-space:pre-wrap">${esc(job.body)}</p></details>`).join("") : ""}
+    <div class="actions"><button type="button" data-telegram-confirm>Подтверждаю</button><button type="button" data-telegram-dismiss>Отмена</button></div><output aria-live="polite"></output>`;
+  root.querySelector('[data-telegram-dismiss]').onclick = () => { root.replaceChildren(); };
+  root.querySelector('[data-telegram-confirm]').onclick = async event => {
+    event.target.disabled = true;
+    try {
+      await channelRequest(action, "POST", { confirmation_token: prepared.confirmation_token, confirm: true });
+      root.textContent = "Изменение выполнено.";
+      await after();
+    } catch (error) {
+      root.querySelector('output').textContent = channelError(error);
+    }
+  };
+}
+
+$("#telegramProfileCreate").addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await channelRequest('telegram-profiles', 'POST', formJson(form));
+    form.reset(); form.querySelector('output').textContent = "Профиль добавлен на паузе, ожидает авторизации.";
+    await loadTelegramProfiles();
+  } catch (error) { form.querySelector('output').textContent = channelError(error); }
+});
+$("#telegramProfiles").addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.target, values = formJson(form);
+  try {
+    const prepared = await channelRequest(`telegram-profiles/${encodeURIComponent(form.dataset.telegramProfile)}/prepare`, 'POST', {
+      ...values, daily_limit: Number(values.daily_limit), paused: form.elements.paused.checked,
+    });
+    showTelegramPlan(prepared, 'telegram-profiles/execute', loadTelegramProfiles);
+  } catch (error) { form.querySelector('output').textContent = channelError(error); }
+});
+$("#telegramLaunch").elements.start_date.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+$("#telegramLaunch").addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, file = form.elements.file.files[0];
+  try {
+    if (!file || file.size > 5 * 1024 * 1024) throw new Error('telegram_batch_invalid');
+    const recipients = JSON.parse(await file.text());
+    const prepared = await channelRequest('telegram-launch/prepare', 'POST', { sender: form.elements.sender.value, start_date: form.elements.start_date.value, recipients });
+    showTelegramPlan(prepared, 'telegram-launch/execute', async () => { await loadTelegramProfiles(); await loadTelegramQueue(); });
+  } catch (error) { form.querySelector('output').textContent = channelError(error); }
+});
+
 async function loadTelegramQueue() {
   const format = (value) => telegramQueueDate.format(new Date(value));
   const root = $("#telegramQueue");
   try {
-    const rows = await api("/api/outreach/channels/telegram-queue");
+    if (!telegramProfilesLoaded) await loadTelegramProfiles();
+    const params = new URLSearchParams({ ...formJson($("#telegramQueueFilters")), page: telegramQueuePage, pageSize: 50 });
+    const data = await api(`/api/outreach/channels/telegram-queue?${params}`);
+    const rows = data.items;
+    $("#telegramQueuePrev").disabled = telegramQueuePage <= 1;
+    $("#telegramQueueNext").disabled = telegramQueuePage * 50 >= data.total;
+    $("#telegramQueuePage").textContent = `Страница ${telegramQueuePage}; всего ${data.total}`;
     root.innerHTML = rows.length ? `
       <table>
         <thead><tr><th>Кому</th><th>Откуда</th><th>Запланировано</th><th>Статус</th></tr></thead>
         <tbody>${rows.map((row) => `<tr>
-          <td>${esc(row.name)} · ${esc(row.company)}<br>${esc(row.address)}</td>
-          <td>@${esc(row.sender)}</td>
-          <td>${esc(format(row.scheduled_at))}</td>
-          <td>${esc(telegramQueueLabels[row.status])}${row.completed_at ? `<br>${esc(format(row.completed_at))}` : ""}</td>
+          <td>${esc(row.name)} · ${esc(row.company)}<br>${esc(row.address)}<details><summary>Отправляемый текст</summary><p style="white-space:pre-wrap">${esc(row.body)}</p></details></td>
+          <td>@${esc(row.sender)}</td><td>${esc(format(row.scheduled_at))}</td>
+          <td>${esc(telegramQueueLabels[row.status])}${row.completed_at ? `<br>${esc(format(row.completed_at))}` : ""}${row.detail ? `<br>${esc(row.detail)}` : ""}</td>
         </tr>`).join("")}</tbody>
       </table>` : '<p class="muted">Очередь пуста.</p>';
-  } catch (error) {
-    root.textContent = channelError(error);
-  }
+  } catch (error) { root.textContent = channelError(error); }
 }
-
-$("#telegramQueueRefresh").addEventListener("click", () => void loadTelegramQueue());
+$("#telegramQueueRefresh").addEventListener("click", async () => { await loadTelegramProfiles(); await loadTelegramQueue(); });
+$("#telegramQueueFilters").addEventListener('submit', event => { event.preventDefault(); telegramQueuePage = 1; void loadTelegramQueue(); });
+$("#telegramQueuePrev").onclick = () => { telegramQueuePage--; void loadTelegramQueue(); };
+$("#telegramQueueNext").onclick = () => { telegramQueuePage++; void loadTelegramQueue(); };
 $("#channelTasksRefresh").addEventListener("click", () => void loadChannelTasks());
 $("#channelTaskStatus").addEventListener("change", () => void loadChannelTasks());
 

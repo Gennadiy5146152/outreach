@@ -225,6 +225,28 @@ export function createToolHandlers({ client, confirmations }) {
   }
 
   const handlers = {
+    messenger_drafts_list: safeTool(async input => success("Черновики сообщений получены.", await client.get("/api/outreach/channels/drafts", { query: filteredQuery(input, ["status", "search", "audience"]) }))),
+    messenger_draft_get: safeTool(async ({ draft_id }) => success("Фактура и текст сообщения получены.", await client.get(`/api/outreach/channels/drafts/${pathId(draft_id, "draft_id")}`))),
+    messenger_draft_update: safeTool(async ({ draft_id, ...values }) => success("Черновик сохранён; отправка не запускается.", await client.patch(`/api/outreach/channels/drafts/${pathId(draft_id, "draft_id")}`, values))),
+    telegram_profiles_list: safeTool(async () => success("Telegram-профили и отдельные лимиты получены.", await client.get("/api/outreach/channels/telegram-profiles"))),
+    telegram_profile_create: safeTool(async input => success("Профиль добавлен на паузе и ожидает авторизации; сообщения не отправляются.", await client.post("/api/outreach/channels/telegram-profiles", input))),
+    telegram_profile_settings_prepare: safeTool(async ({ sender, settings }) => {
+      const prepared = await client.post(`/api/outreach/channels/telegram-profiles/${encodeURIComponent(sender)}/prepare`, settings);
+      return prepareConfirmation(confirmations, "telegram_settings", { server_token: prepared.confirmation_token }, {}, prepared.summary, ["telegram_profile_settings_execute"], prepared.preview);
+    }),
+    telegram_profile_settings_execute: safeTool(async ({ confirmation_token, confirm }) => {
+      const plan = claim(confirmation_token, "telegram_settings", confirm);
+      return success("Настройки Telegram-профиля сохранены.", await client.post("/api/outreach/channels/telegram-profiles/execute", { confirmation_token: plan.payload.server_token, confirm: true }));
+    }),
+    telegram_queue_list: safeTool(async input => success("Очередь Telegram получена.", await client.get("/api/outreach/channels/telegram-queue", { query: filteredQuery(input, ["sender", "status"]) }))),
+    telegram_launch_prepare: safeTool(async input => {
+      const prepared = await client.post("/api/outreach/channels/telegram-launch/prepare", input);
+      return prepareConfirmation(confirmations, "telegram_launch", { server_token: prepared.confirmation_token }, {}, prepared.summary, ["telegram_launch_execute"], prepared.preview);
+    }),
+    telegram_launch_execute: safeTool(async ({ confirmation_token, confirm }) => {
+      const plan = claim(confirmation_token, "telegram_launch", confirm);
+      return success("Подтверждённые сообщения поставлены в Telegram-очередь выбранного профиля.", await client.post("/api/outreach/channels/telegram-launch/execute", { confirmation_token: plan.payload.server_token, confirm: true }));
+    }),
     outreach_status: safeTool(async () => {
       const [health, settings] = await Promise.all([client.get("/api/health"), client.get("/api/settings")]);
       return success("Outreach Desk доступен; состояние и режим получены.", { health, settings }, ["outreach_dashboard"]);
