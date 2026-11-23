@@ -81,7 +81,7 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
     const resumeSettings=await api.settingsPrepare('resume_account',{label:'Resume',paused:false,daily_limit:10,window_start:'09:30',window_end:'11:30'});
     await api.settingsExecute(resumeSettings.confirmation_token);
     const recipients=[];
-    for(let i=0;i<25;i++) recipients.push(await recipient('resume_recipient_'+i,201+i));
+    for(let i=0;i<71;i++) recipients.push(await recipient('resume_recipient_'+i,201+i));
     const batch=await api.launchPrepare({sender:'resume_account',recipients,start_date:day});
     await api.launchExecute(batch.confirmation_token);
     await query("UPDATE outreach_telegram_profiles SET paused=true,revision=revision+1 WHERE sender='resume_account'");
@@ -94,24 +94,27 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
       {start:new Date(base).toISOString(),end:new Date(base+1800000).toISOString(),count:10},
       {start:new Date(base+2400000).toISOString(),end:new Date(base+4200000).toISOString(),count:10},
     ] : [];
-    const original=(await api.queueList({sender:'resume_account'})).items;
+    const original=(await api.queueList({sender:'resume_account',pageSize:100})).items;
     const resume=await api.resumePrepare({sender:'resume_account',today_windows:windows});
-    assert.equal(resume.preview.jobs.length,23);
+    assert.equal(resume.preview.jobs.length,69);
+    assert.equal(resume.preview.daily_limit,10);
     assert.equal(resume.preview.excluded.length,2);
     assert.equal((await api.get('resume_account')).paused,true,'prepare must not enable sending');
-    assert.deepEqual((await api.queueList({sender:'resume_account'})).items,original);
+    assert.deepEqual((await api.queueList({sender:'resume_account',pageSize:100})).items,original);
     const firstId=original[0].id,firstBody=original[0].body;
     await query("UPDATE outreach_telegram_deliveries SET body='Queue changed' WHERE id=$1",[firstId]);
     await assert.rejects(api.resumeExecute(resume.confirmation_token),/Outreach data changed/);
     await query('UPDATE outreach_telegram_deliveries SET body=$2 WHERE id=$1',[firstId,firstBody]);
-    const refreshed=await api.resumePrepare({sender:'resume_account',today_windows:windows});
+    await assert.rejects(api.resumePrepare({sender:'resume_account',daily_limit:100}),/telegram_settings_invalid/);
+    const refreshed=await api.resumePrepare({sender:'resume_account',today_windows:windows,daily_limit:20});
+    assert.equal(refreshed.preview.daily_limit,20);
     const result=await api.resumeExecute(refreshed.confirmation_token);
-    assert.equal(result.resumed,23);assert.equal(result.skipped,2);
+    assert.equal(result.resumed,69);assert.equal(result.skipped,2);
     await assert.rejects(api.resumeExecute(refreshed.confirmation_token));
     const profile=await api.get('resume_account');
-    assert.equal(profile.paused,false);assert.equal(profile.daily_limit,10);
+    assert.equal(profile.paused,false);assert.equal(profile.daily_limit,20);
     if(sameDay) assert.equal(profile.day_overrides[refreshed.preview.day].daily_limit,20);
-    const queued=(await api.queueList({sender:'resume_account',status:'pending'})).items;
+    const queued=(await api.queueList({sender:'resume_account',status:'pending',pageSize:100})).items;
     for(const q of queued){
       const old=original.find(o=>o.id===q.id);
       assert.equal(q.random_id,old.random_id);assert.equal(q.body,old.body);assert.equal(q.address,old.address);
@@ -120,7 +123,10 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
     if(sameDay){
       for(const w of windows) assert.equal(queued.filter(q=>q.scheduled_at>=new Date(w.start)&&q.scheduled_at<new Date(w.end)).length,10);
       const tomorrowJobs=queued.filter(q=>q.scheduled_at>=new Date(windows.at(-1).end));
-      assert.equal(tomorrowJobs.length,3);
+      assert.equal(tomorrowJobs.length,49);
+      const dailyCounts={};
+      for(const q of tomorrowJobs){const date=new Date(+q.scheduled_at+10800000).toISOString().slice(0,10);dailyCounts[date]=(dailyCounts[date]||0)+1;}
+      assert.deepEqual(Object.values(dailyCounts),[20,20,9]);
       assert.ok(tomorrowJobs.every(q=>new Date(+q.scheduled_at+10800000).toISOString().slice(11,16)>='09:30'&&new Date(+q.scheduled_at+10800000).toISOString().slice(11,16)<'11:30'));
     }
     const beforeGlobalStop=await api.resumePrepare({sender:'resume_account'});

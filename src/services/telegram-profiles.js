@@ -190,8 +190,9 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         ORDER BY (q.status IN ('pending','sending')) DESC, q.scheduled_at, q.id LIMIT $3 OFFSET $4`, [...params, pageSize, (page-1)*pageSize]);
       return { items, total: count.total, page, pageSize };
     },
-    async resumePrepare({ sender, today_windows = [] }) {
+    async resumePrepare({ sender, today_windows = [], daily_limit }) {
       const p = await get(sender);
+      const normal = {...p,...telegramSettings({...configuration(p),daily_limit:daily_limit ?? p.daily_limit})};
       if (!connected(p)) fail('telegram_profile_not_connected',409);
       if (!Array.isArray(today_windows) || today_windows.length > 4) fail('telegram_resume_windows_invalid');
       const day = today(), windows = today_windows.map(w => ({ start:new Date(w.start),end:new Date(w.end),count:w.count }));
@@ -234,7 +235,7 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         }
       }
       for (let d=nextDay(day),attempts=0;index<jobs.length && attempts<730;d=nextDay(d),attempts++) {
-        const effective={...p,...p.day_overrides?.[d]};
+        const effective={...normal,...p.day_overrides?.[d]};
         const used=await dayUsage(p.sender,d,{query},ids);
         let remaining=Math.max(0,effective.daily_limit-used.length);
         for (const slot of telegramSlots(d,effective)) {
@@ -245,9 +246,9 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         }
       }
       if (index!==jobs.length) fail('telegram_schedule_unavailable',409);
-      const payload={sender:p.sender,jobs,excluded,day,override,windows:today_windows};
+      const payload={sender:p.sender,jobs,excluded,day,override,windows:today_windows,daily_limit:normal.daily_limit};
       return confirmations.prepare({operation:'telegram_resume',payload,snapshot:{profile:configuration(p),rows},
-        summary:`@${p.sender}: возобновить ${jobs.length} сообщений, пропустить ${excluded.length}. Сегодня ${totalToday}; далее ${p.daily_limit}/день, ${p.window_start.slice(0,5)}–${p.window_end.slice(0,5)} МСК. Получатели и тексты сохранены.`,preview:payload});
+        summary:`@${p.sender}: возобновить ${jobs.length} сообщений, пропустить ${excluded.length}. Сегодня ${totalToday}; далее ${normal.daily_limit}/день, ${p.window_start.slice(0,5)}–${p.window_end.slice(0,5)} МСК. Получатели и тексты сохранены.`,preview:payload});
     },
     async resumeExecute(token) {
       const plan=confirmations.claim({token,operation:'telegram_resume',confirm:true});
@@ -255,12 +256,13 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         const p=await get(plan.payload.sender,db,true),rows=await pending(p.sender,db,true);
         confirmations.verify({plan,currentSnapshot:{profile:configuration(p),rows}});
         if (!connected(p) || plan.payload.day!==today()) fail('telegram_plan_changed',409);
+        const normal={...p,daily_limit:plan.payload.daily_limit};
         const ids=rows.map(q=>q.id),planned=[];
         for (const job of plan.payload.jobs) {
           const d=await draft(job,db,true),stamp=new Date(job.scheduled_at);
           if (stamp<=new Date() || !await eligible(d,job,db,job.id) || d.body!==job.body || d.address!==job.address) fail('telegram_plan_changed',409);
           const day=new Date(+stamp+10800000).toISOString().slice(0,10);
-          const effective=day===plan.payload.day && plan.payload.override ? {...p,...plan.payload.override} : {...p,...p.day_overrides?.[day]};
+          const effective=day===plan.payload.day && plan.payload.override ? {...normal,...plan.payload.override} : {...normal,...p.day_overrides?.[day]};
           const used=await dayUsage(p.sender,day,db,ids);
           const sameDay=planned.filter(j=>new Date(+new Date(j.scheduled_at)+10800000).toISOString().slice(0,10)===day);
           if (used.length+sameDay.length>=effective.daily_limit || [...used,...sameDay].some(r=>[r.scheduled_at,r.attempted_at].some(t=>t && Math.abs(new Date(t)-stamp)<120000))) fail('telegram_plan_changed',409);
@@ -276,8 +278,8 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         for (const skip of plan.payload.excluded) await db.query("UPDATE outreach_telegram_deliveries SET status='skipped',detail=$2,completed_at=now() WHERE id=$1",[skip.id,skip.reason]);
         const overrides={...p.day_overrides};
         if (plan.payload.override) overrides[plan.payload.day]=plan.payload.override;
-        await db.query("UPDATE outreach_telegram_profiles SET paused=false,day_overrides=$2::jsonb,revision=revision+1,updated_at=now() WHERE sender=$1",[p.sender,JSON.stringify(overrides)]);
-        return {sender:p.sender,resumed:planned.length,skipped:plan.payload.excluded.length,today_override:plan.payload.override};
+        await db.query("UPDATE outreach_telegram_profiles SET paused=false,day_overrides=$2::jsonb,daily_limit=$3,revision=revision+1,updated_at=now() WHERE sender=$1",[p.sender,JSON.stringify(overrides),normal.daily_limit]);
+        return {sender:p.sender,resumed:planned.length,skipped:plan.payload.excluded.length,today_override:plan.payload.override,daily_limit:normal.daily_limit};
       });
     },
     async launchPrepare({ sender, recipients, start_date = today() }) {
