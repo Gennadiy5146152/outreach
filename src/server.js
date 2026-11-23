@@ -1435,7 +1435,7 @@ app.get("/api/outreach/drafts", asyncHandler(async (req, res) => {
       WHERE ($1 = '' OR d.status = $1)
         AND ($2 = '' OR d.import_id = $2::uuid)
       GROUP BY d.id, i.file_name, m.email
-      ORDER BY d.created_at DESC
+      ORDER BY d.created_at DESC, d.id DESC
       LIMIT $3 OFFSET $4
     `,
     [status, importId, paged ? pagination.pageSize : 100000, paged ? pagination.offset : 0],
