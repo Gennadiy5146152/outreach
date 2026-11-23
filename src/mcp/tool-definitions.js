@@ -69,6 +69,8 @@ export const TOOL_DEFINITIONS = [
     permission_evidence: z.string().min(3).max(1000),
   }).strict()).min(1).max(500) }).strict(), prepareAnnotations),
   definition("telegram_launch_execute", "Поставить ранее подготовленные Telegram-сообщения в очередь только после явного разрешения пользователя в текущем диалоге. Отправка пойдёт по расписанию выбранного профиля.", confirm, executeAnnotations),
+  definition("telegram_queue_resume_prepare", "Подготовить возобновление существующей очереди с пересчётом дат и проверкой стоп-листа. Можно указать отдельные окна на сегодня; завтра автоматически вернутся обычные настройки. Тексты и адресаты сохраняются. Покажите точный план перед execute.", z.object({sender:telegramSender,today_windows:z.array(z.object({start:z.iso.datetime({offset:true}),end:z.iso.datetime({offset:true}),count:z.number().int().min(1).max(100)}).strict()).max(4).optional()}).strict(),prepareAnnotations),
+  definition("telegram_queue_resume_execute", "Возобновить точную ранее подготовленную Telegram-очередь только после явного одобрения показанного плана.",confirm,executeAnnotations),
   definition("outreach_status", "Проверить доступность Outreach Desk, dry-run и безопасные runtime-настройки.", empty, readAnnotations),
   definition("outreach_dashboard", "Получить сводные метрики аутрича.", empty, readAnnotations),
   definition("events_list", "Получить журнал событий с ограниченной пагинацией.", z.object({ page, page_size: pageSize }).strict(), readAnnotations),

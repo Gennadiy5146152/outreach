@@ -636,6 +636,13 @@ app.post("/api/outreach/channels/telegram-launch/execute", asyncHandler(async (r
   if (req.body.confirm !== true) return res.status(400).json({ error: "confirmation_required" });
   res.status(201).json(await telegramProfiles.launchExecute(req.body.confirmation_token));
 }));
+app.post("/api/outreach/channels/telegram-resume/prepare", asyncHandler(async (req,res)=>{
+  res.json(await telegramProfiles.resumePrepare(req.body));
+}));
+app.post("/api/outreach/channels/telegram-resume/execute", asyncHandler(async (req,res)=>{
+  if (req.body.confirm!==true) return res.status(400).json({error:"confirmation_required"});
+  res.json(await telegramProfiles.resumeExecute(req.body.confirmation_token));
+}));
 
 app.get("/api/outreach/channels/drafts", asyncHandler(async (req, res) => {
   res.json(await messengerDrafts.list(req.query));

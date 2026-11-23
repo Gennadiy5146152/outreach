@@ -247,6 +247,14 @@ export function createToolHandlers({ client, confirmations }) {
       const plan = claim(confirmation_token, "telegram_launch", confirm);
       return success("Подтверждённые сообщения поставлены в Telegram-очередь выбранного профиля.", await client.post("/api/outreach/channels/telegram-launch/execute", { confirmation_token: plan.payload.server_token, confirm: true }));
     }),
+    telegram_queue_resume_prepare: safeTool(async input=>{
+      const prepared=await client.post('/api/outreach/channels/telegram-resume/prepare',input);
+      return prepareConfirmation(confirmations,'telegram_resume',{server_token:prepared.confirmation_token},{},prepared.summary,['telegram_queue_resume_execute'],prepared.preview);
+    }),
+    telegram_queue_resume_execute: safeTool(async ({confirmation_token,confirm})=>{
+      const plan=claim(confirmation_token,'telegram_resume',confirm);
+      return success('Telegram-очередь возобновлена по подтверждённому расписанию.',await client.post('/api/outreach/channels/telegram-resume/execute',{confirmation_token:plan.payload.server_token,confirm:true}));
+    }),
     outreach_status: safeTool(async () => {
       const [health, settings] = await Promise.all([client.get("/api/health"), client.get("/api/settings")]);
       return success("Outreach Desk доступен; состояние и режим получены.", { health, settings }, ["outreach_dashboard"]);

@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
-from queue_worker import normalize_recipient, slots, process_due
+from queue_worker import normalize_recipient, slots, process_due, profile_config
 
 
 class ScheduleTests(unittest.TestCase):
@@ -67,6 +67,24 @@ class FakeConnection:
 
 
 class WorkerIsolationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_day_override_expires_automatically(self):
+        class Connection:
+            def execute(self,*_):
+                return Result({'paused':False,'daily_limit':10,'window_start':time(9,30),'window_end':time(11,30),
+                    'day_overrides':{'2026-11-23':{'daily_limit':20,'window_start':'12:30','window_end':'19:00'}}})
+        class Today(datetime):
+            @classmethod
+            def now(cls,tz=None): return cls(2026,11,23,13,tzinfo=ZoneInfo('Europe/Moscow'))
+        class Tomorrow(datetime):
+            @classmethod
+            def now(cls,tz=None): return cls(2026,11,24,10,tzinfo=ZoneInfo('Europe/Moscow'))
+        with patch('queue_worker.datetime',Today):
+            p=profile_config(Connection(),'first_account')
+            self.assertEqual((p['daily_limit'],p['window_start'],p['window_end']),(20,time(12,30),time(19)))
+        with patch('queue_worker.datetime',Tomorrow):
+            p=profile_config(Connection(),'first_account')
+            self.assertEqual((p['daily_limit'],p['window_start'],p['window_end']),(10,time(9,30),time(11,30)))
+
     async def test_full_or_paused_profile_does_not_block_another_profile(self):
         class Clock(datetime):
             @classmethod

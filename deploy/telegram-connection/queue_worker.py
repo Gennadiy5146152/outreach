@@ -274,9 +274,11 @@ async def process_due(conn, sender, deliver):
         conn.execute("""
             UPDATE outreach_telegram_deliveries SET status = 'skipped', completed_at = now(), detail = 'window_closed'
             WHERE sender = %s AND status = 'pending' AND (
+                (send_before IS NOT NULL AND send_before <= %s)
+                OR
                 (scheduled_at AT TIME ZONE 'Europe/Moscow')::date < %s
                 OR (scheduled_at < %s AND %s >= %s))
-        """, (sender, now.date(), end, now, end))
+        """, (sender, now, now.date(), end, now, end))
         if not profile["window_start"] <= now.time() < profile["window_end"]:
             return
         if conn.execute("""
@@ -329,6 +331,11 @@ def profile_config(conn, sender, lock=False):
     ).fetchone()
     if not profile:
         raise ValueError("Telegram profile is not registered")
+    override = (profile.get("day_overrides") or {}).get(datetime.now(MOSCOW).date().isoformat())
+    if override:
+        profile = dict(profile, daily_limit=int(override["daily_limit"]),
+                       window_start=time.fromisoformat(override["window_start"]),
+                       window_end=time.fromisoformat(override["window_end"]))
     return profile
 
 

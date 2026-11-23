@@ -63,7 +63,8 @@ export function telegramSettings(input) {
   return { label: label.trim(), paused, daily_limit, window_start, window_end };
 }
 const configuration = p => ({ sender: p.sender, label: p.label, paused: p.paused,
-  daily_limit: p.daily_limit, window_start: p.window_start.slice(0, 5), window_end: p.window_end.slice(0, 5), revision: p.revision });
+  daily_limit: p.daily_limit, window_start: p.window_start.slice(0, 5), window_end: p.window_end.slice(0, 5), revision: p.revision,
+  day_overrides: p.day_overrides || {} });
 const connected = p => p.connection_status === 'connected' && p.heartbeat_at && Date.now() - new Date(p.heartbeat_at) < 90000;
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const nextDay = day => new Date(Date.parse(`${day}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
@@ -108,28 +109,33 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
     const { rows: [d] } = await db.query(`SELECT * FROM outreach_messenger_drafts WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [job.draft_id]);
     return d;
   }
-  async function eligible(d, job, db = { query }) {
+  async function eligible(d, job, db = { query }, ownId = null) {
     if (!d || d.channel !== 'telegram' || !/^https:\/\/t\.me\/[a-z][a-z0-9_]{3,31}$/i.test(d.address)
         || d.partnership || d.technology_product || d.review_reason || d.sent_at) return false;
     const { rows: [company] } = await db.query(COMPANY_BLOCKED, [d.company, d.website, d.address, d.address, d.address]);
     if (company.blocked) return false;
     const { rows: [r] } = await db.query(`SELECT EXISTS (
       SELECT 1 FROM outreach_telegram_deliveries q JOIN outreach_messenger_drafts other ON other.id = q.draft_id
-      WHERE (q.recipient_id = $1 OR lower(q.address) = lower($2) OR lower(btrim(other.company)) = lower(btrim($3))
+      WHERE q.id IS DISTINCT FROM $5::uuid AND (q.recipient_id = $1 OR lower(q.address) = lower($2) OR lower(btrim(other.company)) = lower(btrim($3))
         OR ($4 <> '' AND other.website = $4))
         AND (q.status IN ('pending','sending','uncertain') OR (q.status = 'sent' AND q.completed_at >= now() - interval '30 days'))
-    ) AS blocked`, [job.recipient_id, d.address, d.company, d.website]);
+    ) AS blocked`, [job.recipient_id, d.address, d.company, d.website, ownId]);
     return !r.blocked;
   }
-  async function dayUsage(sender, day, db = { query }) {
+  async function dayUsage(sender, day, db = { query }, exclude = []) {
     const { rows } = await db.query(`SELECT scheduled_at, attempted_at FROM outreach_telegram_deliveries
-      WHERE sender = $1 AND ((status = ANY($3::text[]) AND (scheduled_at AT TIME ZONE 'Europe/Moscow')::date = $2)
-        OR (attempted_at AT TIME ZONE 'Europe/Moscow')::date = $2)`, [sender, day, active]);
+      WHERE sender = $1 AND id <> ALL($4::uuid[]) AND ((status = ANY($3::text[]) AND (scheduled_at AT TIME ZONE 'Europe/Moscow')::date = $2)
+        OR (attempted_at AT TIME ZONE 'Europe/Moscow')::date = $2)`, [sender, day, active, exclude]);
     return rows;
   }
   function ready(p) {
     if (p.paused) fail('telegram_profile_paused', 409);
     if (!connected(p)) fail('telegram_profile_not_connected', 409);
+  }
+  async function pending(sender, db = { query }, lock = false) {
+    const { rows } = await db.query(`SELECT * FROM outreach_telegram_deliveries
+      WHERE sender=$1 AND status='pending' ORDER BY scheduled_at,id${lock ? ' FOR UPDATE' : ''}`, [sender]);
+    return rows;
   }
   return {
     get,
@@ -139,7 +145,9 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         (SELECT count(*)::int FROM outreach_telegram_deliveries q WHERE q.sender = p.sender AND q.status = 'sent'
           AND (q.completed_at AT TIME ZONE 'Europe/Moscow')::date = (now() AT TIME ZONE 'Europe/Moscow')::date) AS sent_today
         FROM outreach_telegram_profiles p ORDER BY p.created_at, p.sender`);
-      return rows.map(p => ({ ...p, connection_status: p.connection_status === 'connected' && !connected(p) ? 'offline' : p.connection_status, timezone: 'Europe/Moscow' }));
+      return rows.map(p => ({ ...p, effective_settings: p.day_overrides?.[today()] || {
+        daily_limit:p.daily_limit,window_start:p.window_start,window_end:p.window_end },
+        connection_status: p.connection_status === 'connected' && !connected(p) ? 'offline' : p.connection_status, timezone: 'Europe/Moscow' }));
     },
     async create({ sender, label = '' }) {
       const account = telegramSender(sender);
@@ -181,6 +189,96 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         JOIN outreach_messenger_drafts d ON d.id=q.draft_id ${where}
         ORDER BY (q.status IN ('pending','sending')) DESC, q.scheduled_at, q.id LIMIT $3 OFFSET $4`, [...params, pageSize, (page-1)*pageSize]);
       return { items, total: count.total, page, pageSize };
+    },
+    async resumePrepare({ sender, today_windows = [] }) {
+      const p = await get(sender);
+      if (!connected(p)) fail('telegram_profile_not_connected',409);
+      if (!Array.isArray(today_windows) || today_windows.length > 4) fail('telegram_resume_windows_invalid');
+      const day = today(), windows = today_windows.map(w => ({ start:new Date(w.start),end:new Date(w.end),count:w.count }));
+      let previousEnd = 0;
+      for (const w of windows) {
+        if (!Number.isFinite(+w.start) || !Number.isFinite(+w.end) || !Number.isInteger(w.count) || w.count < 1
+          || +w.start <= Date.now()+60000 || +w.start < previousEnd || +w.end-+w.start < w.count*180000
+          || [w.start,w.end].some(t=>new Date(+t+10800000).toISOString().slice(0,10)!==day)) fail('telegram_resume_windows_invalid');
+        previousEnd=+w.end;
+      }
+      const totalToday = windows.reduce((n,w)=>n+w.count,0);
+      if (totalToday > 100) fail('telegram_resume_windows_invalid');
+      const rows = await pending(p.sender);
+      if (!rows.length || rows.length > 500 || rows.some(q=>q.attempted_at)) fail('telegram_resume_queue_invalid',409);
+      const jobs=[],excluded=[];
+      for (const q of rows) {
+        telegramRecipient(q);
+        const d = await draft(q);
+        if (!await eligible(d,q,{query},q.id) || d.address!==q.address || d.body!==q.body) {
+          excluded.push({id:q.id,address:q.address,reason:'draft_or_contact_changed'}); continue;
+        }
+        jobs.push({...q,name:d.name,company:d.company});
+      }
+      if (!jobs.length || totalToday > jobs.length) fail('telegram_resume_no_eligible_contacts',409);
+      const ids = rows.map(q=>q.id);
+      const usedToday = await dayUsage(p.sender,day,{query},ids);
+      const override = totalToday ? {
+        daily_limit:totalToday+usedToday.length,
+        window_start:new Date(+windows[0].start+10800000).toISOString().slice(11,16),
+        window_end:new Date(+windows.at(-1).end+10800000).toISOString().slice(11,16),
+      } : null;
+      if (override?.daily_limit>100) fail('telegram_resume_windows_invalid');
+      let index=0;
+      for (const w of windows) {
+        const width=Math.floor((+w.end-+w.start)/w.count);
+        for (let i=0;i<w.count;i++) {
+          const slot=new Date(+w.start+i*width+crypto.randomInt(1000,width-120000));
+          if (usedToday.some(r=>[r.scheduled_at,r.attempted_at].some(t=>t && Math.abs(new Date(t)-slot)<120000))) fail('telegram_resume_slot_busy',409);
+          Object.assign(jobs[index++],{scheduled_at:slot.toISOString(),send_before:w.end.toISOString()});
+        }
+      }
+      for (let d=nextDay(day),attempts=0;index<jobs.length && attempts<730;d=nextDay(d),attempts++) {
+        const effective={...p,...p.day_overrides?.[d]};
+        const used=await dayUsage(p.sender,d,{query},ids);
+        let remaining=Math.max(0,effective.daily_limit-used.length);
+        for (const slot of telegramSlots(d,effective)) {
+          if (!remaining || index===jobs.length) break;
+          if (used.some(r=>[r.scheduled_at,r.attempted_at].some(t=>t && Math.abs(new Date(t)-slot)<120000))) continue;
+          Object.assign(jobs[index++],{scheduled_at:slot.toISOString(),send_before:new Date(`${d}T${effective.window_end.slice(0,5)}:00+03:00`).toISOString()});
+          remaining--;
+        }
+      }
+      if (index!==jobs.length) fail('telegram_schedule_unavailable',409);
+      const payload={sender:p.sender,jobs,excluded,day,override,windows:today_windows};
+      return confirmations.prepare({operation:'telegram_resume',payload,snapshot:{profile:configuration(p),rows},
+        summary:`@${p.sender}: возобновить ${jobs.length} сообщений, пропустить ${excluded.length}. Сегодня ${totalToday}; далее ${p.daily_limit}/день, ${p.window_start.slice(0,5)}–${p.window_end.slice(0,5)} МСК. Получатели и тексты сохранены.`,preview:payload});
+    },
+    async resumeExecute(token) {
+      const plan=confirmations.claim({token,operation:'telegram_resume',confirm:true});
+      return transaction(async db=>{
+        const p=await get(plan.payload.sender,db,true),rows=await pending(p.sender,db,true);
+        confirmations.verify({plan,currentSnapshot:{profile:configuration(p),rows}});
+        if (!connected(p) || plan.payload.day!==today()) fail('telegram_plan_changed',409);
+        const ids=rows.map(q=>q.id),planned=[];
+        for (const job of plan.payload.jobs) {
+          const d=await draft(job,db,true),stamp=new Date(job.scheduled_at);
+          if (stamp<=new Date() || !await eligible(d,job,db,job.id) || d.body!==job.body || d.address!==job.address) fail('telegram_plan_changed',409);
+          const day=new Date(+stamp+10800000).toISOString().slice(0,10);
+          const effective=day===plan.payload.day && plan.payload.override ? {...p,...plan.payload.override} : {...p,...p.day_overrides?.[day]};
+          const used=await dayUsage(p.sender,day,db,ids);
+          const sameDay=planned.filter(j=>new Date(+new Date(j.scheduled_at)+10800000).toISOString().slice(0,10)===day);
+          if (used.length+sameDay.length>=effective.daily_limit || [...used,...sameDay].some(r=>[r.scheduled_at,r.attempted_at].some(t=>t && Math.abs(new Date(t)-stamp)<120000))) fail('telegram_plan_changed',409);
+          const localTime=new Date(+stamp+10800000).toISOString().slice(11,16);
+          if (localTime<effective.window_start.slice(0,5) || localTime>=effective.window_end.slice(0,5)) fail('telegram_plan_changed',409);
+          planned.push(job);
+        }
+        for (const skip of plan.payload.excluded) {
+          const job=rows.find(q=>q.id===skip.id),d=await draft(job,db,true);
+          if (await eligible(d,job,db,job.id) && d.body===job.body && d.address===job.address) fail('telegram_plan_changed',409);
+        }
+        for (const job of planned) await db.query('UPDATE outreach_telegram_deliveries SET scheduled_at=$2,send_before=$3 WHERE id=$1',[job.id,job.scheduled_at,job.send_before]);
+        for (const skip of plan.payload.excluded) await db.query("UPDATE outreach_telegram_deliveries SET status='skipped',detail=$2,completed_at=now() WHERE id=$1",[skip.id,skip.reason]);
+        const overrides={...p.day_overrides};
+        if (plan.payload.override) overrides[plan.payload.day]=plan.payload.override;
+        await db.query("UPDATE outreach_telegram_profiles SET paused=false,day_overrides=$2::jsonb,revision=revision+1,updated_at=now() WHERE sender=$1",[p.sender,JSON.stringify(overrides)]);
+        return {sender:p.sender,resumed:planned.length,skipped:plan.payload.excluded.length,today_override:plan.payload.override};
+      });
     },
     async launchPrepare({ sender, recipients, start_date = today() }) {
       const p = await get(sender); ready(p);

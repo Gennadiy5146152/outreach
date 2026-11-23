@@ -39,8 +39,8 @@ test('MCP passes the selected sender and requires fresh one-use confirmation for
     return path.endsWith('/prepare') ? { confirmation_token:'server-token',summary:'Exact plan',preview:{sender:input.sender,jobs:[]}} : {queued:1};
   }};
   const handlers = createToolHandlers({client, confirmations:createConfirmationStore()});
-  for (const type of ['settings','launch']) {
-    const prefix = type === 'settings' ? 'telegram_profile_settings' : 'telegram_launch';
+  for (const type of ['settings','launch','resume']) {
+    const prefix = type === 'settings' ? 'telegram_profile_settings' : type === 'resume' ? 'telegram_queue_resume' : 'telegram_launch';
     const prepared = await handlers[`${prefix}_prepare`]({sender:'second_account',settings:{},recipients:[]});
     const token = prepared.structuredContent.data.confirmation_token;
     assert.equal(calls.at(-1).path.endsWith('/prepare'),true);
