@@ -47,6 +47,9 @@ services:
     restart: unless-stopped
     ports:
       - "${APP_PORT:-3000}:3000"
+    networks:
+      - default
+      - proxy
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,6 +126,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+networks:
+  proxy:
+    external: true
+    name: common-traefik
 
 volumes:
   postgres_data:

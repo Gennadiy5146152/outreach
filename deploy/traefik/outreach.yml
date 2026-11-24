@@ -1,0 +1,29 @@
+# Installed at /etc/traefik/dynamic/outreach.yml on 213.171.10.147.
+# Only the web service joins the existing common-traefik network.
+http:
+  routers:
+    outreach:
+      rule: "Host(`outreach.korotkov.dev`)"
+      entryPoints:
+        - https
+      tls:
+        certResolver: letsEncrypt
+      service: outreach-web
+      middlewares:
+        - outreach-headers
+  middlewares:
+    outreach-headers:
+      headers:
+        contentTypeNosniff: true
+        referrerPolicy: no-referrer
+        stsSeconds: 604800
+  services:
+    outreach-web:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://outreach-desk-web-1:3000"
+        healthCheck:
+          path: /api/health
+          interval: 30s
+          timeout: 5s
