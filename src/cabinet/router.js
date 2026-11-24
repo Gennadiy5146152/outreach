@@ -1,5 +1,7 @@
 import express from "express";
 import { createCabinetStore } from "./store.js";
+import { createEmailAuth, normalizeEmail } from "./email-auth.js";
+import { createAuthMailer } from "./auth-mail.js";
 import {
   cookie,
   readCookie,
@@ -13,7 +15,13 @@ import {
   uuid,
 } from "./security.js";
 
-export function createCabinet({ query, withClient, env }) {
+export function createCabinet({
+  query,
+  withClient,
+  env,
+  sendAuthEmail,
+  onAdminReset,
+}) {
   const store = createCabinetStore({
       query,
       withClient,
@@ -22,6 +30,22 @@ export function createCabinet({ query, withClient, env }) {
     router = express.Router(),
     admin = express.Router(),
     limit = createRateLimiter();
+  const emailAuth = createEmailAuth({
+    query,
+    withClient,
+    store,
+    env,
+    sendEmail: sendAuthEmail || createAuthMailer({ query, env }),
+    onAdminReset,
+    reportError: (code) => console.error(code),
+  });
+  const emailLimit = createRateLimiter({ max: 3 });
+  function emailRequest(req, kind) {
+    checkOrigin(req);
+    limit("email:" + req.ip);
+    const email = normalizeEmail(req.body.email);
+    emailLimit(kind + ":" + digest(email));
+  }
   const run = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
   function transport(req, res, next) {
@@ -67,6 +91,61 @@ export function createCabinet({ query, withClient, env }) {
     };
   }
   router.use(transport);
+  router.get("/auth/options", (_req, res) =>
+    res.json({
+      registration: env.cabinetSignupEnabled === true && emailAuth.available(),
+      recovery: emailAuth.available(),
+    }),
+  );
+  router.post(
+    "/auth/register",
+    run(async (req, res) => {
+      emailRequest(req, "register");
+      res.json(await emailAuth.register(req.body));
+    }),
+  );
+  router.post(
+    "/auth/recover",
+    run(async (req, res) => {
+      emailRequest(req, "recover");
+      res.json(await emailAuth.recover(req.body));
+    }),
+  );
+  router.post(
+    "/auth/email/inspect",
+    run(async (req, res) => {
+      checkOrigin(req);
+      limit("email-inspect:" + req.ip);
+      res.json(await emailAuth.inspect(req.body.token));
+    }),
+  );
+  router.post(
+    "/auth/email/complete",
+    run(async (req, res) => {
+      checkOrigin(req);
+      limit("email-complete:" + req.ip);
+      const result = await emailAuth.complete(req.body, () =>
+        store.authenticate(req),
+      );
+      if (result.session)
+        return res.json({
+          ...establish(res, result.session),
+          kind: result.kind,
+        });
+      if (["reset", "admin_reset"].includes(result.kind)) {
+        res.append(
+          "Set-Cookie",
+          cookie("", { clear: true, secure: env.authCookieSecure }),
+        );
+        if (result.kind === "admin_reset")
+          res.append(
+            "Set-Cookie",
+            "outreach_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+          );
+      }
+      res.json(result);
+    }),
+  );
   router.post(
     "/auth/login",
     run(async (req, res) => {
@@ -107,6 +186,8 @@ export function createCabinet({ query, withClient, env }) {
         ? {
             csrf: p.csrf,
             send_enabled: env.cabinetTelegramSendEnabled === true,
+            email: p.email || "",
+            email_verified: Boolean(p.email_verified_at),
           }
         : { scopes: p.scopes, campaign_ids: p.campaign_ids }),
     });
@@ -130,6 +211,14 @@ export function createCabinet({ query, withClient, env }) {
         cookie("", { clear: true, secure: env.authCookieSecure }),
       );
       res.json({ ok: true });
+    }),
+  );
+  router.post(
+    "/profile/email",
+    run(async (req, res) => {
+      ownerOnly(req.cabinet);
+      emailRequest(req, "attach");
+      res.json(await emailAuth.attach(req.cabinet, req.body));
     }),
   );
   router.get(
@@ -348,12 +437,21 @@ export function createCabinet({ query, withClient, env }) {
       res.json(
         (
           await query(
-            "SELECT id,login,display_name,active,(password_hash IS NOT NULL) activated,created_at FROM cabinet_accounts ORDER BY created_at DESC",
+            "SELECT id,login,email,display_name,active,(password_hash IS NOT NULL) activated,created_at FROM cabinet_accounts ORDER BY created_at DESC",
           )
         ).rows,
       ),
     ),
   );
   admin.use(errorHandler);
-  return { router, admin, store, establish, checkOrigin, limit, transport };
+  return {
+    router,
+    admin,
+    store,
+    emailAuth,
+    establish,
+    checkOrigin,
+    limit,
+    transport,
+  };
 }

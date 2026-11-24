@@ -3,7 +3,7 @@ import fs from "node:fs";
 const server = fs.readFileSync("src/server.js", "utf8");
 const auth = fs.readFileSync("src/http/auth.js", "utf8");
 const env = fs.readFileSync("src/config/env.js", "utf8");
-const login = fs.readFileSync("public/login.html", "utf8");
+const login = fs.readFileSync("public/login.html", "utf8")+fs.readFileSync("public/cabinet-auth.js", "utf8");
 
 for (const expected of [
   "AUTH_COOKIE",

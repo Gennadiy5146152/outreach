@@ -44,6 +44,7 @@ export function createAuth({
   authSessionSecret,
   authCookieSecure = false,
   mcpApiToken = "",
+  getAdminRevision = () => 0,
   now = () => Date.now(),
 }) {
   function authConfigured() {
@@ -69,7 +70,7 @@ export function createAuth({
     if (!timingSafeEqualText(signature, expected)) return false;
     try {
       const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-      return payload.user === authUser && Number(payload.exp) > now();
+      return payload.user === authUser && Number(payload.exp) > now() && (payload.revision || 0) === getAdminRevision();
     } catch {
       return false;
     }
@@ -91,7 +92,7 @@ export function createAuth({
 
   function setAuthCookie(res) {
     const secure = authCookieSecure ? "; Secure" : "";
-    const token = signPayload({ user: authUser, exp: now() + AUTH_TTL_MS });
+    const token = signPayload({ user: authUser, exp: now() + AUTH_TTL_MS, revision: getAdminRevision() });
     res.setHeader(
       "Set-Cookie",
       `${AUTH_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(AUTH_TTL_MS / 1000)}${secure}`,

@@ -194,6 +194,25 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         status = await (await self.db.execute('SELECT status,error_code FROM cabinet_jobs WHERE id=%s',(job['id'],))).fetchone()
         self.assertEqual(status['error_code'],'telegram_recipient_changed')
 
+    async def test_qr_reconnect_cannot_replace_an_already_bound_telegram_identity(self):
+        logged_out=[]
+        class Client:
+            async def get_me(_self): return NS(id=88888,username='worker_test',bot=False)
+            async def log_out(_self): logged_out.append(True)
+        row={**self.connection,'telegram_user_id':77777}
+        self.assertFalse(await self.worker.identity(self.db,row,Client()))
+        self.assertEqual(logged_out,[True])
+
+    async def test_unused_legacy_placeholder_does_not_prevent_private_qr_login(self):
+        await self.db.execute("INSERT INTO outreach_telegram_profiles(sender,connection_status) VALUES('worker_test','awaiting_session')")
+        class Client:
+            async def get_me(_self): return NS(id=88888,username='worker_test',bot=False)
+            async def log_out(_self): raise AssertionError('Unused placeholder must not block login')
+        try:
+            self.assertTrue(await self.worker.identity(self.db,self.connection,Client()))
+        finally:
+            await self.db.execute("DELETE FROM outreach_telegram_profiles WHERE sender='worker_test'")
+
     async def test_ambiguous_delivery_is_not_retried_and_pauses_remaining_queue(self):
         job = await self.job()
         other = await self.job(peer=self.peer+1)

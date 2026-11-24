@@ -161,7 +161,7 @@ export function createCabinetStore({
     const {
       rows: [r],
     } = await query(
-      `SELECT a.id owner_id,a.login,a.display_name,s.csrf FROM cabinet_sessions s JOIN cabinet_accounts a ON a.id=s.owner_id
+      `SELECT a.id owner_id,a.login,a.display_name,a.email,a.email_verified_at,s.csrf FROM cabinet_sessions s JOIN cabinet_accounts a ON a.id=s.owner_id
     WHERE s.token_hash=$1 AND s.expires_at>now() AND a.active`,
       [digest(token)],
     );
@@ -192,7 +192,7 @@ export function createCabinetStore({
     const {
       rows: [a],
     } = await query(
-      "SELECT * FROM cabinet_accounts WHERE login=$1 AND active",
+      "SELECT * FROM cabinet_accounts WHERE (login=$1 OR (email=$1 AND email_verified_at IS NOT NULL)) AND active",
       [name],
     );
     const valid = await verifyPassword(input.password, a?.password_hash);
@@ -249,7 +249,7 @@ export function createCabinetStore({
       rows: [c],
     } = await q(
       db,
-      `SELECT c.*,t.status connection_status,t.username,t.heartbeat_at,t.generation connection_generation,t.telegram_user_id FROM cabinet_campaigns c
+      `SELECT c.*,t.status connection_status,t.username,t.heartbeat_at,t.generation connection_generation,t.telegram_user_id,t.error_code connection_error FROM cabinet_campaigns c
    JOIN cabinet_connections t ON t.id=c.connection_id AND t.owner_id=c.owner_id WHERE c.owner_id=$1 AND c.id=$2`,
       [p.owner_id, id],
     );
@@ -564,6 +564,7 @@ export function createCabinetStore({
             revision: c.revision,
             paused: c.paused,
             status: c.connection_status,
+            connection_error: c.connection_error,
             connection_id: c.connection_id,
             generation: c.connection_generation,
             sender: c.telegram_user_id,
@@ -585,6 +586,12 @@ export function createCabinetStore({
       if (s.ds.length !== ids.length) throw fail("draft_not_found", 404);
       if (kind === "launch") {
         if (!sendEnabled) throw fail("telegram_sending_disabled", 503);
+        if (
+          ["telegram_rate_limit", "telegram_delivery_uncertain"].includes(
+            s.c.connection_error,
+          )
+        )
+          throw fail("telegram_connection_attention_required", 409);
         if (
           s.c.connection_status !== "connected" ||
           !s.c.heartbeat_at ||
@@ -685,6 +692,12 @@ export function createCabinetStore({
       if (plan.kind === "launch") {
         if (!sendEnabled) throw fail("telegram_sending_disabled", 503);
         if (
+          ["telegram_rate_limit", "telegram_delivery_uncertain"].includes(
+            s.c.connection_error,
+          )
+        )
+          throw fail("telegram_connection_attention_required", 409);
+        if (
           s.c.connection_status !== "connected" ||
           !s.c.heartbeat_at ||
           now() - new Date(s.c.heartbeat_at) > 60000
@@ -770,6 +783,7 @@ export function createCabinetStore({
   }
   return {
     authenticate,
+    newSession,
     login,
     invite,
     activate,

@@ -51,17 +51,25 @@ const attachmentUpload = multer({
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+let administratorRevision = 0;
 const {
   authConfigured,
   isAuthenticated,
   setAuthCookie,
   clearAuthCookie,
   requireAuth,
-} = createAuth(env);
-const cabinet = createCabinet({ query, withClient, env });
+} = createAuth({...env,getAdminRevision:()=>administratorRevision});
+const cabinet = createCabinet({ query, withClient, env,onAdminReset:revision=>{administratorRevision=revision;} });
+const administratorState=await cabinet.emailAuth.rootState();
+administratorRevision=administratorState?.password_hash?administratorState.auth_revision:0;
 app.use("/api/cabinet", cabinet.router);
+app.get('/login.html',(_req,res)=>{
+ res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
+ res.set('Content-Security-Policy',"default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+ res.sendFile(path.resolve('public','login.html'));
+});
 // Private account pages contain no account data; all data APIs authenticate separately.
-for (const file of ["cabinet.html", "cabinet.js", "cabinet.css"]) {
+for (const file of ["cabinet.html", "cabinet.js", "cabinet.css", "cabinet-auth.js"]) {
   app.get(file === "cabinet.html" ? "/cabinet" : `/${file}`, (_req, res) => {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
@@ -598,7 +606,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
   cabinet.limit("login:" + req.ip);
   const username = String(req.body.username || "");
   const password = String(req.body.password || "");
-  if (!timingSafeEqualText(username, env.authUser) || !timingSafeEqualText(password, env.authPassword)) {
+  const rootIdentifier=timingSafeEqualText(username,env.authUser)||Boolean(env.authRecoveryEmail&&timingSafeEqualText(username.trim().toLowerCase(),env.authRecoveryEmail.trim().toLowerCase()));
+  if (!rootIdentifier) {
     cabinet.checkOrigin(req);
     // New owners receive only a cabinet cookie, never the shared administrator cookie.
     return cabinet.transport(req,res,async error => {
@@ -610,7 +619,7 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
   if (!authConfigured()) {
     return res.status(503).json({ error: "auth_not_configured" });
   }
-  if (!timingSafeEqualText(username, env.authUser) || !timingSafeEqualText(password, env.authPassword)) {
+  if (!(await cabinet.emailAuth.adminPassword(password,()=>timingSafeEqualText(password,env.authPassword)))) {
     clearAuthCookie(res);
     return res.status(401).json({ error: "invalid_credentials" });
   }

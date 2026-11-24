@@ -7,7 +7,17 @@ async function admin(path, body) {
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Ошибка сервиса");
+  if (!res.ok)
+    throw new Error(
+      {
+        login_reserved:
+          "Этот логин используется администратором. Выберите другой.",
+        invalid_login:
+          "Логин должен состоять из 3–64 латинских букв, цифр, точки, дефиса или подчёркивания.",
+        too_many_requests: "Слишком много попыток. Попробуйте через 15 минут.",
+      }[data.error] ||
+        "Не удалось выполнить действие. Обновите страницу и попробуйте ещё раз.",
+    );
   return data;
 }
 async function run(fn) {
@@ -25,7 +35,7 @@ async function load() {
     const box = document.createElement("div");
     box.className = "card";
     const title = document.createElement("h3");
-    title.textContent = a.display_name + " · " + a.login;
+    title.textContent = a.display_name + " · " + (a.email || a.login);
     const p = document.createElement("p");
     p.textContent = !a.active
       ? "Отключён"

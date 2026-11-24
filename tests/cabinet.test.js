@@ -372,6 +372,30 @@ test(
         },
       );
       await t.test(
+        "provider restriction cannot be resumed through a send-scoped token",
+        async () => {
+          await query(
+            "UPDATE cabinet_connections SET error_code='telegram_rate_limit' WHERE id=$1",
+            [conn.id],
+          );
+          try {
+            const blocked = await request(
+              `/api/cabinet/campaigns/${c.id}/launch/prepare`,
+              { token: full.token, body: { draft_ids: [d.id] } },
+            );
+            assert.equal(
+              blocked.data.error,
+              "telegram_connection_attention_required",
+            );
+          } finally {
+            await query(
+              "UPDATE cabinet_connections SET error_code=NULL WHERE id=$1",
+              [conn.id],
+            );
+          }
+        },
+      );
+      await t.test(
         "prepare is inert, plans bind to one principal, edits invalidate exact preview",
         async () => {
           let result = await request(

@@ -433,6 +433,8 @@ nav button {
   text-align: left;
   font-size: 14px;
 }
+.sidebar .nav-group>a{display:block;min-height:34px;padding:6px 10px;text-decoration:none;border:1px solid var(--line);border-radius:var(--radius,8px);font-size:14px;color:var(--ink);background:var(--panel,#fff)}
+.sidebar .nav-group>a:hover{border-color:var(--accent);color:var(--accent)}
 
 nav button.active {
   border-color: var(--accent-soft);

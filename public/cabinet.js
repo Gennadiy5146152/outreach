@@ -10,6 +10,38 @@ let csrf = "",
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
 const errors = {
+  telegram_connection_attention_required:
+    "Отправка остановлена из-за ограничения Telegram или неопределённой доставки. Проверьте результат в Telegram, затем подключите профиль заново после решения проблемы.",
+  invalid_email: "Проверьте адрес электронной почты.",
+  email_auth_not_configured:
+    "Отправка писем пока не настроена. Обратитесь к администратору.",
+  token_scope_invalid: "Выберите права и разрешённые рассылки для токена.",
+  token_expiry_invalid: "Срок действия токена должен быть от 1 до 90 дней.",
+  invalid_text: "Заполните текст и название. Проверьте длину.",
+  recipient_id_required:
+    "Укажите числовой Telegram ID из проверенной карточки контакта.",
+  invalid_telegram_username: "Проверьте имя пользователя Telegram.",
+  telegram_identity_mismatch:
+    "Вы вошли в другой Telegram-профиль. Запросите QR и войдите в указанный аккаунт.",
+  telegram_account_already_managed:
+    "Этот Telegram-профиль уже подключён в другом кабинете.",
+  telegram_qr_expired: "QR-код истёк. Запросите новый.",
+  telegram_login_expired: "Время входа истекло. Запросите новый QR-код.",
+  telegram_password_invalid:
+    "Неверный облачный пароль Telegram. Попробуйте ещё раз.",
+  telegram_connection_failed:
+    "Не удалось подключиться к Telegram. Запросите QR ещё раз.",
+  telegram_authorization_lost: "Сеанс Telegram завершён. Войдите заново по QR.",
+  telegram_rate_limit:
+    "Telegram ограничил отправку. Оставшаяся очередь остановлена.",
+  telegram_delivery_uncertain:
+    "Не удалось подтвердить доставку. Проверьте сообщение в Telegram; повторной отправки не будет.",
+  telegram_recipient_changed: "Контакт изменился. Сообщение не отправлено.",
+  telegram_recipient_unavailable: "Получателю нельзя отправить сообщение.",
+  worker_restarted: "После перезапуска результат требует проверки в Telegram.",
+  outreach_stopped: "Остановлено пользователем.",
+  password_reset: "Остановлено после смены пароля.",
+  connection_restarted: "Подключение изменено, очередь остановлена.",
   cabinet_auth_required: "Нужно войти в кабинет.",
   invalid_credentials: "Неверный логин или пароль.",
   password_requires_12_characters:
@@ -35,6 +67,20 @@ const errors = {
     "Этот черновик уже в отправке. Его текст нельзя менять.",
   too_many_requests: "Слишком много попыток. Попробуйте позже.",
 };
+const scopeLabels = {
+  "outreach:read": "Чтение сообщений и очереди",
+  "outreach:draft": "Создание и правка черновиков",
+  "outreach:send": "Запуск сохранённых сообщений",
+  "outreach:stop": "Остановка сообщений",
+};
+const jobLabels = {
+  queued: "В очереди",
+  sending: "Отправляется",
+  sent: "Отправлено",
+  failed: "Ошибка",
+  cancelled: "Отменено",
+  uncertain: "Нужно проверить результат",
+};
 async function api(path, body, method) {
   const res = await fetch("/api/cabinet" + path, {
     method: method || (body ? "POST" : "GET"),
@@ -52,7 +98,10 @@ async function api(path, body, method) {
     throw new Error("Сервис недоступен.");
   }
   if (!res.ok)
-    throw new Error(errors[data.error] || data.error || "Ошибка сервиса");
+    throw new Error(
+      errors[data.error] ||
+        "Не удалось выполнить действие. Обновите страницу и попробуйте ещё раз.",
+    );
   return data;
 }
 function node(tag, text, className) {
@@ -116,20 +165,27 @@ function showAuth() {
   }
 }
 async function boot() {
+  if (invite) {
+    showAuth();
+    return;
+  }
   try {
     const me = await api("/me");
     if (me.kind !== "owner") throw new Error("Войдите как владелец кабинета.");
     csrf = me.csrf;
     $("sendingDisabled").hidden = me.send_enabled;
-    $("identity").textContent = me.display_name + " · " + me.login;
+    $("identity").textContent =
+      me.display_name + " · " + (me.email || me.login);
+    $("profileEmail").value = me.email || "";
+    $("emailStatus").textContent = me.email_verified
+      ? "Почта подтверждена. По ней можно войти и восстановить пароль."
+      : "Привяжите почту, чтобы восстанавливать доступ самостоятельно.";
     $("auth").hidden = true;
     $("workspace").hidden = false;
     $("logout").hidden = false;
     await refresh();
   } catch (e) {
-    showAuth();
-    if (!String(e.message).includes("Нужно войти"))
-      $("notice").textContent = e.message;
+    location.replace("/login.html");
   }
 }
 async function refresh() {
@@ -137,6 +193,15 @@ async function refresh() {
   campaigns = await api("/campaigns");
   $("campaignSelect").replaceChildren();
   $("tokenCampaigns").replaceChildren();
+  $("tokenForm").querySelector("button").disabled = !campaigns.length;
+  if (!campaigns.length)
+    $("tokenCampaigns").append(
+      node(
+        "p",
+        "Сначала создайте рассылку. Затем выберите, к каким рассылкам будет доступ у токена.",
+        "muted",
+      ),
+    );
   for (const c of campaigns) {
     const option = node(
       "option",
@@ -177,7 +242,9 @@ async function loadConnections() {
       (statuses[c.status] || c.status) +
         " · @" +
         (c.username || c.expected_username) +
-        (c.error_code ? " · " + c.error_code : ""),
+        (c.error_code
+          ? " · " + (errors[c.error_code] || "Нужно подключить профиль заново.")
+          : ""),
     );
     if (c.status !== "connected")
       box.append(
@@ -222,7 +289,10 @@ function watchQr(id) {
         disconnected: "Telegram отключён",
       };
       $("qrStatus").textContent = titles[data.status] || data.status;
-      $("qrError").textContent = data.error_code || "";
+      $("qrError").textContent = data.error_code
+        ? errors[data.error_code] ||
+          "Не удалось подключиться. Попробуйте ещё раз."
+        : "";
       $("qrImage").hidden = !data.qr_svg;
       $("qrImage").src = data.qr_svg
         ? "data:image/svg+xml;base64," + btoa(data.qr_svg)
@@ -256,6 +326,14 @@ async function loadDrafts() {
   if (!campaignId) return;
   const list = await api(`/campaigns/${campaignId}/drafts?page=${draftPage}`);
   $("drafts").replaceChildren();
+  if (!list.length)
+    $("drafts").append(
+      node(
+        "p",
+        "Черновиков пока нет. Добавьте сообщение или импортируйте подготовленные тексты.",
+        "muted",
+      ),
+    );
   $("draftPage").textContent = "Страница " + draftPage;
   $("prevDrafts").disabled = draftPage <= 1;
   $("nextDrafts").disabled = list.length < 100;
@@ -273,7 +351,7 @@ async function loadDrafts() {
     box.append(label, node("div", d.body, "body"));
     box.append(
       button("Править текст", async () => {
-        const body = prompt("Текст письма", d.body);
+        const body = prompt("Текст сообщения", d.body);
         if (body === null) return;
         await api(`/campaigns/${campaignId}/drafts/${d.id}`, { body }, "PATCH");
         await loadDrafts();
@@ -286,16 +364,20 @@ async function loadQueue() {
   if (!campaignId) return;
   const list = await api(`/campaigns/${campaignId}/queue?page=${queuePage}`);
   $("queue").replaceChildren();
+  if (!list.length) $("queue").append(node("p", "Отправок пока нет.", "muted"));
   $("queuePage").textContent = "Страница " + queuePage;
   $("prevQueue").disabled = queuePage <= 1;
   $("nextQueue").disabled = list.length < 100;
   for (const job of list) {
     const box = card(
       job.address,
-      job.status +
+      (jobLabels[job.status] || "Требует проверки") +
         " · " +
         at(job.scheduled_at) +
-        (job.error_code ? " · " + job.error_code : ""),
+        (job.error_code
+          ? " · " +
+            (errors[job.error_code] || "Проверьте результат в Telegram.")
+          : ""),
     );
     box.append(
       button("Сообщение и ответы", async () => {
@@ -345,12 +427,22 @@ async function preview(kind) {
 async function loadTokens() {
   const list = await api("/tokens");
   $("tokenList").replaceChildren();
+  if (!list.length)
+    $("tokenList").append(
+      node(
+        "p",
+        "Токенов пока нет. Доступ внешним помощникам не выдан.",
+        "muted",
+      ),
+    );
   for (const t of list) {
     const box = card(
       t.name,
       t.display_prefix +
         " · " +
-        t.scopes.join(", ") +
+        t.scopes
+          .map((scope) => scopeLabels[scope] || "Ограниченное действие")
+          .join(", ") +
         " · до " +
         at(t.expires_at) +
         (t.revoked_at ? " · отозван" : ""),
@@ -424,6 +516,10 @@ form("tokenForm", async (data) => {
     campaign_ids = [
       ...$("tokenCampaigns").querySelectorAll("input:checked"),
     ].map((e) => e.value);
+  if (!scopes.length)
+    throw new Error("Выберите хотя бы одно право для токена.");
+  if (!campaign_ids.length)
+    throw new Error("Выберите хотя бы одну разрешённую рассылку.");
   const result = await api("/tokens", {
     name: data.name,
     expires_in_days: Number(data.expires_in_days),
@@ -433,6 +529,10 @@ form("tokenForm", async (data) => {
   $("tokenValue").textContent = result.token;
   $("tokenReveal").hidden = false;
   await loadTokens();
+});
+form("emailForm", async (data) => {
+  const result = await api("/profile/email", data);
+  $("emailMessage").textContent = result.message;
 });
 $("hideToken").onclick = () => {
   $("tokenValue").textContent = "";

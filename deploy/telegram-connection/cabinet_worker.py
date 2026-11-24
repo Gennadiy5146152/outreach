@@ -111,7 +111,8 @@ class CabinetWorker:
 
     async def identity(self, db, row, client):
         me = await client.get_me()
-        if not me or (me.username or "").lower() != row["expected_username"]:
+        if (not me or getattr(me, 'bot', False) or (me.username or "").lower() != row["expected_username"]
+                or row.get("telegram_user_id") not in (None, me.id)):
             await client.log_out()
             await self.update(db, row, "error", error_code="telegram_identity_mismatch", qr_svg=None, password_cipher=None)
             return False

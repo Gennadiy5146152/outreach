@@ -34,6 +34,10 @@
               required /></label
           ><button>Войти</button>
         </form>
+        <p>
+          <a href="/login.html#register">Регистрация по почте</a> ·
+          <a href="/login.html#recover">Восстановить пароль</a>
+        </p>
       </section>
       <div id="workspace" hidden>
         <p id="sendingDisabled" class="privacy" hidden>
@@ -41,11 +45,14 @@
           подключить Telegram и подготовить черновики; запуск станет доступен
           после настройки обработчика.
         </p>
-        <p class="privacy">
-          Здесь доступны только ваши подключения и рассылки. MCP не получает
-          Telegram-сессию, QR-код, список диалогов или общую историю переписки.
-          Доступ администратора сервера сохраняется.
-        </p>
+        <details class="privacy">
+          <summary>Доступ и приватность</summary>
+          <p>
+            Здесь доступны только ваши подключения и рассылки. MCP не получает
+            Telegram-сессию, QR-код, список диалогов или общую историю
+            переписки. Доступ администратора сервера сохраняется.
+          </p>
+        </details>
         <nav>
           <a href="#telegram">Telegram</a><a href="#campaigns">Рассылки</a
           ><a href="#tokens">MCP-токены</a>
@@ -53,12 +60,12 @@
         <section id="telegram">
           <h2>Подключение Telegram</h2>
           <p>
-            Укажите свой публичный username. Войдите по QR в мобильном Telegram:
+            Укажите свой логин Telegram. Войдите по QR в мобильном Telegram:
             Настройки → Устройства → Подключить устройство.
           </p>
           <form id="connectForm" class="row">
             <label
-              >Username<input
+              >Логин Telegram<input
                 name="username"
                 placeholder="@BaranecArtem"
                 required /></label
@@ -301,6 +308,21 @@
               подтверждённую очередь нужно остановить отдельно.
             </p>
           </details>
+        </section>
+        <section id="profile">
+          <h2>Почта для входа и восстановления</h2>
+          <p id="emailStatus" class="muted"></p>
+          <form id="emailForm" class="row">
+            <label
+              >Электронная почта<input
+                name="email"
+                id="profileEmail"
+                type="email"
+                autocomplete="email"
+                required /></label
+            ><button>Подтвердить почту</button>
+          </form>
+          <p id="emailMessage" role="status"></p>
         </section>
       </div>
     </main>

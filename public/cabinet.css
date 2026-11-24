@@ -9,6 +9,109 @@
 * {
   box-sizing: border-box;
 }
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at top, #e8effb, #f5f7fb 65%);
+}
+main.auth-shell {
+  max-width: 480px;
+  width: 100%;
+  margin: 32px auto;
+  padding: 0 20px;
+}
+.auth-brand {
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 2.5px;
+  font-weight: 750;
+  text-decoration: none;
+  color: #36628f;
+  margin-bottom: 24px;
+}
+.auth-card {
+  padding: 32px;
+  margin: 0;
+  box-shadow: 0 12px 45px #17355309;
+}
+.auth-card h1 {
+  font-size: 26px;
+  line-height: 1.25;
+  margin: 0 0 10px;
+  letter-spacing: -0.5px;
+}
+.auth-card label {
+  margin: 18px 0;
+}
+.auth-card input {
+  padding: 12px;
+}
+.wide {
+  width: 100%;
+  padding: 12px;
+  margin-top: 8px;
+  font-weight: 600;
+}
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+  font-size: 14px;
+}
+.auth-back {
+  display: block;
+  margin-top: 22px;
+  font-size: 14px;
+}
+.auth-footer {
+  text-align: center;
+  color: #758398;
+  font-size: 12px;
+  margin: 22px 12px;
+}
+.auth-message {
+  padding: 12px;
+  border-radius: 7px;
+  background: #fff0f0;
+  color: #963e4a;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.auth-message.success {
+  background: #edf7f1;
+  color: #276849;
+}
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 24px 20px;
+  }
+  .auth-card h1 {
+    font-size: 23px;
+  }
+  .auth-links {
+    font-size: 13px;
+  }
+  header h1 {
+    font-size: 22px;
+  }
+  fieldset {
+    min-width: 0;
+  }
+  legend {
+    max-width: 100%;
+  }
+  button {
+    max-width: 100%;
+  }
+  .row {
+    align-items: stretch;
+  }
+}
 body {
   margin: 0;
 }
@@ -32,6 +135,9 @@ header h1 {
 }
 #identity {
   margin-left: auto;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  font-size: 14px;
 }
 main {
   max-width: 1160px;
@@ -152,6 +258,7 @@ form .row {
 }
 .card h3 {
   margin: 2px 0;
+  overflow-wrap: anywhere;
 }
 .body {
   white-space: pre-wrap;

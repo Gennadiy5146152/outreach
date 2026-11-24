@@ -4,64 +4,116 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Вход · Outreach Desk</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/cabinet.css" />
+    <script defer src="/cabinet-auth.js"></script>
   </head>
-  <body class="login-page">
-    <main class="login-shell">
-      <section class="panel login-card">
-        <div>
-          <p class="eyebrow">Outreach Desk</p>
-          <h1>Вход в сервис</h1>
-          <p class="muted">Введите логин и пароль для доступа к сервису.</p>
+  <body class="auth-page">
+    <main class="auth-shell">
+      <a class="auth-brand" href="/login.html">OUTREACH DESK</a>
+      <section class="auth-card">
+        <div id="loginPane">
+          <h1>С возвращением</h1>
+          <p class="muted">Войдите в свой кабинет.</p>
+          <form id="loginForm">
+            <label
+              >Email или логин<input
+                name="username"
+                autocomplete="username"
+                required
+                autofocus /></label
+            ><label
+              >Пароль<input
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required /></label
+            ><button class="wide">Войти</button>
+          </form>
+          <div class="auth-links">
+            <a href="#recover" id="recoverLink">Забыли пароль?</a
+            ><a href="#register" id="registerLink">Создать кабинет</a>
+          </div>
         </div>
-        <form id="loginForm" class="form">
-          <label class="field">
-            <span>Логин</span>
-            <input name="username" autocomplete="username" required autofocus />
-          </label>
-          <label class="field">
-            <span>Пароль</span>
-            <input name="password" type="password" autocomplete="current-password" required />
-          </label>
-          <button>Войти</button>
-        </form>
-        <div id="loginMessage" class="login-message" hidden></div>
+        <div id="registerPane" hidden>
+          <h1>Создать кабинет</h1>
+          <p class="muted">
+            Подтвердите почту, затем задайте пароль. Ваши подключения и рассылки
+            будут доступны только вам и тем, кому вы дадите доступ.
+          </p>
+          <form id="registerForm">
+            <label
+              >Ваше имя<input
+                name="display_name"
+                autocomplete="name"
+                maxlength="100"
+                required /></label
+            ><label
+              >Электронная почта<input
+                name="email"
+                type="email"
+                autocomplete="email"
+                maxlength="254"
+                required /></label
+            ><button class="wide">Получить письмо</button>
+          </form>
+          <a href="#login" class="auth-back">Уже есть кабинет? Войти</a>
+        </div>
+        <div id="recoverPane" hidden>
+          <h1>Восстановить пароль</h1>
+          <p class="muted">
+            Укажите подтверждённую почту вашего кабинета. Мы отправим
+            одноразовую ссылку для смены пароля.
+          </p>
+          <form id="recoverForm">
+            <label
+              >Электронная почта<input
+                name="email"
+                type="email"
+                autocomplete="email"
+                maxlength="254"
+                required /></label
+            ><button class="wide">Отправить ссылку</button>
+          </form>
+          <a href="#login" class="auth-back">Вернуться ко входу</a>
+        </div>
+        <div id="confirmPane" hidden>
+          <h1 id="confirmTitle">Проверяем ссылку</h1>
+          <p id="confirmEmail" class="muted"></p>
+          <form id="confirmForm" hidden>
+            <div id="newPasswordFields">
+              <label
+                >Новый пароль<input
+                  name="password"
+                  type="password"
+                  minlength="12"
+                  maxlength="1024"
+                  autocomplete="new-password"
+                  required
+              /></label>
+              <p class="muted">Не менее 12 символов.</p>
+              <label
+                >Повторите пароль<input
+                  name="repeat"
+                  type="password"
+                  autocomplete="new-password"
+                  required
+              /></label>
+            </div>
+            <button id="confirmSubmit" class="wide">Сохранить пароль</button>
+          </form>
+          <a href="#login" class="auth-back">Вернуться ко входу</a>
+        </div>
+        <p
+          id="loginMessage"
+          class="auth-message"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></p>
       </section>
+      <p class="auth-footer">
+        Каждый кабинет хранит свои подключения, сообщения и права доступа.
+      </p>
     </main>
-    <script>
-      const form = document.querySelector("#loginForm");
-      const message = document.querySelector("#loginMessage");
-
-      async function checkStatus() {
-        const response = await fetch("/api/auth/status", { cache: "no-store" });
-        const status = await response.json().catch(() => ({}));
-        if (status.authenticated) window.location.href = status.redirect || "/";
-        if (!status.configured) {
-          message.hidden = false;
-          message.textContent = "Авторизация пока не настроена. Обратитесь к администратору сервиса.";
-          form.querySelector("button").disabled = true;
-        }
-      }
-
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        message.hidden = true;
-        const body = Object.fromEntries(new FormData(form).entries());
-        const response = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (response.ok) {
-          const result = await response.json();
-          window.location.href = result.redirect || "/";
-          return;
-        }
-        message.hidden = false;
-        message.textContent = response.status === 401 ? "Неверный логин или пароль." : "Не удалось войти. Проверьте настройки авторизации.";
-      });
-
-      checkStatus();
-    </script>
   </body>
 </html>
