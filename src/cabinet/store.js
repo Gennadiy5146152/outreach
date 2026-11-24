@@ -145,7 +145,7 @@ export function createCabinetStore({
       const {
         rows: [r],
       } = await query(
-        `SELECT t.id,t.owner_id,t.scopes,t.campaign_ids,a.login,a.display_name FROM cabinet_api_tokens t
+        `SELECT t.id,t.owner_id,t.scopes,t.campaign_ids,t.all_campaigns,a.login,a.display_name FROM cabinet_api_tokens t
     JOIN cabinet_accounts a ON a.id=t.owner_id WHERE t.token_hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now() AND a.active`,
         [digest(auth.slice(7))],
       );
@@ -279,7 +279,7 @@ export function createCabinetStore({
       await query(
         `SELECT c.id,c.name,c.paused,c.daily_limit,c.window_start,c.window_end,t.username,t.status connection_status
    FROM cabinet_campaigns c JOIN cabinet_connections t ON t.id=c.connection_id WHERE c.owner_id=$1 AND ($2::uuid[] IS NULL OR c.id=ANY($2)) ORDER BY c.created_at DESC`,
-        [p.owner_id, p.kind === "owner" ? null : p.campaign_ids],
+        [p.owner_id, p.kind === "owner" || p.all_campaigns === true ? null : p.campaign_ids],
       )
     ).rows;
   }
@@ -500,12 +500,16 @@ export function createCabinetStore({
   }
   async function tokenCreate(p, input) {
     ownerOnly(p);
+    const access = input.campaign_access ?? "selected";
+    if (!["all", "selected"].includes(access)) throw fail("token_campaign_access_invalid");
+    const allCampaigns = access === "all";
     const scopes = [...new Set(input.scopes || [])],
       ids = [...new Set(input.campaign_ids || [])].map(uuid);
     if (
       !scopes.length ||
       scopes.some((x) => !SCOPES.includes(x)) ||
-      (scopes.some((s) => s.startsWith("outreach:")) && !ids.length) ||
+      (scopes.some((s) => s.startsWith("outreach:")) && !allCampaigns && !ids.length) ||
+      (allCampaigns && ids.length > 0) ||
       ids.length > 100
     )
       throw fail("token_scope_invalid");
@@ -523,8 +527,8 @@ export function createCabinetStore({
     const {
       rows: [saved],
     } = await query(
-      `INSERT INTO cabinet_api_tokens(owner_id,name,token_hash,display_prefix,scopes,campaign_ids,expires_at)
-   VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,name,display_prefix,scopes,campaign_ids,expires_at`,
+      `INSERT INTO cabinet_api_tokens(owner_id,name,token_hash,display_prefix,scopes,campaign_ids,expires_at,all_campaigns)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,name,display_prefix,scopes,campaign_ids,expires_at,all_campaigns`,
       [
         p.owner_id,
         text(input.name, 100),
@@ -533,6 +537,7 @@ export function createCabinetStore({
         scopes,
         ids,
         new Date(now().getTime() + days * 86400000),
+        allCampaigns,
       ],
     );
     await audit(p, "token_created", saved.id);
@@ -542,7 +547,7 @@ export function createCabinetStore({
     ownerOnly(p);
     return (
       await query(
-        "SELECT id,name,display_prefix,scopes,campaign_ids,expires_at,revoked_at,last_used_at FROM cabinet_api_tokens WHERE owner_id=$1 ORDER BY created_at DESC",
+        "SELECT id,name,display_prefix,scopes,campaign_ids,all_campaigns,expires_at,revoked_at,last_used_at FROM cabinet_api_tokens WHERE owner_id=$1 ORDER BY created_at DESC",
         [p.owner_id],
       )
     ).rows;

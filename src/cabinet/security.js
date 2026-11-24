@@ -106,7 +106,7 @@ export function cookie(value, { secure = false, clear = false } = {}) {
 export function assertScope(principal, scope, campaignId) {
   if (principal.kind === "owner") return;
   if (!principal.scopes.includes(scope)) throw fail("scope_denied", 403);
-  if (campaignId && !principal.campaign_ids.includes(campaignId))
+  if (campaignId && principal.all_campaigns !== true && !principal.campaign_ids.includes(campaignId))
     throw fail("campaign_not_found", 404);
 }
 export function ownerOnly(principal) {

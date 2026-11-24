@@ -7,7 +7,7 @@ export function createCabinetMcpServer({ client, scopes = [] }) {
     { name: "outreach-private-cabinet", version: "1.0.0" },
     {
       instructions:
-        "Work only inside the campaigns allowed by this token. Before delivery or stopping, call prepare, show the full returned plan and ask for explicit human approval. Execute only after that approval. No Telegram sessions, QR authentication, contacts, arbitrary chats or general history are accessible.",
+        "Work only inside the token owner's cabinet. cabinet_access reports all_campaigns: true for access to all current and future campaigns of this owner; otherwise use only the listed campaign_ids. Action scopes still apply independently. Before delivery or stopping, call prepare, show the full returned plan and ask for explicit human approval. Execute only after that approval. No Telegram sessions, QR authentication, contacts, arbitrary chats or general history are accessible.",
     },
   );
   const id = z.uuid(),

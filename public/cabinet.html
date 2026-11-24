@@ -399,9 +399,9 @@
         <section id="tokens" data-cabinet-page hidden>
           <h2><span class="section-number">03</span> Доступ через MCP</h2>
           <p>
-            Права на сообщения действуют только для выбранных рассылок. Отправка возможна
-            после подготовки точного плана и вашего подтверждения. Доступ к
-            подключению Telegram и другим кабинетам не предоставляется.
+            Выберите доступ ко всем рассылкам кабинета или только к отдельным.
+            Права на действия задаются отдельно. Отправка требует подготовки
+            точного плана и вашего подтверждения. Личная переписка Telegram недоступна.
           </p>
           <form id="tokenForm">
             <div class="row">
@@ -428,7 +428,7 @@
                   name="scope"
                   value="outreach:read"
                   checked
-                />Читать черновики, очередь и ответы этой рассылки</label
+                />Читать черновики, очередь и ответы рассылок</label
               ><label class="check"
                 ><input
                   type="checkbox"
@@ -441,7 +441,6 @@
                   type="checkbox"
                   name="scope"
                   value="outreach:stop"
-                  checked
                 />Останавливать сообщения</label
               ><label class="check"
                 ><input
@@ -454,8 +453,11 @@
               >
             </fieldset>
             <fieldset>
-              <legend>Разрешённые рассылки</legend>
-              <div id="tokenCampaigns"></div>
+              <legend>Область доступа</legend>
+              <label class="check"><input type="radio" name="campaign_access" value="all" checked />Все рассылки кабинета</label>
+              <p id="tokenAllHint" class="muted">Включая будущие рассылки. Токен можно создать, даже если рассылок пока нет.</p>
+              <label class="check"><input type="radio" name="campaign_access" value="selected" />Только выбранные рассылки</label>
+              <div id="tokenCampaigns" hidden></div>
             </fieldset>
             <button>Создать токен</button>
           </form>

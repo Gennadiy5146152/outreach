@@ -229,7 +229,7 @@ export function createCabinet({
             email: p.email || "",
             email_verified: Boolean(p.email_verified_at),
           }
-        : { scopes: p.scopes, campaign_ids: p.campaign_ids }),
+        : { scopes: p.scopes, campaign_ids: p.campaign_ids, all_campaigns: p.all_campaigns === true }),
     });
   });
   router.get("/instagram", run(async (req, res) => res.json(await instagram.status(req.cabinet))));
@@ -251,6 +251,7 @@ export function createCabinet({
       login: req.cabinet.login,
       scopes: req.cabinet.kind === "owner" ? [] : req.cabinet.scopes,
       campaign_ids: req.cabinet.campaign_ids || [],
+      all_campaigns: req.cabinet.all_campaigns === true,
     }),
   );
   router.post(

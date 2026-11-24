@@ -337,6 +337,42 @@ test(
         },
       );
       await t.test(
+        "cabinet-wide tokens cover future campaigns but retain ownership, scopes and approval checks",
+        async () => {
+          const empty = await owner("empty");
+          const wide = await cabinet.store.tokenCreate(empty.p, {
+            name: "Whole cabinet", scopes: ["outreach:read", "outreach:send"],
+            campaign_access: "all", campaign_ids: [],
+          });
+          assert.equal(wide.all_campaigns, true);
+          assert.deepEqual((await request("/api/cabinet/campaigns", { token: wide.token })).data, []);
+          const ctx = (await request("/api/cabinet/mcp/context", { token: wide.token })).data;
+          assert.equal(ctx.all_campaigns, true);
+          assert.deepEqual(ctx.campaign_ids, []);
+          const connection = await cabinet.store.connect(empty.p, { username: "wide_test_" + prefix });
+          const future = await cabinet.store.createCampaign(empty.p, { connection_id: connection.id, name: "Future campaign" });
+          assert.deepEqual((await request("/api/cabinet/campaigns", { token: wide.token })).data.map(x => x.id), [future.id]);
+          assert.equal((await request(`/api/cabinet/campaigns/${future.id}/drafts`, { token: wide.token })).status, 200);
+          assert.equal((await request(`/api/cabinet/campaigns/${c.id}/drafts`, { token: wide.token })).status, 404);
+          assert.equal((await request(`/api/cabinet/campaigns/${cb.id}/queue`, { token: wide.token })).status, 404);
+          assert.equal((await request("/api/cabinet/connections", { token: wide.token })).status, 403);
+          assert.equal((await request("/api/cabinet/tokens", { token: wide.token, body: { name: "Cannot mint more" } })).status, 403);
+          assert.equal((await request(`/api/cabinet/campaigns/${future.id}/drafts`, { token: wide.token, body: { body: "No edit scope" } })).status, 403);
+          const saved = await cabinet.store.saveDraft(empty.p, future.id, { address: "https://t.me/wide_test_recipient", recipient_id: "991112233", body: "Test only", permission_kind: "consent", permission_evidence: "Disposable test" });
+          await query("UPDATE cabinet_connections SET status='connected',username=expected_username,telegram_user_id=99887766,heartbeat_at=now() WHERE id=$1", [connection.id]);
+          const prepared = await request(`/api/cabinet/campaigns/${future.id}/launch/prepare`, { token: wide.token, body: { draft_ids: [saved.id] } });
+          assert.equal(prepared.status, 200);
+          assert.equal(prepared.data.requires_confirmation, true);
+          assert.equal((await request("/api/cabinet/execute", { token: wide.token, body: { confirmation_token: prepared.data.confirmation_token, kind: "launch" } })).status, 400);
+          const readOnly = await cabinet.store.tokenCreate(empty.p, { name: "Read only", scopes: ["outreach:read"], campaign_access: "all" });
+          assert.equal((await request(`/api/cabinet/campaigns/${future.id}/launch/prepare`, { token: readOnly.token, body: { draft_ids: [saved.id] } })).status, 403);
+          assert.equal((await request("/api/cabinet/mcp/context", { token: read.token })).data.all_campaigns, false);
+          await assert.rejects(cabinet.store.tokenCreate(empty.p, { name: "Ambiguous", scopes: ["outreach:read"], campaign_access: "all", campaign_ids: [future.id] }), /token_scope_invalid/);
+          await cabinet.store.tokenRevoke(empty.p, wide.id);
+          assert.equal((await request("/api/cabinet/campaigns", { token: wide.token })).status, 401);
+        },
+      );
+      await t.test(
         "CSRF, origin, absent scope and arbitrary paths fail closed",
         async () => {
           assert.equal(

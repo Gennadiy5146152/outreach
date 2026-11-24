@@ -125,7 +125,7 @@ textarea {
   resize: vertical;
   line-height: 1.8;
 }
-input[type="checkbox"] {
+input[type="checkbox"], input[type="radio"] {
   display: inline-block;
   width: 17px;
   height: 17px;
@@ -2042,7 +2042,7 @@ html {
     justify-self: stretch;
   }
 }
-input[type="checkbox"] {
+input[type="checkbox"], input[type="radio"] {
   padding: 0;
 }
 .card button.danger {

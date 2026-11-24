@@ -33,6 +33,7 @@ const errors = {
   email_auth_not_configured:
     "Отправка писем пока не настроена. Обратитесь к администратору.",
   token_scope_invalid: "Выберите права и разрешённые рассылки для токена.",
+  token_campaign_access_invalid: "Выберите все рассылки кабинета или отдельные рассылки.",
   token_expiry_invalid: "Срок действия токена должен быть от 1 до 90 дней.",
   invalid_text: "Заполните текст и название. Проверьте длину.",
   recipient_id_required:
@@ -243,7 +244,7 @@ async function refresh() {
     $("tokenCampaigns").append(
       node(
         "p",
-        "Рассылок пока нет. Для просмотра статуса Instagram можно выдать отдельное право без выбора рассылки.",
+        "Рассылок пока нет. Выберите «Все рассылки кабинета», чтобы выдать доступ к будущим рассылкам.",
         "muted",
       ),
     );
@@ -627,6 +628,7 @@ async function loadTokens() {
     const box = card(
       t.name,
       t.display_prefix +
+        (t.all_campaigns ? " · Все рассылки кабинета, включая будущие" : " · Выбранные рассылки") +
         " · " +
         t.scopes
           .map((scope) => scopeLabels[scope] || "Ограниченное действие")
@@ -710,18 +712,27 @@ form("tokenForm", async (data) => {
     ].map((e) => e.value);
   if (!scopes.length)
     throw new Error("Выберите хотя бы одно право для токена.");
-  if (!campaign_ids.length)
+  const campaign_access = data.campaign_access;
+  if (campaign_access === "selected" && scopes.some(s => s.startsWith("outreach:")) && !campaign_ids.length)
     throw new Error("Выберите хотя бы одну разрешённую рассылку.");
   const result = await api("/tokens", {
     name: data.name,
     expires_in_days: Number(data.expires_in_days),
     scopes,
-    campaign_ids,
+    campaign_access,
+    campaign_ids: campaign_access === "all" ? [] : campaign_ids,
   });
   $("tokenValue").textContent = result.token;
   $("tokenCopyStatus").textContent = "";
   $("tokenReveal").hidden = false;
   await loadTokens();
+});
+$("tokenForm").querySelectorAll("input[name=campaign_access]").forEach(input => {
+  input.addEventListener("change", () => {
+    $("notice").textContent = "";
+    $("tokenCampaigns").hidden = $("tokenForm").elements.campaign_access.value !== "selected";
+    $("tokenAllHint").hidden = !$("tokenCampaigns").hidden;
+  });
 });
 form("emailForm", async (data, form) => {
   try {
