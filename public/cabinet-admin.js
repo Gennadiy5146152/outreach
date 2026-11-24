@@ -42,6 +42,12 @@ async function load() {
       : a.activated
         ? "Активирован"
         : "Ожидает активации";
+    p.className = "status-pill";
+    p.dataset.state = !a.active
+      ? "disabled"
+      : a.activated
+        ? "active"
+        : "pending";
     box.append(title, p);
     if (a.active) {
       const button = document.createElement("button");
@@ -91,4 +97,16 @@ $("hideInvite").onclick = () => {
   $("inviteLink").textContent = "";
   $("inviteResult").hidden = true;
 };
+function highlightAdminNav() {
+  document
+    .querySelectorAll(".cabinet-nav a")
+    .forEach((link) =>
+      link.classList.toggle(
+        "active",
+        link.getAttribute("href") === (location.hash || "#invite"),
+      ),
+    );
+}
+highlightAdminNav();
+window.addEventListener("hashchange", highlightAdminNav);
 run(load);

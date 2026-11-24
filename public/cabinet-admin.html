@@ -7,47 +7,122 @@
     <link rel="stylesheet" href="/cabinet.css" />
     <script defer src="/cabinet-admin.js"></script>
   </head>
-  <body>
-    <header>
-      <div>
-        <span class="eyebrow">OUTREACH DESK · АДМИНИСТРАТОР</span>
-        <h1>Кабинеты пользователей</h1>
-      </div>
-      <a href="/">Общий кабинет</a>
-    </header>
-    <main>
-      <p id="notice" role="status"></p>
-      <section>
-        <h2>Создать приглашение</h2>
-        <p>
-          Пользователь сам задаст пароль. Приглашение действует 24 часа и
-          используется один раз. Отправьте ссылку человеку лично.
-        </p>
-        <form id="inviteForm">
-          <label
-            >Логин<input
-              name="username"
-              pattern="[a-z0-9_.-]{3,64}"
-              required
-              autocomplete="off" /></label
-          ><label>Имя<input name="display_name" required /></label
-          ><button>Создать кабинет</button>
-        </form>
-        <div id="inviteResult" hidden>
-          <p>Ссылка для пользователя:</p>
-          <pre id="inviteLink"></pre>
-          <button id="hideInvite">Скрыть ссылку</button>
+  <body class="cabinet-page admin-page">
+    <aside class="cabinet-sidebar">
+      <a href="/" class="cabinet-brand" aria-label="Outreach Desk"
+        ><span class="brand-symbol"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            aria-hidden="true"
+          >
+            <path d="M6 18 18 6M6 6h12v12" /></svg></span
+        ><span class="brand-name"
+          >outreach<span class="brand-period">.</span
+          ><small>by KORDEVTEAM</small></span
+        ></a
+      ><span class="sidebar-caption">УПРАВЛЕНИЕ СЕРВИСОМ</span>
+      <nav class="cabinet-nav" aria-label="Навигация администратора">
+        <a href="/"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="3" width="7" height="7" rx="1.5" />
+            <rect x="14" y="3" width="7" height="7" rx="1.5" />
+            <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            <rect x="14" y="14" width="7" height="7" rx="1.5" /></svg
+          ><span>Общий кабинет</span></a
+        ><a href="#invite"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21v-2a8 8 0 0 1 16 0v2" /></svg
+          ><span>Пригласить пользователя</span></a
+        ><a href="#accountsPanel"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="8" cy="15" r="5" />
+            <path d="m12 11 8-8M16 7l3 3M18 5l3 3" /></svg
+          ><span>Пользователи</span></a
+        >
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span>
+        <div>
+          <strong>Администратор</strong><small>Управление доступом</small>
         </div>
-      </section>
-      <section>
-        <h2>Пользователи</h2>
-        <div id="accounts"></div>
-        <p class="muted">
-          Отключение закрывает вход и MCP-доступ, останавливает очередь и
-          отзывает Telegram-подключение пользователя. Переписка и
-          Telegram-сессия через эту страницу недоступны.
-        </p>
-      </section>
+      </div>
+    </aside>
+    <header class="cabinet-header">
+      <div class="header-crumb">
+        Рабочее пространство<span>/</span><strong>Команда</strong>
+      </div>
+      <a class="text-link" href="/">Вернуться в сервис ↗</a>
+    </header>
+    <main class="cabinet-main">
+      <div class="cabinet-intro">
+        <div>
+          <span class="eyebrow">КОМАНДА И ДОСТУПЫ</span>
+          <h1>Отдельный кабинет. Свои правила.</h1>
+          <p>Приглашайте пользователей и управляйте доступом к сервису.</p>
+        </div>
+      </div>
+      <p id="notice" role="status"></p>
+      <div class="admin-grid">
+        <section id="invite">
+          <h2>Создать приглашение</h2>
+          <p>
+            Пользователь сам задаст пароль. Приглашение действует 24 часа и
+            используется один раз. Отправьте ссылку человеку лично.
+          </p>
+          <form id="inviteForm">
+            <label
+              >Логин<input
+                name="username"
+                pattern="[a-z0-9_.-]{3,64}"
+                required
+                autocomplete="off" /></label
+            ><label>Имя<input name="display_name" required /></label
+            ><button>Создать кабинет</button>
+          </form>
+          <div id="inviteResult" hidden>
+            <p>Ссылка для пользователя:</p>
+            <pre id="inviteLink"></pre>
+            <button id="hideInvite">Скрыть ссылку</button>
+          </div>
+        </section>
+        <section id="accountsPanel">
+          <h2>Пользователи</h2>
+          <div id="accounts"></div>
+          <p class="muted">
+            Отключение закрывает вход и MCP-доступ, останавливает очередь и
+            отзывает Telegram-подключение пользователя. Переписка и
+            Telegram-сессия через эту страницу недоступны.
+          </p>
+        </section>
+      </div>
     </main>
   </body>
 </html>

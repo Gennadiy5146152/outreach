@@ -7,16 +7,122 @@
     <link rel="stylesheet" href="/cabinet.css" />
     <script defer src="/cabinet.js"></script>
   </head>
-  <body>
-    <header>
-      <div>
-        <span class="eyebrow">OUTREACH DESK</span>
-        <h1>Личный кабинет</h1>
+  <body class="cabinet-page">
+    <aside class="cabinet-sidebar">
+      <a href="/cabinet" class="cabinet-brand" aria-label="Outreach Desk"
+        ><span class="brand-symbol"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            aria-hidden="true"
+          >
+            <path d="M6 18 18 6M6 6h12v12" /></svg></span
+        ><span class="brand-name"
+          >outreach<span class="brand-period">.</span
+          ><small>by KORDEVTEAM</small></span
+        ></a
+      ><span class="sidebar-caption">РАБОЧЕЕ ПРОСТРАНСТВО</span>
+      <nav class="cabinet-nav" aria-label="Навигация кабинета">
+        <a href="#overview"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="3" width="7" height="7" rx="1.5" />
+            <rect x="14" y="3" width="7" height="7" rx="1.5" />
+            <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            <rect x="14" y="14" width="7" height="7" rx="1.5" /></svg
+          ><span>Обзор</span></a
+        ><a href="#telegram"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m21 3-7 18-4-7-7-4L21 3ZM10 14l11-11" /></svg
+          ><span>Telegram</span></a
+        ><a href="#campaigns"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 7h16v13H4zM8 3v8M16 3v8M4 11h16M8 15h3" /></svg
+          ><span>Рассылки</span></a
+        ><a href="#tokens"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="8" cy="15" r="5" />
+            <path d="m12 11 8-8M16 7l3 3M18 5l3 3" /></svg
+          ><span>Доступы MCP</span></a
+        ><a href="#profile"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21v-2a8 8 0 0 1 16 0v2" /></svg
+          ><span>Мой профиль</span></a
+        >
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span>
+        <div>
+          <strong>Личное пространство</strong
+          ><small>Доступы под контролем</small>
+        </div>
       </div>
-      <div id="identity"></div>
-      <button id="logout" hidden>Выйти</button>
+    </aside>
+    <header class="cabinet-header">
+      <div class="header-crumb">
+        Рабочее пространство<span>/</span><strong>Личный кабинет</strong>
+      </div>
+      <div class="header-account">
+        <span class="account-mark"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21v-2a8 8 0 0 1 16 0v2" /></svg
+        ></span>
+        <div id="identity"></div>
+        <button id="logout" class="quiet" hidden>Выйти</button>
+      </div>
     </header>
-    <main>
+    <main class="cabinet-main">
       <p id="notice" role="status" aria-live="polite"></p>
       <section id="auth" hidden>
         <h2 id="authTitle">Вход</h2>
@@ -40,6 +146,78 @@
         </p>
       </section>
       <div id="workspace" hidden>
+        <div class="cabinet-intro" id="overview">
+          <div>
+            <span class="eyebrow">ВАШ OUTREACH</span>
+            <h1>Всё для следующего контакта.</h1>
+            <p>Подключения, сообщения и доступы. Всё на своих местах.</p>
+          </div>
+          <span class="workspace-badge"
+            ><span class="status-dot"></span> Личный кабинет</span
+          >
+        </div>
+        <div class="overview-metrics">
+          <article class="overview-metric">
+            <div class="metric-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m21 3-7 18-4-7-7-4L21 3ZM10 14l11-11" />
+              </svg>
+            </div>
+            <div>
+              <span>Telegram-профили</span
+              ><strong id="connectionCount">…</strong>
+            </div>
+            <small>Ваши подключения</small>
+          </article>
+          <article class="overview-metric">
+            <div class="metric-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4 7h16v13H4zM8 3v8M16 3v8M4 11h16M8 15h3" />
+              </svg>
+            </div>
+            <div>
+              <span>Рассылки</span><strong id="campaignCount">…</strong>
+            </div>
+            <small>В вашем кабинете</small>
+          </article>
+          <article class="overview-metric">
+            <div class="metric-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="8" cy="15" r="5" />
+                <path d="m12 11 8-8M16 7l3 3M18 5l3 3" />
+              </svg>
+            </div>
+            <div>
+              <span>Активные токены</span
+              ><strong id="activeTokenCount">…</strong>
+            </div>
+            <small>Только выданные вами</small>
+          </article>
+        </div>
         <p id="sendingDisabled" class="privacy" hidden>
           Отправка из личных кабинетов отключена администратором. Можно
           подключить Telegram и подготовить черновики; запуск станет доступен
@@ -53,12 +231,9 @@
             переписки. Доступ администратора сервера сохраняется.
           </p>
         </details>
-        <nav>
-          <a href="#telegram">Telegram</a><a href="#campaigns">Рассылки</a
-          ><a href="#tokens">MCP-токены</a>
-        </nav>
+
         <section id="telegram">
-          <h2>Подключение Telegram</h2>
+          <h2><span class="section-number">01</span> Подключение Telegram</h2>
           <p>
             Укажите свой логин Telegram. Войдите по QR в мобильном Telegram:
             Настройки → Устройства → Подключить устройство.
@@ -96,7 +271,7 @@
           </div>
         </section>
         <section id="campaigns">
-          <h2>Рассылки и очередь</h2>
+          <h2><span class="section-number">02</span> Рассылки и очередь</h2>
           <form id="campaignForm" class="row">
             <label
               >Подключение<select
@@ -219,7 +394,7 @@
           <div id="thread"></div>
         </section>
         <section id="tokens">
-          <h2>Доступ через MCP</h2>
+          <h2><span class="section-number">03</span> Доступ через MCP</h2>
           <p>
             Токен действует только для выбранных рассылок. Отправка возможна
             после подготовки точного плана и вашего подтверждения. Доступ к
@@ -310,7 +485,7 @@
           </details>
         </section>
         <section id="profile">
-          <h2>Почта для входа и восстановления</h2>
+          <h2><span class="section-number">04</span> Почта и восстановление</h2>
           <p id="emailStatus" class="muted"></p>
           <form id="emailForm" class="row">
             <label

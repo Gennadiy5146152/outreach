@@ -9,111 +9,214 @@
   </head>
   <body class="auth-page">
     <main class="auth-shell">
-      <a class="auth-brand" href="/login.html">OUTREACH DESK</a>
-      <section class="auth-card">
-        <div id="loginPane">
-          <h1>С возвращением</h1>
-          <p class="muted">Войдите в свой кабинет.</p>
-          <form id="loginForm">
-            <label
-              >Email или логин<input
-                name="username"
-                autocomplete="username"
-                required
-                autofocus /></label
-            ><label
-              >Пароль<input
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                required /></label
-            ><button class="wide">Войти</button>
-          </form>
-          <div class="auth-links">
-            <a href="#recover" id="recoverLink">Забыли пароль?</a
-            ><a href="#register" id="registerLink">Создать кабинет</a>
+      <aside class="auth-story">
+        <a class="auth-brand" href="/login.html" aria-label="Outreach Desk"
+          ><span class="brand-symbol"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <path d="M6 18 18 6M6 6h12v12" /></svg></span
+          ><span class="brand-name"
+            >outreach<span class="brand-period">.</span
+            ><small>by KORDEVTEAM</small></span
+          ></a
+        >
+        <div class="story-copy">
+          <span class="story-kicker"
+            ><i></i> Пространство для вашего аутрича</span
+          >
+          <h2>Больше смысла<br />в каждом контакте<span>.</span></h2>
+          <p>
+            Персональные сообщения, понятная очередь и доступ под вашим
+            контролем.
+          </p>
+        </div>
+        <div class="auth-orbit" aria-hidden="true">
+          <div class="orbit-ring orbit-ring-outer"></div>
+          <div class="orbit-ring orbit-ring-inner"></div>
+          <div class="orbit-center">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <path d="M6 18 18 6M6 6h12v12" />
+            </svg>
           </div>
+          <div class="orbit-tag orbit-tag-contact">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+            </svg>
+            Контакт
+          </div>
+          <div class="orbit-tag orbit-tag-message">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m21 3-7 18-4-7-7-4L21 3ZM10 14l11-11" />
+            </svg>
+            Сообщение
+          </div>
+          <div class="orbit-tag orbit-tag-reply">
+            <span class="status-dot"></span> Ответ
+          </div>
+          <span class="orbit-point point-one"></span
+          ><span class="orbit-point point-two"></span>
         </div>
-        <div id="registerPane" hidden>
-          <h1>Создать кабинет</h1>
-          <p class="muted">
-            Подтвердите почту, затем задайте пароль. Ваши подключения и рассылки
-            будут доступны только вам и тем, кому вы дадите доступ.
-          </p>
-          <form id="registerForm">
-            <label
-              >Ваше имя<input
-                name="display_name"
-                autocomplete="name"
-                maxlength="100"
-                required /></label
-            ><label
-              >Электронная почта<input
-                name="email"
-                type="email"
-                autocomplete="email"
-                maxlength="254"
-                required /></label
-            ><button class="wide">Получить письмо</button>
-          </form>
-          <a href="#login" class="auth-back">Уже есть кабинет? Войти</a>
+        <div class="story-bottom">
+          <span>От первого сообщения<br />к настоящему разговору.</span
+          ><span class="story-index">01 / 03</span>
         </div>
-        <div id="recoverPane" hidden>
-          <h1>Восстановить пароль</h1>
-          <p class="muted">
-            Укажите подтверждённую почту вашего кабинета. Мы отправим
-            одноразовую ссылку для смены пароля.
-          </p>
-          <form id="recoverForm">
-            <label
-              >Электронная почта<input
-                name="email"
-                type="email"
-                autocomplete="email"
-                maxlength="254"
-                required /></label
-            ><button class="wide">Отправить ссылку</button>
-          </form>
-          <a href="#login" class="auth-back">Вернуться ко входу</a>
+      </aside>
+      <div class="auth-content">
+        <a
+          class="auth-mobile-brand"
+          href="/login.html"
+          aria-label="Outreach Desk"
+          ><span class="brand-symbol"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <path d="M6 18 18 6M6 6h12v12" /></svg></span
+          ><span class="brand-name"
+            >outreach<span class="brand-period">.</span
+            ><small>by KORDEVTEAM</small></span
+          ></a
+        >
+        <div class="auth-form-heading">
+          <span class="eyebrow">Личный кабинет</span
+          ><span class="heading-rule"></span>
         </div>
-        <div id="confirmPane" hidden>
-          <h1 id="confirmTitle">Проверяем ссылку</h1>
-          <p id="confirmEmail" class="muted"></p>
-          <form id="confirmForm" hidden>
-            <div id="newPasswordFields">
+        <section class="auth-card">
+          <div id="loginPane">
+            <h1>С возвращением</h1>
+            <p class="muted">Войдите в свой кабинет.</p>
+            <form id="loginForm">
               <label
-                >Новый пароль<input
+                >Email или логин<input
+                  name="username"
+                  autocomplete="username"
+                  required
+                  autofocus /></label
+              ><label
+                >Пароль<input
                   name="password"
                   type="password"
-                  minlength="12"
-                  maxlength="1024"
-                  autocomplete="new-password"
-                  required
-              /></label>
-              <p class="muted">Не менее 12 символов.</p>
-              <label
-                >Повторите пароль<input
-                  name="repeat"
-                  type="password"
-                  autocomplete="new-password"
-                  required
-              /></label>
+                  autocomplete="current-password"
+                  required /></label
+              ><button class="wide">Войти</button>
+            </form>
+            <div class="auth-links">
+              <a href="#recover" id="recoverLink">Забыли пароль?</a
+              ><a href="#register" id="registerLink">Создать кабинет</a>
             </div>
-            <button id="confirmSubmit" class="wide">Сохранить пароль</button>
-          </form>
-          <a href="#login" class="auth-back">Вернуться ко входу</a>
-        </div>
-        <p
-          id="loginMessage"
-          class="auth-message"
-          role="status"
-          aria-live="polite"
-          hidden
-        ></p>
-      </section>
-      <p class="auth-footer">
-        Каждый кабинет хранит свои подключения, сообщения и права доступа.
-      </p>
+          </div>
+          <div id="registerPane" hidden>
+            <h1>Создать кабинет</h1>
+            <p class="muted">
+              Подтвердите почту, затем задайте пароль. Ваши подключения и
+              рассылки будут доступны только вам и тем, кому вы дадите доступ.
+            </p>
+            <form id="registerForm">
+              <label
+                >Ваше имя<input
+                  name="display_name"
+                  autocomplete="name"
+                  maxlength="100"
+                  required /></label
+              ><label
+                >Электронная почта<input
+                  name="email"
+                  type="email"
+                  autocomplete="email"
+                  maxlength="254"
+                  required /></label
+              ><button class="wide">Получить письмо</button>
+            </form>
+            <a href="#login" class="auth-back">Уже есть кабинет? Войти</a>
+          </div>
+          <div id="recoverPane" hidden>
+            <h1>Восстановить пароль</h1>
+            <p class="muted">
+              Укажите подтверждённую почту вашего кабинета. Мы отправим
+              одноразовую ссылку для смены пароля.
+            </p>
+            <form id="recoverForm">
+              <label
+                >Электронная почта<input
+                  name="email"
+                  type="email"
+                  autocomplete="email"
+                  maxlength="254"
+                  required /></label
+              ><button class="wide">Отправить ссылку</button>
+            </form>
+            <a href="#login" class="auth-back">Вернуться ко входу</a>
+          </div>
+          <div id="confirmPane" hidden>
+            <h1 id="confirmTitle">Проверяем ссылку</h1>
+            <p id="confirmEmail" class="muted"></p>
+            <form id="confirmForm" hidden>
+              <div id="newPasswordFields">
+                <label
+                  >Новый пароль<input
+                    name="password"
+                    type="password"
+                    minlength="12"
+                    maxlength="1024"
+                    autocomplete="new-password"
+                    required
+                /></label>
+                <p class="muted">Не менее 12 символов.</p>
+                <label
+                  >Повторите пароль<input
+                    name="repeat"
+                    type="password"
+                    autocomplete="new-password"
+                    required
+                /></label>
+              </div>
+              <button id="confirmSubmit" class="wide">Сохранить пароль</button>
+            </form>
+            <a href="#login" class="auth-back">Вернуться ко входу</a>
+          </div>
+          <p
+            id="loginMessage"
+            class="auth-message"
+            role="status"
+            aria-live="polite"
+            hidden
+          ></p>
+        </section>
+        <p class="auth-footer">
+          Ваши подключения, сообщения и права доступа в одном пространстве.
+        </p>
+      </div>
     </main>
   </body>
 </html>

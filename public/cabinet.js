@@ -176,6 +176,7 @@ async function boot() {
     $("sendingDisabled").hidden = me.send_enabled;
     $("identity").textContent =
       me.display_name + " · " + (me.email || me.login);
+    $("identity").title = $("identity").textContent;
     $("profileEmail").value = me.email || "";
     $("emailStatus").textContent = me.email_verified
       ? "Почта подтверждена. По ней можно войти и восстановить пароль."
@@ -184,6 +185,14 @@ async function boot() {
     $("workspace").hidden = false;
     $("logout").hidden = false;
     await refresh();
+    const initialSection = document.getElementById(location.hash.slice(1));
+    if (
+      initialSection &&
+      ["overview", "telegram", "campaigns", "tokens", "profile"].includes(
+        initialSection.id,
+      )
+    )
+      initialSection.scrollIntoView({ block: "start" });
   } catch (e) {
     location.replace("/login.html");
   }
@@ -191,6 +200,7 @@ async function boot() {
 async function refresh() {
   await loadConnections();
   campaigns = await api("/campaigns");
+  $("campaignCount").textContent = campaigns.length;
   $("campaignSelect").replaceChildren();
   $("tokenCampaigns").replaceChildren();
   $("tokenForm").querySelector("button").disabled = !campaigns.length;
@@ -225,6 +235,7 @@ async function refresh() {
 }
 async function loadConnections() {
   const list = await api("/connections");
+  $("connectionCount").textContent = list.length;
   $("connections").replaceChildren();
   $("connectionSelect").replaceChildren();
   const statuses = {
@@ -246,6 +257,7 @@ async function loadConnections() {
           ? " · " + (errors[c.error_code] || "Нужно подключить профиль заново.")
           : ""),
     );
+    box.dataset.status = c.status;
     if (c.status !== "connected")
       box.append(
         button("Войти по QR", async () => {
@@ -426,6 +438,9 @@ async function preview(kind) {
 }
 async function loadTokens() {
   const list = await api("/tokens");
+  $("activeTokenCount").textContent = list.filter(
+    (t) => !t.revoked_at && new Date(t.expires_at) > new Date(),
+  ).length;
   $("tokenList").replaceChildren();
   if (!list.length)
     $("tokenList").append(
@@ -593,4 +608,28 @@ for (const [id, fn] of Object.entries({
   },
 }))
   $(id).addEventListener("click", () => work(fn));
+function highlightSection(id) {
+  document.querySelectorAll(".cabinet-nav a").forEach((link) => {
+    const active = link.getAttribute("href") === "#" + id;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "location");
+    else link.removeAttribute("aria-current");
+  });
+}
+highlightSection(location.hash.slice(1) || "overview");
+window.addEventListener("hashchange", () =>
+  highlightSection(location.hash.slice(1) || "overview"),
+);
+if ("IntersectionObserver" in window) {
+  const sectionObserver = new IntersectionObserver(
+    (entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting);
+      if (visible.length) highlightSection(visible[0].target.id);
+    },
+    { rootMargin: "-12% 0px -65% 0px" },
+  );
+  document
+    .querySelectorAll("#overview,#telegram,#campaigns,#tokens,#profile")
+    .forEach((section) => sectionObserver.observe(section));
+}
 boot();
