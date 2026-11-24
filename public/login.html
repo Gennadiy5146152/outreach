@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Вход · Outreach Desk</title>
     <link rel="stylesheet" href="/cabinet.css" />
-    <script defer src="/cabinet-auth.js"></script>
+    <script type="module" src="/cabinet-auth.js"></script>
   </head>
   <body class="auth-page">
     <main class="auth-shell">
@@ -116,7 +116,7 @@
           <div id="loginPane">
             <h1>С возвращением</h1>
             <p class="muted">Войдите в свой кабинет.</p>
-            <form id="loginForm">
+            <form id="loginForm" method="post" action="/api/auth/login">
               <label
                 >Email или логин<input
                   name="username"
@@ -141,7 +141,11 @@
               Подтвердите почту, затем задайте пароль. Ваши подключения и
               рассылки будут доступны только вам и тем, кому вы дадите доступ.
             </p>
-            <form id="registerForm">
+            <form
+              id="registerForm"
+              method="post"
+              action="/api/cabinet/auth/register"
+            >
               <label
                 >Ваше имя<input
                   name="display_name"
@@ -165,7 +169,11 @@
               Укажите подтверждённую почту вашего кабинета. Мы отправим
               одноразовую ссылку для смены пароля.
             </p>
-            <form id="recoverForm">
+            <form
+              id="recoverForm"
+              method="post"
+              action="/api/cabinet/auth/recover"
+            >
               <label
                 >Электронная почта<input
                   name="email"
@@ -180,18 +188,23 @@
           <div id="confirmPane" hidden>
             <h1 id="confirmTitle">Проверяем ссылку</h1>
             <p id="confirmEmail" class="muted"></p>
-            <form id="confirmForm" hidden>
+            <form
+              id="confirmForm"
+              method="post"
+              action="/api/cabinet/auth/email/complete"
+              hidden
+            >
               <div id="newPasswordFields">
                 <label
                   >Новый пароль<input
                     name="password"
                     type="password"
-                    minlength="12"
+                    minlength="8"
                     maxlength="1024"
                     autocomplete="new-password"
                     required
                 /></label>
-                <p class="muted">Не менее 12 символов.</p>
+                <p class="muted">Не менее 8 символов.</p>
                 <label
                   >Повторите пароль<input
                     name="repeat"

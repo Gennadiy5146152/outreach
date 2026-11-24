@@ -25,6 +25,16 @@ test("password hashing, Unicode passwords, authenticated encryption and schedule
   assert.ok(!(await verifyPassword(password.trim(), hash)));
   assert.ok(!(await verifyPassword(password, null)));
   await assert.rejects(hashPassword("short"));
+  await assert.rejects(
+    hashPassword("1234567"),
+    /password_requires_8_characters/,
+  );
+  const eight = "Abcd1234";
+  assert.ok(await verifyPassword(eight, await hashPassword(eight)));
+  await assert.rejects(
+    hashPassword("😀😀😀😀"),
+    /password_requires_8_characters/,
+  );
   const maxPassword = "x".repeat(1024);
   assert.equal(
     await verifyPassword(
@@ -772,6 +782,7 @@ test(
       await query(
         "TRUNCATE cabinet_audit,cabinet_plans,cabinet_messages,cabinet_jobs,cabinet_drafts,cabinet_api_tokens,cabinet_campaigns,cabinet_connections,cabinet_sessions,cabinet_invites,cabinet_accounts CASCADE",
       );
+      await query("TRUNCATE cabinet_auth_rate_limits");
       await pool.end();
     }
   },

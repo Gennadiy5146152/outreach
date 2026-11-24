@@ -19,7 +19,14 @@ function parseCookies(header = "") {
       .map((part) => {
         const index = part.indexOf("=");
         if (index < 0) return [part, ""];
-        return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+        try {
+          return [
+            part.slice(0, index),
+            decodeURIComponent(part.slice(index + 1)),
+          ];
+        } catch {
+          return [part.slice(0, index), ""];
+        }
       }),
   );
 }
@@ -29,13 +36,15 @@ function wantsHtml(req) {
 }
 
 function publicPath(req) {
-  return req.path === "/login.html"
-    || req.path === "/styles.css"
-    || req.path === "/api/auth/status"
-    || req.path === "/api/auth/login"
-    || req.path === "/api/auth/logout"
-    || req.path === "/api/health"
-    || req.path.startsWith("/t/open/");
+  return (
+    req.path === "/login.html" ||
+    req.path === "/styles.css" ||
+    req.path === "/api/auth/status" ||
+    req.path === "/api/auth/login" ||
+    req.path === "/api/auth/logout" ||
+    req.path === "/api/health" ||
+    req.path.startsWith("/t/open/")
+  );
 }
 
 export function createAuth({
@@ -62,6 +71,7 @@ export function createAuth({
 
   function verifyAuthToken(token) {
     if (!authConfigured() || !token || !token.includes(".")) return false;
+    if (String(token).split(".").length !== 2) return false;
     const [body, signature] = String(token).split(".");
     const expected = crypto
       .createHmac("sha256", authSessionSecret)
@@ -69,8 +79,14 @@ export function createAuth({
       .digest("base64url");
     if (!timingSafeEqualText(signature, expected)) return false;
     try {
-      const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-      return payload.user === authUser && Number(payload.exp) > now() && (payload.revision || 0) === getAdminRevision();
+      const payload = JSON.parse(
+        Buffer.from(body, "base64url").toString("utf8"),
+      );
+      return (
+        payload.user === authUser &&
+        Number(payload.exp) > now() &&
+        (payload.revision || 0) === getAdminRevision()
+      );
     } catch {
       return false;
     }
@@ -82,17 +98,28 @@ export function createAuth({
   }
 
   function isMcpAuthenticated(req) {
-    if (!mcpApiToken || !String(req.path || "").startsWith("/api/") || String(req.path || "").startsWith("/api/auth/")) {
+    if (
+      !mcpApiToken ||
+      !String(req.path || "").startsWith("/api/") ||
+      String(req.path || "").startsWith("/api/auth/")
+    ) {
       return false;
     }
     const authorization = String(req.headers.authorization || "");
     if (!authorization.startsWith("Bearer ")) return false;
-    return timingSafeEqualText(authorization.slice("Bearer ".length), mcpApiToken);
+    return timingSafeEqualText(
+      authorization.slice("Bearer ".length),
+      mcpApiToken,
+    );
   }
 
-  function setAuthCookie(res) {
+  function setAuthCookie(res, { revision = getAdminRevision() } = {}) {
     const secure = authCookieSecure ? "; Secure" : "";
-    const token = signPayload({ user: authUser, exp: now() + AUTH_TTL_MS, revision: getAdminRevision() });
+    const token = signPayload({
+      user: authUser,
+      exp: now() + AUTH_TTL_MS,
+      revision,
+    });
     res.setHeader(
       "Set-Cookie",
       `${AUTH_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(AUTH_TTL_MS / 1000)}${secure}`,
@@ -100,14 +127,19 @@ export function createAuth({
   }
 
   function clearAuthCookie(res) {
-    res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+    res.setHeader(
+      "Set-Cookie",
+      `${AUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    );
   }
 
   function requireAuth(req, res, next) {
     if (publicPath(req)) return next();
     // Scoped cabinet tokens never fall through to the legacy administrator surface.
     if (String(req.headers.authorization || "").startsWith("Bearer ocp_")) {
-      return res.status(403).json({ error: "scoped_token_requires_cabinet_api" });
+      return res
+        .status(403)
+        .json({ error: "scoped_token_requires_cabinet_api" });
     }
     if (isMcpAuthenticated(req)) return next();
     if (!authConfigured()) {

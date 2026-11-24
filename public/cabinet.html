@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Личный кабинет · Outreach</title>
     <link rel="stylesheet" href="/cabinet.css" />
-    <script defer src="/cabinet.js"></script>
+    <script type="module" src="/cabinet.js"></script>
   </head>
   <body class="cabinet-page">
     <aside class="cabinet-sidebar">
@@ -127,7 +127,7 @@
       <p id="notice" role="status" aria-live="polite"></p>
       <section id="auth" hidden>
         <h2 id="authTitle">Вход</h2>
-        <form id="authForm">
+        <form id="authForm" method="post" action="/api/cabinet/auth/login">
           <label id="loginLabel"
             >Логин<input
               name="username"
@@ -262,7 +262,7 @@
               height="260"
             />
             <p id="qrError"></p>
-            <form id="twoFactor" hidden>
+            <form id="twoFactor" method="post" hidden>
               <label
                 >Облачный пароль Telegram<input
                   name="password"
@@ -494,7 +494,12 @@
         <section id="profile" data-cabinet-page hidden>
           <h2><span class="section-number">04</span> Почта и восстановление</h2>
           <p id="emailStatus" class="muted"></p>
-          <form id="emailForm" class="row">
+          <form
+            id="emailForm"
+            class="row"
+            method="post"
+            action="/api/cabinet/profile/email"
+          >
             <label
               >Электронная почта<input
                 name="email"
@@ -502,7 +507,15 @@
                 type="email"
                 autocomplete="email"
                 required /></label
-            ><button>Подтвердить почту</button>
+            ><label
+              >Текущий пароль<input
+                name="current_password"
+                type="password"
+                autocomplete="current-password"
+                maxlength="1024"
+                required
+            /></label>
+            <button>Подтвердить почту</button>
           </form>
           <p id="emailMessage" role="status"></p>
           <h3>Сменить пароль</h3>

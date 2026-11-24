@@ -607,6 +607,54 @@ svg {
   color: #3f5171;
   border-color: #cdd7e9;
 }
+.auth-message {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  border-color: #efc8c4;
+  background: #fff6f5;
+  color: #933d37;
+}
+.auth-message::before {
+  content: "!";
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: #fbe0dc;
+  color: #933d37;
+  font-weight: 700;
+  line-height: 1;
+}
+.auth-message.success::before {
+  content: "✓";
+  background: #dbe6f8;
+  color: #234eaa;
+}
+.field-error {
+  display: block;
+  margin-top: 1px;
+  color: #a13e38;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: #cf7770;
+  background: #fffafa;
+}
+input[aria-invalid="true"]:focus,
+select[aria-invalid="true"]:focus,
+textarea[aria-invalid="true"]:focus {
+  border-color: #bc5750;
+  box-shadow: 0 0 0 4px #f5d9d580;
+}
 .auth-mobile-brand {
   display: none;
 }

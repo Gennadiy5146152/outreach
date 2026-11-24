@@ -272,7 +272,17 @@ test(
           principal = await cabinet.store.authenticate({
             headers: { cookie: "outreach_cabinet=" + session.raw },
           });
-          await service.attach(principal, { email: other });
+          await assert.rejects(
+            service.attach(principal, {
+              email: other,
+              current_password: "wrong-password",
+            }),
+            /current_password_invalid/,
+          );
+          await service.attach(principal, {
+            email: other,
+            current_password: "alice-newest-password",
+          });
           await service.flushEmails();
           const attach = token(other);
           await assert.rejects(

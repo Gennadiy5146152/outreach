@@ -1,11 +1,21 @@
+import {
+  prepareForm,
+  validateForm,
+  clearFormErrors,
+  fieldError,
+} from "./form-validation.js";
 const $ = (id) => document.getElementById(id);
 const errors = {
   invalid_credentials: "Неверный email, логин или пароль.",
   invalid_email: "Проверьте адрес электронной почты.",
   email_link_invalid:
     "Ссылка уже использована или срок её действия истёк. Запросите новое письмо.",
-  password_requires_12_characters:
-    "Пароль должен содержать не менее 12 символов.",
+  password_requires_8_characters:
+    "Пароль должен содержать не менее 8 символов.",
+  password_too_long: "Пароль должен содержать не более 1024 символов.",
+  auth_temporarily_unavailable:
+    "Сейчас не удалось проверить доступ. Попробуйте немного позже.",
+  https_required: "Откройте сервис по защищённому адресу с HTTPS.",
   email_wrong_account:
     "Войдите в тот кабинет, где вы запросили привязку почты, затем откройте ссылку ещё раз.",
   owner_session_required:
@@ -29,15 +39,24 @@ function message(text, ok = false) {
   $("loginMessage").hidden = false;
   $("loginMessage").textContent = text;
   $("loginMessage").classList.toggle("success", ok);
+  $("loginMessage").setAttribute("role", ok ? "status" : "alert");
+  $("loginMessage").setAttribute("aria-live", ok ? "polite" : "assertive");
 }
 async function request(path, body) {
-  const response = await fetch(path, {
-    method: body ? "POST" : "GET",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method: body ? "POST" : "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch {
+    throw new Error(
+      "Не удалось подключиться к сервису. Проверьте соединение и попробуйте ещё раз.",
+    );
+  }
   let data;
   try {
     data = await response.json();
@@ -45,9 +64,12 @@ async function request(path, body) {
     throw new Error("Сервис временно недоступен. Попробуйте ещё раз.");
   }
   if (!response.ok)
-    throw new Error(
-      errors[data.error] ||
-        "Не удалось выполнить действие. Попробуйте ещё раз.",
+    throw Object.assign(
+      new Error(
+        errors[data.error] ||
+          "Не удалось выполнить действие. Попробуйте ещё раз.",
+      ),
+      { code: data.error },
     );
   return data;
 }
@@ -60,6 +82,8 @@ function pane(name) {
   document.title = heading.textContent + " · Outreach";
 }
 function mode() {
+  for (const form of document.querySelectorAll(".auth-card form"))
+    clearFormErrors(form);
   const current = location.hash.slice(1);
   pane(
     current === "register"
@@ -73,8 +97,11 @@ function mode() {
   $("loginMessage").hidden = true;
 }
 function bind(id, callback) {
+  prepareForm($(id));
   $(id).onsubmit = async (event) => {
     event.preventDefault();
+    $("loginMessage").hidden = true;
+    if (!validateForm(event.target)) return;
     const button = event.submitter || event.target.querySelector("button");
     if (button) button.disabled = true;
     $("loginMessage").hidden = true;
@@ -84,7 +111,20 @@ function bind(id, callback) {
         event.target,
       );
     } catch (error) {
-      message(error.message);
+      if (
+        ["password_requires_8_characters", "password_too_long"].includes(
+          error.code,
+        )
+      ) {
+        fieldError(event.target.elements.password, error.message);
+        event.target.elements.password.focus();
+      } else if (
+        error.code === "invalid_email" &&
+        event.target.elements.email
+      ) {
+        fieldError(event.target.elements.email, error.message);
+        event.target.elements.email.focus();
+      } else message(error.message);
     } finally {
       if (button) button.disabled = false;
     }

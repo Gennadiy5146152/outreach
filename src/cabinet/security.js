@@ -50,12 +50,11 @@ export function text(value, max = 4000) {
   return value.trim();
 }
 export async function hashPassword(password) {
-  if (
-    typeof password !== "string" ||
-    password.length < 12 ||
-    password.length > 1024
-  )
-    throw fail("password_requires_12_characters");
+  if (typeof password !== "string")
+    throw fail("password_requires_8_characters");
+  if (password.length > 1024) throw fail("password_too_long");
+  if (Array.from(password).length < 8)
+    throw fail("password_requires_8_characters");
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = await scrypt(password, salt, 64, {
     N: 32768,

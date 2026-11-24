@@ -20,7 +20,8 @@ import { analyzeCampaignResultsWithAi } from "./services/ai-reply.js";
 import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.js";
 import { saveSecretToDotenv } from "./services/secret-file.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
-import { createAuth, timingSafeEqualText } from "./http/auth.js";
+import { createAuth } from "./http/auth.js";
+import { createLoginHandler, authPageRedirect } from "./http/login.js";
 import { createCabinet } from "./cabinet/router.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
 import { companySequencePlan, saveCompanySequence } from "./services/company-outreach-sequence.js";
@@ -34,6 +35,7 @@ await fs.mkdir(env.attachmentDir, { recursive: true });
 
 const app = express();
 if (env.trustProxy) app.set("trust proxy", env.trustProxy.split(",").map(value => value.trim()));
+app.use(authPageRedirect(env));
 const csvUpload = multer({ storage: multer.memoryStorage() });
 const htmlUpload = multer({
   storage: multer.memoryStorage(),
@@ -69,7 +71,7 @@ app.get('/login.html',(_req,res)=>{
  res.sendFile(path.resolve('public','login.html'));
 });
 // Private account pages contain no account data; all data APIs authenticate separately.
-for (const file of ["cabinet.html", "cabinet.js", "cabinet.css", "cabinet-auth.js"]) {
+for (const file of ["cabinet.html", "cabinet.js", "cabinet.css", "cabinet-auth.js", "form-validation.js"]) {
   app.get(file === "cabinet.html" ? "/cabinet" : `/${file}`, (_req, res) => {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
@@ -602,36 +604,15 @@ app.get("/api/auth/status", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/auth/login", asyncHandler(async (req, res) => {
-  cabinet.limit("login:" + req.ip);
-  const username = String(req.body.username || "");
-  const password = String(req.body.password || "");
-  const rootIdentifier=timingSafeEqualText(username,env.authUser)||Boolean(env.authRecoveryEmail&&timingSafeEqualText(username.trim().toLowerCase(),env.authRecoveryEmail.trim().toLowerCase()));
-  if (!rootIdentifier) {
-    cabinet.checkOrigin(req);
-    // New owners receive only a cabinet cookie, never the shared administrator cookie.
-    return cabinet.transport(req,res,async error => {
-      if (error) return res.status(error.status).json({ error: error.code });
-      try { res.json(cabinet.establish(res, await cabinet.store.login(req.body))); }
-      catch { clearAuthCookie(res); res.status(401).json({ error: "invalid_credentials" }); }
-    });
-  }
-  if (!authConfigured()) {
-    return res.status(503).json({ error: "auth_not_configured" });
-  }
-  if (!(await cabinet.emailAuth.adminPassword(password,()=>timingSafeEqualText(password,env.authPassword)))) {
-    clearAuthCookie(res);
-    return res.status(401).json({ error: "invalid_credentials" });
-  }
-  setAuthCookie(res);
-  res.append("Set-Cookie", "outreach_cabinet=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
-  res.json({ ok: true });
-}));
+app.post("/api/auth/login", cabinet.transport, asyncHandler(createLoginHandler({
+  cabinet, env, authConfigured, setAuthCookie, clearAuthCookie,
+})), cabinet.authErrorHandler);
 
-app.post("/api/auth/logout", (_req, res) => {
+app.post("/api/auth/logout", cabinet.transport, (req, res) => {
+  cabinet.checkOrigin(req);
   clearAuthCookie(res);
   res.json({ ok: true });
-});
+}, cabinet.authErrorHandler);
 
 app.use(requireAuth);
 app.use(express.static("public"));

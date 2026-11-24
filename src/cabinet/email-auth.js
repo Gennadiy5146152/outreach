@@ -66,11 +66,15 @@ export function createEmailAuth({
       )
     ).rows[0];
   }
-  async function adminPassword(password, fallback) {
+  async function checkAdminPassword(password, fallback) {
     const state = await rootState();
-    return state?.password_hash
+    const valid = state?.password_hash
       ? verifyPassword(password, state.password_hash)
       : fallback();
+    return { valid: await valid, revision: state.auth_revision };
+  }
+  async function adminPassword(password, fallback) {
+    return (await checkAdminPassword(password, fallback)).valid;
   }
   function deliver(challenge, token) {
     const task = Promise.resolve()
@@ -171,10 +175,12 @@ export function createEmailAuth({
     const {
       rows: [a],
     } = await query(
-      "SELECT auth_revision FROM cabinet_accounts WHERE id=$1 AND active",
+      "SELECT auth_revision,password_hash FROM cabinet_accounts WHERE id=$1 AND active",
       [p.owner_id],
     );
     if (!a) throw fail("cabinet_auth_required", 401);
+    if (!(await verifyPassword(input.current_password, a.password_hash)))
+      throw fail("current_password_invalid", 403);
     return issue({
       kind: "attach",
       email,
@@ -328,6 +334,7 @@ export function createEmailAuth({
     inspect,
     complete,
     adminPassword,
+    checkAdminPassword,
     rootState,
     available,
     flushEmails: () => Promise.all([...pending]),

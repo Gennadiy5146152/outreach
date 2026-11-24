@@ -1,3 +1,4 @@
+import { prepareForm, validateForm } from "./form-validation.js";
 const $ = (id) => document.getElementById(id);
 let csrf = "",
   campaigns = [],
@@ -45,8 +46,9 @@ const errors = {
   connection_restarted: "Подключение изменено, очередь остановлена.",
   cabinet_auth_required: "Нужно войти в кабинет.",
   invalid_credentials: "Неверный логин или пароль.",
-  password_requires_12_characters:
-    "Пароль должен содержать минимум 12 символов.",
+  password_requires_8_characters: "Пароль должен содержать минимум 8 символов.",
+  password_too_long: "Пароль должен содержать не более 1024 символов.",
+  current_password_invalid: "Текущий пароль неверен. Почта не изменена.",
   invite_invalid: "Приглашение использовано или истекло.",
   cabinet_https_not_configured:
     "Для кабинетов администратору нужно настроить HTTPS.",
@@ -126,8 +128,10 @@ async function work(fn) {
   }
 }
 function form(id, fn) {
+  prepareForm($(id));
   $(id).addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!validateForm(event.target)) return;
     work(async () => {
       const b = event.submitter || event.target.querySelector("button");
       if (b) b.disabled = true;
@@ -160,7 +164,7 @@ function showAuth() {
     $("loginLabel").hidden = true;
     $("authForm").elements.username.required = false;
     const p = $("authForm").elements.password;
-    p.minLength = 12;
+    p.minLength = 8;
     p.autocomplete = "new-password";
     $("authForm").querySelector("button").textContent = "Активировать кабинет";
   }
@@ -543,9 +547,13 @@ form("tokenForm", async (data) => {
   $("tokenReveal").hidden = false;
   await loadTokens();
 });
-form("emailForm", async (data) => {
-  const result = await api("/profile/email", data);
-  $("emailMessage").textContent = result.message;
+form("emailForm", async (data, form) => {
+  try {
+    const result = await api("/profile/email", data);
+    $("emailMessage").textContent = result.message;
+  } finally {
+    form.elements.current_password.value = "";
+  }
 });
 $("hideToken").onclick = () => {
   $("tokenValue").textContent = "";

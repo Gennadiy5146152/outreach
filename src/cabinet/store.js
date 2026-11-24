@@ -171,10 +171,27 @@ export function createCabinetStore({
   async function newSession(account) {
     const raw = randomSecret(),
       csrf = randomSecret();
-    await query(
-      "INSERT INTO cabinet_sessions(token_hash,owner_id,csrf,expires_at) VALUES($1,$2,$3,$4)",
-      [digest(raw), account.id, csrf, new Date(now().getTime() + 43200000)],
-    );
+    await transaction(async (db) => {
+      // A password reset/disable must not finish between password verification and session creation.
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        "cabinet:" + account.id,
+      ]);
+      const current = (
+        await db.query(
+          "SELECT active,auth_revision FROM cabinet_accounts WHERE id=$1 FOR UPDATE",
+          [account.id],
+        )
+      ).rows[0];
+      if (
+        !current?.active ||
+        current.auth_revision !== (account.auth_revision ?? 0)
+      )
+        throw fail("invalid_credentials", 401);
+      await db.query(
+        "INSERT INTO cabinet_sessions(token_hash,owner_id,csrf,expires_at) VALUES($1,$2,$3,$4)",
+        [digest(raw), account.id, csrf, new Date(now().getTime() + 43200000)],
+      );
+    });
     return {
       raw,
       csrf,

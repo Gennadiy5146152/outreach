@@ -2,6 +2,7 @@ import express from "express";
 import { createCabinetStore } from "./store.js";
 import { createEmailAuth, normalizeEmail } from "./email-auth.js";
 import { createAuthMailer } from "./auth-mail.js";
+import { createAuthRateLimiter } from "./auth-rate-limit.js";
 import {
   cookie,
   readCookie,
@@ -39,12 +40,34 @@ export function createCabinet({
     onAdminReset,
     reportError: (code) => console.error(code),
   });
-  const emailLimit = createRateLimiter({ max: 3 });
-  function emailRequest(req, kind) {
+  const authLimit = createAuthRateLimiter({ query });
+  async function loginLimit(req) {
+    await authLimit("login-ip", req.ip);
+    const name = String(req.body.username || "")
+      .trim()
+      .toLowerCase();
+    let identity = name;
+    if (
+      name === String(env.authUser || "").toLowerCase() ||
+      name === String(env.authRecoveryEmail || "").toLowerCase()
+    )
+      identity = "administrator";
+    else {
+      const found = (
+        await query(
+          "SELECT id FROM cabinet_accounts WHERE login=$1 OR email=$1",
+          [name],
+        )
+      ).rows[0];
+      if (found) identity = "owner:" + found.id;
+    }
+    await authLimit("login-identity", identity, 20);
+  }
+  async function emailRequest(req, kind) {
     checkOrigin(req);
-    limit("email:" + req.ip);
+    await authLimit("email-ip", req.ip);
     const email = normalizeEmail(req.body.email);
-    emailLimit(kind + ":" + digest(email));
+    await authLimit(kind + "-email", email, 3);
   }
   const run = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
@@ -100,14 +123,14 @@ export function createCabinet({
   router.post(
     "/auth/register",
     run(async (req, res) => {
-      emailRequest(req, "register");
+      await emailRequest(req, "register");
       res.json(await emailAuth.register(req.body));
     }),
   );
   router.post(
     "/auth/recover",
     run(async (req, res) => {
-      emailRequest(req, "recover");
+      await emailRequest(req, "recover");
       res.json(await emailAuth.recover(req.body));
     }),
   );
@@ -115,7 +138,7 @@ export function createCabinet({
     "/auth/email/inspect",
     run(async (req, res) => {
       checkOrigin(req);
-      limit("email-inspect:" + req.ip);
+      await authLimit("email-inspect", req.ip);
       res.json(await emailAuth.inspect(req.body.token));
     }),
   );
@@ -123,7 +146,8 @@ export function createCabinet({
     "/auth/email/complete",
     run(async (req, res) => {
       checkOrigin(req);
-      limit("email-complete:" + req.ip);
+      await authLimit("email-complete", req.ip);
+      await authLimit("email-complete-token", digest(req.body.token));
       const result = await emailAuth.complete(req.body, () =>
         store.authenticate(req),
       );
@@ -150,7 +174,7 @@ export function createCabinet({
     "/auth/login",
     run(async (req, res) => {
       checkOrigin(req);
-      limit("login:" + req.ip);
+      await loginLimit(req);
       res.json(establish(res, await store.login(req.body)));
     }),
   );
@@ -158,7 +182,7 @@ export function createCabinet({
     "/auth/activate",
     run(async (req, res) => {
       checkOrigin(req);
-      limit("activate:" + req.ip);
+      await authLimit("activate", req.ip);
       res.json(establish(res, await store.activate(req.body)));
     }),
   );
@@ -217,7 +241,8 @@ export function createCabinet({
     "/profile/email",
     run(async (req, res) => {
       ownerOnly(req.cabinet);
-      emailRequest(req, "attach");
+      await authLimit("email-change-password", req.cabinet.owner_id, 5);
+      await emailRequest(req, "attach");
       res.json(await emailAuth.attach(req.cabinet, req.body));
     }),
   );
@@ -355,12 +380,14 @@ export function createCabinet({
   router.use((_req, res) =>
     res.status(404).json({ error: "cabinet_route_not_found" }),
   );
-  const errorHandler = (error, _req, res, _next) =>
+  const errorHandler = (error, _req, res, _next) => {
+    if (error.retryAfter) res.set("Retry-After", String(error.retryAfter));
     res.status(error.status || 500).json({
       error: error.status
         ? error.code || error.message
         : "cabinet_internal_error",
     });
+  };
   router.use(errorHandler);
   admin.use(transport);
   admin.post(
@@ -452,6 +479,8 @@ export function createCabinet({
     establish,
     checkOrigin,
     limit,
+    loginLimit,
+    authErrorHandler: errorHandler,
     transport,
   };
 }
