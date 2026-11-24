@@ -10,10 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeEnvPath = path.join(os.tmpdir(), `outreach-runtime-${process.pid}.env`);
 fs.writeFileSync(runtimeEnvPath, "MAILBOX_PERSISTENCE_TEST=runtime-file\n");
 
-function productionConfig() {
+function productionConfig(profiles = ["worker"]) {
   const output = execFileSync(
     "docker",
-    ["compose", "--profile", "worker", "-f", "docker-compose.prod.yml", "config", "--format", "json"],
+    ["compose", ...profiles.flatMap(profile => ["--profile", profile]), "-f", "docker-compose.prod.yml", "config", "--format", "json"],
     {
       cwd: root,
       encoding: "utf8",
@@ -47,6 +47,21 @@ test("worker requires an explicit profile", () => {
   const config = productionConfig();
   assert.deepEqual(config.services.worker.profiles, ["worker"]);
   assert.equal(config.services.personalizer.profiles, undefined);
+});
+
+test("private Telegram sessions are mounted only in their dedicated worker", () => {
+  const config = productionConfig(["worker", "telegram", "cabinet-telegram"]);
+  const worker = config.services["cabinet-telegram"];
+  assert.deepEqual(worker.profiles, ["cabinet-telegram"]);
+  assert.equal(worker.read_only, true);
+  assert.deepEqual(worker.cap_drop, ["ALL"]);
+  assert.equal(worker.volumes.length, 1);
+  assert.equal(worker.volumes[0].target, "/var/lib/cabinet-telegram");
+  assert.equal(worker.volumes[0].type, "volume");
+  assert.equal(worker.environment.CABINET_TELEGRAM_SEND_ENABLED, "false");
+  for (const name of ["web", "worker", "personalizer", "telegram"]) {
+    assert.equal(config.services[name].volumes?.some(volume => volume.source === worker.volumes[0].source), false);
+  }
 });
 
 test("application services use one immutable image", () => {

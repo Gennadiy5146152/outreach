@@ -1,0 +1,151 @@
+import { McpServer } from "@modelcontextprotocol/server";
+import * as z from "zod/v4";
+import { safeTool, toolSuccess } from "./result.js";
+
+export function createCabinetMcpServer({ client, scopes = [] }) {
+  const server = new McpServer(
+    { name: "outreach-private-cabinet", version: "1.0.0" },
+    {
+      instructions:
+        "Work only inside the campaigns allowed by this token. Before delivery or stopping, call prepare, show the full returned plan and ask for explicit human approval. Execute only after that approval. No Telegram sessions, QR authentication, contacts, arbitrary chats or general history are accessible.",
+    },
+  );
+  const id = z.uuid(),
+    campaign = z.object({ campaign_id: id }).strict();
+  const register = (
+    name,
+    description,
+    inputSchema,
+    scope,
+    readOnlyHint,
+    handler,
+  ) => {
+    if (scope && !scopes.includes(scope)) return;
+    server.registerTool(
+      name,
+      {
+        description,
+        inputSchema,
+        annotations: {
+          readOnlyHint,
+          destructiveHint: name.endsWith("_execute"),
+          openWorldHint: false,
+        },
+      },
+      safeTool(async (input) => toolSuccess(description, await handler(input))),
+    );
+  };
+  register(
+    "cabinet_access",
+    "Показать права этого токена без секретов.",
+    z.object({}).strict(),
+    null,
+    true,
+    () => client.get("/api/cabinet/mcp/context"),
+  );
+  register(
+    "campaigns_list",
+    "Получить только разрешённые этому токену рассылки.",
+    z.object({}).strict(),
+    "outreach:read",
+    true,
+    () => client.get("/api/cabinet/campaigns"),
+  );
+  register(
+    "drafts_list",
+    "Прочитать черновики выбранной разрешённой рассылки.",
+    campaign
+      .extend({ page: z.number().int().min(1).max(10000).default(1) })
+      .strict(),
+    "outreach:read",
+    true,
+    ({ campaign_id, page }) =>
+      client.get(`/api/cabinet/campaigns/${campaign_id}/drafts`, {
+        query: { page },
+      }),
+  );
+  register(
+    "draft_create",
+    "Сохранить черновик без отправки. Право на редактирование должно быть выдано отдельно.",
+    campaign
+      .extend({
+        address: z.string().min(4).max(100),
+        recipient_id: z.string().regex(/^[1-9]\d{0,18}$/),
+        name: z.string().max(200).default(""),
+        body: z.string().min(1).max(4000),
+        source_url: z.url().optional(),
+        permission_kind: z.enum(["request", "consent"]).optional(),
+        permission_evidence: z.string().max(1000).optional(),
+      })
+      .strict(),
+    "outreach:draft",
+    false,
+    ({ campaign_id, ...body }) =>
+      client.post(`/api/cabinet/campaigns/${campaign_id}/drafts`, body),
+  );
+  register(
+    "draft_update",
+    "Изменить только текст неотправленного черновика.",
+    campaign
+      .extend({ draft_id: id, body: z.string().min(1).max(4000) })
+      .strict(),
+    "outreach:draft",
+    false,
+    ({ campaign_id, draft_id, body }) =>
+      client.patch(`/api/cabinet/campaigns/${campaign_id}/drafts/${draft_id}`, {
+        body,
+      }),
+  );
+  register(
+    "queue_list",
+    "Прочитать очередь только выбранной разрешённой рассылки.",
+    campaign
+      .extend({ page: z.number().int().min(1).max(10000).default(1) })
+      .strict(),
+    "outreach:read",
+    true,
+    ({ campaign_id, page }) =>
+      client.get(`/api/cabinet/campaigns/${campaign_id}/queue`, {
+        query: { page },
+      }),
+  );
+  register(
+    "outreach_thread_get",
+    "Прочитать исходящее сообщение сервиса и только привязанные к нему ответы. Общая история чата недоступна.",
+    campaign.extend({ job_id: id }).strict(),
+    "outreach:read",
+    true,
+    ({ campaign_id, job_id }) =>
+      client.get(`/api/cabinet/campaigns/${campaign_id}/threads/${job_id}`),
+  );
+  for (const kind of ["launch", "stop"]) {
+    const scope = kind === "launch" ? "outreach:send" : "outreach:stop";
+    register(
+      `telegram_${kind}_prepare`,
+      kind === "launch"
+        ? "Подготовить точные сообщения и расписание. Покажите план и запросите явное разрешение; подготовка не отправляет."
+        : "Подготовить остановку указанных сообщений. Покажите план и запросите явное разрешение.",
+      campaign.extend({ draft_ids: z.array(id).min(1).max(500) }).strict(),
+      scope,
+      false,
+      ({ campaign_id, draft_ids }) =>
+        client.post(`/api/cabinet/campaigns/${campaign_id}/${kind}/prepare`, {
+          draft_ids,
+        }),
+    );
+    register(
+      `telegram_${kind}_execute`,
+      "Выполнить подготовленный план только после явного одобрения человеком.",
+      z
+        .object({
+          confirmation_token: z.string().min(20).max(200),
+          confirm: z.literal(true),
+        })
+        .strict(),
+      scope,
+      false,
+      (body) => client.post("/api/cabinet/execute", { ...body, kind }),
+    );
+  }
+  return server;
+}

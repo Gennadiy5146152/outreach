@@ -16,6 +16,19 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cabinet_test
+          POSTGRES_PASSWORD: cabinet_ci_test_only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cabinet_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:cabinet_ci_test_only@127.0.0.1:5432/cabinet_test
+      CABINET_TEST_DATABASE_URL: postgres://postgres:cabinet_ci_test_only@127.0.0.1:5432/cabinet_test
     steps:
       - name: Check out requested commit
         uses: actions/checkout@v4
@@ -31,6 +44,22 @@ jobs:
 
       - name: Run repository checks
         run: npm run check
+
+      - name: Migrate disposable test database
+        run: npm run migrate
+
+      - name: Verify cabinet isolation and scoped MCP
+        run: npm run test:cabinet
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify private Telegram worker without network delivery
+        run: |
+          pip install -r deploy/telegram-connection/requirements.txt
+          python -B -m unittest discover -s tests -p cabinet_worker_test.py -v
 
       - name: Validate production image build
         run: docker build -t "outreach-desk-app:${GITHUB_SHA}" .

@@ -58,6 +58,8 @@ export async function outreachStopAllImpact(client) {
         SELECT 'channel:' || id::text AS entity_key FROM outreach_channel_tasks WHERE status IN ('waiting', 'scheduled')
         UNION ALL
         SELECT 'telegram:' || id::text FROM outreach_telegram_deliveries WHERE status IN ('pending', 'sending')
+        UNION ALL
+        SELECT 'cabinet:' || id::text FROM cabinet_jobs WHERE status IN ('queued', 'sending')
       ),
       affected_entities AS (
         SELECT 'queue:' || id::text || ':step:' || step_position::text AS entity_key FROM active_queue
@@ -179,6 +181,12 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
     );
     // Invalidate prepared Telegram launches as well as the existing queue.
     await client.query("UPDATE outreach_telegram_profiles SET revision = revision + 1, updated_at = now()");
+    // Also invalidate private-cabinet previews and stop their approved deliveries.
+    await client.query("UPDATE cabinet_campaigns SET paused=true, revision=revision+1");
+    const cancelledCabinet = await client.query(
+      `UPDATE cabinet_jobs SET status=CASE WHEN status='sending' THEN 'uncertain' ELSE 'cancelled' END,
+       error_code='outreach_stopped', completed_at=now() WHERE status IN ('queued','sending')`,
+    );
     const stoppedRuns = await client.query(
       `
         UPDATE outreach_runs
@@ -192,7 +200,7 @@ export async function stopAllOutreach(client, expectedSnapshotToken) {
     return {
       stopped: true,
       cancelled_queue: cancelled.rowCount,
-      cancelled_channel_tasks: cancelledChannelTasks.rowCount + cancelledTelegram.rowCount,
+      cancelled_channel_tasks: cancelledChannelTasks.rowCount + cancelledTelegram.rowCount + cancelledCabinet.rowCount,
       cancelled_steps: cancelledSteps,
       paused_enrollments: pausedEnrollments.rowCount,
       cancelled_drafts: cancelledDrafts.rowCount,

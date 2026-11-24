@@ -48,12 +48,15 @@ test("workflow grants read-only contents without application secrets", () => {
   for (const forbidden of [
     "AUTH_PASSWORD",
     "AUTH_SESSION_SECRET",
-    "POSTGRES_PASSWORD",
     "MCP_API_TOKEN",
     "MAILBOX_",
   ]) {
     assert.doesNotMatch(source, new RegExp(forbidden));
   }
+  assert.doesNotMatch(source, /secrets\.(?:POSTGRES_PASSWORD|DATABASE_URL)/);
+  assert.match(source, /POSTGRES_PASSWORD: cabinet_ci_test_only/);
+  assert.match(source, /CABINET_TEST_DATABASE_URL: postgres:\/\/postgres:cabinet_ci_test_only@127\.0\.0\.1:5432\/cabinet_test/);
+  assert.match(source, /npm run test:cabinet/);
 });
 
 test("workflow serializes production deployments", () => {

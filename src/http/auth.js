@@ -104,6 +104,10 @@ export function createAuth({
 
   function requireAuth(req, res, next) {
     if (publicPath(req)) return next();
+    // Scoped cabinet tokens never fall through to the legacy administrator surface.
+    if (String(req.headers.authorization || "").startsWith("Bearer ocp_")) {
+      return res.status(403).json({ error: "scoped_token_requires_cabinet_api" });
+    }
     if (isMcpAuthenticated(req)) return next();
     if (!authConfigured()) {
       return wantsHtml(req)

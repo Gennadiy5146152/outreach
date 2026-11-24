@@ -21,6 +21,7 @@ import { cleanReplyText, htmlToText, markdownToHtml } from "./services/template.
 import { saveSecretToDotenv } from "./services/secret-file.js";
 import { asyncHandler, parseArray, toBool } from "./http/utils.js";
 import { createAuth, timingSafeEqualText } from "./http/auth.js";
+import { createCabinet } from "./cabinet/router.js";
 import { createPersonalizationApi } from "./services/personalization-api.js";
 import { companySequencePlan, saveCompanySequence } from "./services/company-outreach-sequence.js";
 import { createOutreachChannelTasks } from "./services/outreach-channel-tasks.js";
@@ -32,6 +33,7 @@ import { normalizeCampaignLaunchMode, normalizeDraftLaunchMode } from "./service
 await fs.mkdir(env.attachmentDir, { recursive: true });
 
 const app = express();
+if (env.trustProxy) app.set("trust proxy", env.trustProxy.split(",").map(value => value.trim()));
 const csvUpload = multer({ storage: multer.memoryStorage() });
 const htmlUpload = multer({
   storage: multer.memoryStorage(),
@@ -56,6 +58,27 @@ const {
   clearAuthCookie,
   requireAuth,
 } = createAuth(env);
+const cabinet = createCabinet({ query, withClient, env });
+app.use("/api/cabinet", cabinet.router);
+// Private account pages contain no account data; all data APIs authenticate separately.
+for (const file of ["cabinet.html", "cabinet.js", "cabinet.css"]) {
+  app.get(file === "cabinet.html" ? "/cabinet" : `/${file}`, (_req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    res.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    res.sendFile(path.resolve("public", file));
+  });
+}
+app.get("/cabinet-admin", requireAuth, (req,res) => {
+  if (!isAuthenticated(req)) return res.status(403).json({ error: "administrator_session_required" });
+  res.set("Cache-Control", "no-store");
+  res.set("Referrer-Policy", "no-referrer");
+  res.sendFile(path.resolve("public", "cabinet-admin.html"));
+});
+app.use("/api/cabinet-admin", requireAuth, (req,res,next) => {
+  if (!isAuthenticated(req)) return res.status(403).json({ error: "administrator_session_required" });
+  next();
+}, cabinet.admin);
 const personalizationApi = createPersonalizationApi({ query, withClient });
 const outreachChannelTasks = createOutreachChannelTasks({ query, withClient });
 const messengerDrafts = createMessengerDrafts({ query });
@@ -560,26 +583,41 @@ function optionalSendDays(value) {
   return [...new Set(days)].sort((a, b) => a - b);
 }
 
-app.get("/api/auth/status", (req, res) => {
+app.get("/api/auth/status", asyncHandler(async (req, res) => {
+  try {
+    const principal = await cabinet.store.authenticate(req);
+    if (principal.kind === "owner") return res.json({ configured: true, authenticated: true, redirect: "/cabinet" });
+  } catch { /* Legacy login remains independent of private sessions. */ }
   res.json({
     configured: authConfigured(),
     authenticated: isAuthenticated(req),
   });
-});
+}));
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", asyncHandler(async (req, res) => {
+  cabinet.limit("login:" + req.ip);
+  const username = String(req.body.username || "");
+  const password = String(req.body.password || "");
+  if (!timingSafeEqualText(username, env.authUser) || !timingSafeEqualText(password, env.authPassword)) {
+    cabinet.checkOrigin(req);
+    // New owners receive only a cabinet cookie, never the shared administrator cookie.
+    return cabinet.transport(req,res,async error => {
+      if (error) return res.status(error.status).json({ error: error.code });
+      try { res.json(cabinet.establish(res, await cabinet.store.login(req.body))); }
+      catch { clearAuthCookie(res); res.status(401).json({ error: "invalid_credentials" }); }
+    });
+  }
   if (!authConfigured()) {
     return res.status(503).json({ error: "auth_not_configured" });
   }
-  const username = String(req.body.username || "");
-  const password = String(req.body.password || "");
   if (!timingSafeEqualText(username, env.authUser) || !timingSafeEqualText(password, env.authPassword)) {
     clearAuthCookie(res);
     return res.status(401).json({ error: "invalid_credentials" });
   }
   setAuthCookie(res);
+  res.append("Set-Cookie", "outreach_cabinet=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
   res.json({ ok: true });
-});
+}));
 
 app.post("/api/auth/logout", (_req, res) => {
   clearAuthCookie(res);

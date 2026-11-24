@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Кабинеты пользователей</title>
+    <link rel="stylesheet" href="/cabinet.css" />
+    <script defer src="/cabinet-admin.js"></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">OUTREACH DESK · АДМИНИСТРАТОР</span>
+        <h1>Кабинеты пользователей</h1>
+      </div>
+      <a href="/">Общий кабинет</a>
+    </header>
+    <main>
+      <p id="notice" role="status"></p>
+      <section>
+        <h2>Создать приглашение</h2>
+        <p>
+          Пользователь сам задаст пароль. Приглашение действует 24 часа и
+          используется один раз. Отправьте ссылку человеку лично.
+        </p>
+        <form id="inviteForm">
+          <label
+            >Логин<input
+              name="username"
+              pattern="[a-z0-9_.-]{3,64}"
+              required
+              autocomplete="off" /></label
+          ><label>Имя<input name="display_name" required /></label
+          ><button>Создать кабинет</button>
+        </form>
+        <div id="inviteResult" hidden>
+          <p>Ссылка для пользователя:</p>
+          <pre id="inviteLink"></pre>
+          <button id="hideInvite">Скрыть ссылку</button>
+        </div>
+      </section>
+      <section>
+        <h2>Пользователи</h2>
+        <div id="accounts"></div>
+        <p class="muted">
+          Отключение закрывает вход и MCP-доступ, останавливает очередь и
+          отзывает Telegram-подключение пользователя. Переписка и
+          Telegram-сессия через эту страницу недоступны.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

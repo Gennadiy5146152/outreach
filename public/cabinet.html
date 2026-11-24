@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Личный кабинет · Outreach</title>
+    <link rel="stylesheet" href="/cabinet.css" />
+    <script defer src="/cabinet.js"></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">OUTREACH DESK</span>
+        <h1>Личный кабинет</h1>
+      </div>
+      <div id="identity"></div>
+      <button id="logout" hidden>Выйти</button>
+    </header>
+    <main>
+      <p id="notice" role="status" aria-live="polite"></p>
+      <section id="auth" hidden>
+        <h2 id="authTitle">Вход</h2>
+        <form id="authForm">
+          <label id="loginLabel"
+            >Логин<input
+              name="username"
+              autocomplete="username"
+              required /></label
+          ><label
+            >Пароль<input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required /></label
+          ><button>Войти</button>
+        </form>
+      </section>
+      <div id="workspace" hidden>
+        <p id="sendingDisabled" class="privacy" hidden>
+          Отправка из личных кабинетов отключена администратором. Можно
+          подключить Telegram и подготовить черновики; запуск станет доступен
+          после настройки обработчика.
+        </p>
+        <p class="privacy">
+          Здесь доступны только ваши подключения и рассылки. MCP не получает
+          Telegram-сессию, QR-код, список диалогов или общую историю переписки.
+          Доступ администратора сервера сохраняется.
+        </p>
+        <nav>
+          <a href="#telegram">Telegram</a><a href="#campaigns">Рассылки</a
+          ><a href="#tokens">MCP-токены</a>
+        </nav>
+        <section id="telegram">
+          <h2>Подключение Telegram</h2>
+          <p>
+            Укажите свой публичный username. Войдите по QR в мобильном Telegram:
+            Настройки → Устройства → Подключить устройство.
+          </p>
+          <form id="connectForm" class="row">
+            <label
+              >Username<input
+                name="username"
+                placeholder="@BaranecArtem"
+                required /></label
+            ><label
+              >Название<input name="label" placeholder="Мой профиль" /></label
+            ><button>Получить QR</button>
+          </form>
+          <div id="connections"></div>
+          <div id="qrPanel" hidden>
+            <h3 id="qrStatus"></h3>
+            <img
+              id="qrImage"
+              alt="QR-код входа Telegram"
+              hidden
+              width="260"
+              height="260"
+            />
+            <p id="qrError"></p>
+            <form id="twoFactor" hidden>
+              <label
+                >Облачный пароль Telegram<input
+                  name="password"
+                  type="password"
+                  autocomplete="off"
+                  required /></label
+              ><button>Подтвердить</button>
+            </form>
+          </div>
+        </section>
+        <section id="campaigns">
+          <h2>Рассылки и очередь</h2>
+          <form id="campaignForm" class="row">
+            <label
+              >Подключение<select
+                name="connection_id"
+                id="connectionSelect"
+                required
+              ></select></label
+            ><label>Название<input name="name" required /></label
+            ><label
+              >Сообщений в день<input
+                name="daily_limit"
+                type="number"
+                min="1"
+                max="100"
+                value="10"
+                required /></label
+            ><label
+              >С<input
+                name="window_start"
+                type="time"
+                value="09:30"
+                required /></label
+            ><label
+              >До<input
+                name="window_end"
+                type="time"
+                value="11:30"
+                required /></label
+            ><button>Создать</button>
+          </form>
+          <p class="muted">
+            По будням, время московское. Лимит общий для одного
+            Telegram-профиля, включая все его рассылки. Минимальный интервал — 3
+            минуты.
+          </p>
+          <label>Выбранная рассылка<select id="campaignSelect"></select></label>
+          <p id="campaignState"></p>
+          <details>
+            <summary>Добавить черновик</summary>
+            <form id="draftForm">
+              <div class="row">
+                <label
+                  >Telegram<input
+                    name="address"
+                    placeholder="https://t.me/username"
+                    required /></label
+                ><label
+                  >Числовой Telegram ID<input
+                    name="recipient_id"
+                    inputmode="numeric"
+                    pattern="[1-9][0-9]{0,18}"
+                    required /></label
+                ><label>Имя<input name="name" /></label>
+              </div>
+              <label
+                >Текст<textarea
+                  name="body"
+                  rows="8"
+                  maxlength="4000"
+                  required
+                ></textarea></label
+              ><label
+                >Источник контакта<input
+                  name="source_url"
+                  type="url"
+                  placeholder="https://…"
+              /></label>
+              <div class="row">
+                <label
+                  >Основание для отправки<select name="permission_kind">
+                    <option value="">Только исследование</option>
+                    <option value="consent">Согласие</option>
+                    <option value="request">Входящий запрос</option>
+                  </select></label
+                ><label
+                  >Где и когда получено согласие / запрос<input
+                    name="permission_evidence"
+                    maxlength="1000"
+                /></label>
+              </div>
+              <button>Сохранить без отправки</button>
+            </form>
+          </details>
+          <details>
+            <summary>Импорт черновиков JSON</summary>
+            <p>
+              Массив объектов с полями address, recipient_id, name, body,
+              source_url, permission_kind и permission_evidence. Импорт
+              сохраняет черновики без отправки.
+            </p>
+            <form id="importForm">
+              <label
+                >JSON<textarea name="json" rows="6" required></textarea></label
+              ><button>Импортировать</button>
+            </form>
+          </details>
+          <div class="row actions">
+            <button id="refreshDrafts">Обновить</button
+            ><button id="launchPreview">Подготовить выбранные к отправке</button
+            ><button id="stopPreview" class="danger">
+              Остановить выбранные
+            </button>
+          </div>
+          <div id="drafts"></div>
+          <div class="row">
+            <button id="prevDrafts">←</button><span id="draftPage"></span
+            ><button id="nextDrafts">→</button>
+          </div>
+          <h3>История отправок</h3>
+          <div id="queue"></div>
+          <div class="row">
+            <button id="prevQueue">←</button><span id="queuePage"></span
+            ><button id="nextQueue">→</button>
+          </div>
+          <p class="muted">
+            В переписке отображаются исходящие из сервиса и ответы через функцию
+            «Ответить» на них. Обычные сообщения без привязки к этой цепочке не
+            импортируются. Их владелец проверяет в Telegram самостоятельно.
+          </p>
+          <div id="thread"></div>
+        </section>
+        <section id="tokens">
+          <h2>Доступ через MCP</h2>
+          <p>
+            Токен действует только для выбранных рассылок. Отправка возможна
+            после подготовки точного плана и вашего подтверждения. Доступ к
+            подключению Telegram и другим кабинетам не предоставляется.
+          </p>
+          <form id="tokenForm">
+            <div class="row">
+              <label
+                >Название<input
+                  name="name"
+                  placeholder="MCP для Геннадия"
+                  required /></label
+              ><label
+                >Срок, дней<input
+                  name="expires_in_days"
+                  type="number"
+                  min="1"
+                  max="90"
+                  value="30"
+                  required
+              /></label>
+            </div>
+            <fieldset>
+              <legend>Права</legend>
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  name="scope"
+                  value="outreach:read"
+                  checked
+                />Читать черновики, очередь и ответы этой рассылки</label
+              ><label class="check"
+                ><input
+                  type="checkbox"
+                  name="scope"
+                  value="outreach:send"
+                  checked
+                />Готовить и запускать сохранённые сообщения</label
+              ><label class="check"
+                ><input
+                  type="checkbox"
+                  name="scope"
+                  value="outreach:stop"
+                  checked
+                />Останавливать сообщения</label
+              ><label class="check"
+                ><input
+                  type="checkbox"
+                  name="scope"
+                  value="outreach:draft"
+                />Создавать и править черновики</label
+              >
+            </fieldset>
+            <fieldset>
+              <legend>Разрешённые рассылки</legend>
+              <div id="tokenCampaigns"></div>
+            </fieldset>
+            <button>Создать токен</button>
+          </form>
+          <div id="tokenReveal" hidden>
+            <p>
+              <strong>Токен показывается один раз.</strong> Скопируйте его в
+              настройки MCP. Не отправляйте в обычный чат.
+            </p>
+            <pre id="tokenValue"></pre>
+            <button id="hideToken">Скрыть</button>
+          </div>
+          <div id="tokenList"></div>
+          <details>
+            <summary>Настройка MCP</summary>
+            <p>
+              Локальный MCP-адаптер этого проекта запускается командой
+              <code>node src/mcp/server.js</code>. Укажите в его окружении
+              <code>OUTREACH_BASE_URL</code> — адрес этого же сервиса,
+              <code>MCP_API_TOKEN</code> — созданный токен с префиксом
+              <code>ocp_</code>. Он автоматически предоставит только разрешённые
+              инструменты.
+            </p>
+            <p>
+              Для текущего адреса <code>http://213.171.10.147:3000</code> также
+              задайте <code>OUTREACH_ALLOW_HTTP=true</code> в окружении MCP. При
+              HTTP токен передаётся без шифрования.
+            </p>
+            <p>
+              Отзыв токена закрывает дальнейший доступ через MCP. Уже
+              подтверждённую очередь нужно остановить отдельно.
+            </p>
+          </details>
+        </section>
+      </div>
+    </main>
+    <dialog id="previewDialog">
+      <h2 id="previewTitle"></h2>
+      <p>
+        Проверьте адресатов, тексты и время. Подготовка ничего не отправляет.
+      </p>
+      <div id="previewItems"></div>
+      <div class="row">
+        <button id="confirmPlan">Подтверждаю</button
+        ><button id="cancelPlan">Отмена</button>
+      </div>
+    </dialog>
+  </body>
+</html>

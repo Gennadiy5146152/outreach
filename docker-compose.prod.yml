@@ -103,5 +103,27 @@ services:
       postgres:
         condition: service_healthy
 
+  cabinet-telegram:
+    image: outreach-telegram-worker:local
+    build:
+      context: ./deploy/telegram-connection
+    entrypoint: ["python", "-B", "/app/cabinet_worker.py"]
+    profiles: ["cabinet-telegram"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file:
+      - ${OUTREACH_ENV_FILE:-/root/outreach/.env}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
+      CABINET_SESSION_DIR: /var/lib/cabinet-telegram
+    volumes:
+      - cabinet_telegram_sessions:/var/lib/cabinet-telegram
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  cabinet_telegram_sessions:

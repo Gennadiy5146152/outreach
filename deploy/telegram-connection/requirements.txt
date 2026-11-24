@@ -1,0 +1,4 @@
+Telethon==1.45.0
+psycopg[binary]==3.2.13
+qrcode==8.2
+cryptography==46.0.3

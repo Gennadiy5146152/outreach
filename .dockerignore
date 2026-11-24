@@ -3,6 +3,10 @@
 .env*
 node_modules
 .npm-cache
+.tmp
+__pycache__
+*.pyc
+*.session*
 .worktrees
 .superpowers
 storage
