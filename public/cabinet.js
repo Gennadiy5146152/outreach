@@ -407,20 +407,21 @@ const qrPoller = createQrPoller({
       const titles = {
         pending_qr: "Готовим QR-код…",
         qr_ready: "Отсканируйте QR-код",
-        password_required: "Введите облачный пароль Telegram",
+        password_required: "Облачный пароль",
         connected: "Telegram подключён",
-        expired: "QR истёк. Запросите новый.",
+        expired: "QR-код истёк",
         error: "Не удалось подключить Telegram",
         disconnected: "Telegram отключён",
       };
       $("qrStatus").textContent = titles[data.status] || data.status;
       $("qrPanel").dataset.state = data.status;
       $("qrHint").textContent = data.status === "qr_ready"
-        ? "В Telegram на телефоне: Настройки → Устройства → Подключить устройство."
-        : data.status === "password_required" ? "Если у вас включена двухэтапная защита, введите её пароль."
-        : data.status === "pending_qr" ? "Обычно это занимает несколько секунд." : "";
+        ? "1. Откройте Telegram на телефоне.\n2. Настройки → Устройства.\n3. Подключить устройство."
+        : data.status === "password_required" ? "Введите пароль двухэтапной защиты Telegram."
+        : data.status === "pending_qr" ? "Обычно это занимает несколько секунд."
+        : data.status === "expired" ? "Запросите новый код и отсканируйте его через Telegram." : "";
       $("qrHint").hidden = !$("qrHint").textContent;
-      $("qrError").textContent = data.error_code
+      $("qrError").textContent = data.error_code && data.status !== "expired"
         ? errors[data.error_code] ||
           "Не удалось подключиться. Попробуйте ещё раз."
         : "";
@@ -445,7 +446,7 @@ const qrPoller = createQrPoller({
   },
   onError: (error, { retrying, id }) => {
     if (qrId !== id) return;
-    $("qrStatus").textContent = retrying ? "Восстанавливаем соединение…" : "Подключение прервалось";
+    $("qrStatus").textContent = retrying ? "Восстанавливаем связь…" : "Подключение прервалось";
     $("qrPanel").dataset.state = "network_error";
     $("qrHint").textContent = retrying ? "Повторяем проверку автоматически. Не закрывайте страницу." : "";
     $("qrHint").hidden = !$("qrHint").textContent;
