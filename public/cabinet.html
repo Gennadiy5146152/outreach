@@ -237,23 +237,25 @@
 
         <section id="telegram" data-cabinet-page hidden>
           <h2><span class="section-number">01</span> Подключение Telegram</h2>
-          <p>
-            Укажите свой логин Telegram. Войдите по QR в мобильном Telegram:
-            Настройки → Устройства → Подключить устройство.
-          </p>
+          <p>Укажите свой @username, затем войдите по QR-коду.</p>
           <form id="connectForm" class="row">
             <label
               >Логин Telegram<input
                 name="username"
-                placeholder="@BaranecArtem"
+                placeholder="@username"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
                 required /></label
-            ><label
-              >Название<input name="label" placeholder="Мой профиль" /></label
             ><button>Получить QR</button>
           </form>
           <div id="connections"></div>
           <div id="qrPanel" hidden>
             <h3 id="qrStatus"></h3>
+            <p class="muted">
+              В мобильном Telegram откройте Настройки → Устройства → Подключить
+              устройство.
+            </p>
             <img
               id="qrImage"
               alt="QR-код входа Telegram"
@@ -274,127 +276,102 @@
           </div>
         </section>
         <section id="campaigns" data-cabinet-page hidden>
-          <h2><span class="section-number">02</span> Рассылки и очередь</h2>
-          <form id="campaignForm" class="row">
-            <label
-              >Подключение<select
-                name="connection_id"
-                id="connectionSelect"
-                required
-              ></select></label
-            ><label>Название<input name="name" required /></label
-            ><label
-              >Сообщений в день<input
-                name="daily_limit"
-                type="number"
-                min="1"
-                max="100"
-                value="10"
-                required /></label
-            ><label
-              >С<input
-                name="window_start"
-                type="time"
-                value="09:30"
-                required /></label
-            ><label
-              >До<input
-                name="window_end"
-                type="time"
-                value="11:30"
-                required /></label
-            ><button>Создать</button>
-          </form>
-          <p class="muted">
-            По будням, время московское. Лимит общий для одного
-            Telegram-профиля, включая все его рассылки. Минимальный интервал — 3
-            минуты.
-          </p>
-          <label>Выбранная рассылка<select id="campaignSelect"></select></label>
-          <p id="campaignState"></p>
-          <details>
-            <summary>Добавить черновик</summary>
-            <form id="draftForm">
-              <div class="row">
-                <label
-                  >Telegram<input
-                    name="address"
-                    placeholder="https://t.me/username"
-                    required /></label
-                ><label
-                  >Числовой Telegram ID<input
-                    name="recipient_id"
-                    inputmode="numeric"
-                    pattern="[1-9][0-9]{0,18}"
-                    required /></label
-                ><label>Имя<input name="name" /></label>
-              </div>
-              <label
-                >Текст<textarea
-                  name="body"
-                  rows="8"
-                  maxlength="4000"
-                  required
-                ></textarea></label
-              ><label
-                >Источник контакта<input
-                  name="source_url"
-                  type="url"
-                  placeholder="https://…"
-              /></label>
-              <div class="row">
-                <label
-                  >Основание для отправки<select name="permission_kind">
-                    <option value="">Только исследование</option>
-                    <option value="consent">Согласие</option>
-                    <option value="request">Входящий запрос</option>
-                  </select></label
-                ><label
-                  >Где и когда получено согласие / запрос<input
-                    name="permission_evidence"
-                    maxlength="1000"
-                /></label>
-              </div>
-              <button>Сохранить без отправки</button>
-            </form>
-          </details>
-          <details>
-            <summary>Импорт черновиков JSON</summary>
-            <p>
-              Массив объектов с полями address, recipient_id, name, body,
-              source_url, permission_kind и permission_evidence. Импорт
-              сохраняет черновики без отправки.
-            </p>
-            <form id="importForm">
-              <label
-                >JSON<textarea name="json" rows="6" required></textarea></label
-              ><button>Импортировать</button>
-            </form>
-          </details>
-          <div class="row actions">
-            <button id="refreshDrafts">Обновить</button
-            ><button id="launchPreview">Подготовить выбранные к отправке</button
-            ><button id="stopPreview" class="danger">
-              Остановить выбранные
+          <div class="section-heading">
+            <h2>Рассылки Telegram</h2>
+            <button id="newCampaign" type="button" hidden>
+              Создать рассылку
             </button>
           </div>
-          <div id="drafts"></div>
-          <div class="row">
-            <button id="prevDrafts">←</button><span id="draftPage"></span
-            ><button id="nextDrafts">→</button>
+          <div id="campaignsEmpty" class="empty-state">
+            <span class="empty-symbol" aria-hidden="true">↗</span>
+            <h3 id="campaignsEmptyTitle">Подключите Telegram</h3>
+            <p id="campaignsEmptyText">
+              Подключите профиль, чтобы создать первую рассылку.
+            </p>
+            <a class="button-link" id="campaignsConnect" href="#telegram"
+              >Подключить Telegram</a
+            >
+            <button id="emptyCreateCampaign" type="button" hidden>
+              Создать первую рассылку
+            </button>
           </div>
-          <h3>История отправок</h3>
-          <div id="queue"></div>
-          <div class="row">
-            <button id="prevQueue">←</button><span id="queuePage"></span
-            ><button id="nextQueue">→</button>
+          <div id="campaignWorkspace" hidden>
+            <div class="campaign-toolbar">
+              <div class="campaign-heading">
+                <h3 id="selectedCampaignName"></h3>
+                <label id="campaignPicker"
+                  >Рассылка<select id="campaignSelect"></select
+                ></label>
+                <p id="campaignState" class="muted"></p>
+              </div>
+              <div class="campaign-tools">
+                <button id="openDraftDialog" type="button">
+                  Добавить сообщение
+                </button>
+                <details id="campaignMore" class="more-menu">
+                  <summary>Ещё</summary>
+                  <div class="more-menu-items">
+                    <button id="refreshDrafts" type="button">Обновить</button>
+                    <button id="openImportDialog" type="button">
+                      Импорт JSON
+                    </button>
+                  </div>
+                </details>
+              </div>
+            </div>
+            <div id="draftActions" class="row selection-actions" hidden>
+              <span id="selectedDraftCount"></span>
+              <button id="launchPreview" type="button">
+                Проверить отправку
+              </button>
+              <button id="stopPreview" type="button" class="danger">
+                Остановить выбранные
+              </button>
+            </div>
+            <div id="drafts"></div>
+            <div id="draftPagination" class="row pagination" hidden>
+              <button
+                id="prevDrafts"
+                type="button"
+                aria-label="Предыдущая страница сообщений"
+              >
+                ←
+              </button>
+              <span id="draftPage"></span>
+              <button
+                id="nextDrafts"
+                type="button"
+                aria-label="Следующая страница сообщений"
+              >
+                →
+              </button>
+            </div>
+            <details id="historyPanel" class="history-panel">
+              <summary>История отправок</summary>
+              <div id="queue"></div>
+              <div id="queuePagination" class="row pagination" hidden>
+                <button
+                  id="prevQueue"
+                  type="button"
+                  aria-label="Предыдущая страница истории"
+                >
+                  ←
+                </button>
+                <span id="queuePage"></span>
+                <button
+                  id="nextQueue"
+                  type="button"
+                  aria-label="Следующая страница истории"
+                >
+                  →
+                </button>
+              </div>
+              <p class="muted">
+                Здесь появятся отправленные сообщения и ответы на них.
+              </p>
+              <div id="thread"></div>
+            </details>
           </div>
-          <p class="muted">
-            В переписке отображаются исходящие из сервиса и ответы через функцию
-            «Ответить» на них. Обычные сообщения без привязки к этой цепочке не
-            импортируются. Их владелец проверяет в Telegram самостоятельно.
-          </p>
-          <div id="thread"></div>
         </section>
         <section id="tokens" data-cabinet-page hidden>
           <h2><span class="section-number">03</span> Доступ через MCP</h2>
@@ -531,6 +508,150 @@
         </section>
       </div>
     </main>
+    <dialog id="campaignDialog" aria-labelledby="campaignDialogTitle">
+      <div class="dialog-heading">
+        <h2 id="campaignDialogTitle">Новая рассылка</h2>
+        <button
+          type="button"
+          class="quiet"
+          data-close-dialog="campaignDialog"
+          aria-label="Закрыть создание рассылки"
+        >
+          ✕
+        </button>
+      </div>
+      <form id="campaignForm" method="post">
+        <label
+          >Название рассылки<input
+            name="name"
+            placeholder="Например, предложение партнёрам"
+            required
+        /></label>
+        <label id="campaignConnectionField"
+          >Профиль Telegram<select
+            name="connection_id"
+            id="connectionSelect"
+            required
+          ></select
+        ></label>
+        <div class="schedule-fields">
+          <label
+            >Сообщений в день<input
+              name="daily_limit"
+              type="number"
+              min="1"
+              max="100"
+              value="10"
+              required
+          /></label>
+          <label
+            >Отправлять с<input
+              name="window_start"
+              type="time"
+              value="09:30"
+              required
+          /></label>
+          <label
+            >До<input name="window_end" type="time" value="11:30" required
+          /></label>
+        </div>
+        <p class="muted">
+          По будням, по московскому времени. Лимит общий для профиля; между
+          сообщениями — не менее 3 минут.
+        </p>
+        <div class="dialog-actions">
+          <button
+            type="button"
+            class="quiet"
+            data-close-dialog="campaignDialog"
+          >
+            Отмена</button
+          ><button type="submit">Создать рассылку</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="draftDialog" aria-labelledby="draftDialogTitle">
+      <div class="dialog-heading">
+        <h2 id="draftDialogTitle">Новое сообщение</h2>
+        <button
+          type="button"
+          class="quiet"
+          data-close-dialog="draftDialog"
+          aria-label="Закрыть новое сообщение"
+        >
+          ✕
+        </button>
+      </div>
+      <p class="muted">
+        Сохраните текст для получателя. Отправку можно будет отдельно проверить
+        и подтвердить.
+      </p>
+      <form id="draftForm">
+        <div class="row">
+          <label
+            >Telegram<input
+              name="address"
+              placeholder="https://t.me/username"
+              required /></label
+          ><label
+            >Числовой Telegram ID<input
+              name="recipient_id"
+              inputmode="numeric"
+              pattern="[1-9][0-9]{0,18}"
+              required /></label
+          ><label>Имя<input name="name" /></label>
+        </div>
+        <label
+          >Текст<textarea
+            name="body"
+            rows="8"
+            maxlength="4000"
+            required
+          ></textarea></label
+        ><label
+          >Источник контакта<input
+            name="source_url"
+            type="url"
+            placeholder="https://…"
+        /></label>
+        <div class="row">
+          <label
+            >Основание для отправки<select name="permission_kind">
+              <option value="">Только исследование</option>
+              <option value="consent">Согласие</option>
+              <option value="request">Входящий запрос</option>
+            </select></label
+          ><label
+            >Где и когда получено согласие / запрос<input
+              name="permission_evidence"
+              maxlength="1000"
+          /></label>
+        </div>
+        <button>Сохранить сообщение</button>
+      </form>
+    </dialog>
+    <dialog id="importDialog" aria-labelledby="importDialogTitle">
+      <div class="dialog-heading">
+        <h2 id="importDialogTitle">Импорт сообщений</h2>
+        <button
+          type="button"
+          class="quiet"
+          data-close-dialog="importDialog"
+          aria-label="Закрыть импорт сообщений"
+        >
+          ✕
+        </button>
+      </div>
+      <p class="muted">
+        Вставьте подготовленный массив JSON: address, recipient_id, name, body,
+        source_url, permission_kind, permission_evidence. Импорт сохраняет
+        сообщения без отправки.
+      </p>
+      <form id="importForm">
+        <label>JSON<textarea name="json" rows="6" required></textarea></label
+        ><button>Импортировать</button>
+      </form>
+    </dialog>
     <dialog id="previewDialog">
       <h2 id="previewTitle"></h2>
       <p>

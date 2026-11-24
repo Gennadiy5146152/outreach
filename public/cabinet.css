@@ -983,6 +983,253 @@ form .row {
 #campaignSelect {
   max-width: 100%;
 }
+#connectForm {
+  max-width: 680px;
+  align-items: end;
+}
+#connectForm label {
+  min-width: 0;
+}
+.section-heading,
+.dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.section-heading h2,
+.dialog-heading h2 {
+  margin: 0;
+}
+.section-heading > button {
+  align-self: center;
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 24px 54px;
+  text-align: center;
+}
+.empty-symbol {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 20px;
+  border-radius: 14px;
+  background: var(--tint);
+  color: var(--primary);
+  font-size: 26px;
+}
+.empty-state h3 {
+  margin-bottom: 8px;
+  font-size: 20px;
+}
+.empty-state p {
+  max-width: 360px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.empty-state button {
+  align-self: center;
+}
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 11px 19px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: white;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+.campaign-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 20px;
+  margin: 8px 0 26px;
+}
+.campaign-heading {
+  min-width: 0;
+}
+.campaign-heading h3 {
+  margin: 0 0 9px;
+  font-size: 21px;
+}
+.campaign-heading p {
+  margin: 0;
+  font-size: 12px;
+}
+.campaign-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.campaign-tools > button {
+  align-self: center;
+}
+.more-menu {
+  position: relative;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+.more-menu > summary {
+  min-height: 44px;
+  padding: 10px 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.more-menu > summary:after {
+  display: none;
+}
+.more-menu-items {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  width: 175px;
+  padding: 7px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px #19294314;
+}
+.more-menu-items button {
+  display: flex;
+  justify-content: start;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  background: white;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+.more-menu-items button:hover {
+  background: var(--tint);
+}
+.selection-actions {
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  background: var(--tint);
+  border-radius: 12px;
+}
+.selection-actions > span {
+  margin-right: auto;
+  font-size: 12px;
+}
+.empty-drafts {
+  padding: 42px 20px;
+  margin: 0 0 20px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.pagination {
+  justify-content: center;
+  margin: 16px 0;
+}
+.history-panel {
+  margin-top: 24px;
+  background: transparent;
+}
+.history-panel > summary {
+  font-size: 13px;
+}
+#campaignDialog {
+  max-width: 570px;
+}
+#campaignDialog #campaignForm {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+}
+#campaignDialog label {
+  margin: 18px 0;
+}
+.schedule-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.schedule-fields label {
+  min-width: 0;
+}
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+.dialog-message {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid #efc8c4;
+  border-radius: 10px;
+  background: #fff6f5;
+  color: #933d37;
+  font-size: 12px;
+}
+.dialog-heading .quiet {
+  align-self: center;
+}
+@media (max-width: 760px) {
+  .campaign-toolbar {
+    flex-direction: column;
+    gap: 18px;
+  }
+  .campaign-tools {
+    width: 100%;
+  }
+  .campaign-tools > button {
+    flex: 1;
+  }
+  .section-heading {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .empty-state {
+    padding: 32px 10px;
+  }
+  .empty-state h3 {
+    font-size: 18px;
+  }
+}
+@media (max-width: 480px) {
+  #connectForm label {
+    flex-basis: 100%;
+  }
+  #connectForm > button {
+    width: 100%;
+  }
+  .schedule-fields {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  #campaignDialog label {
+    margin: 10px 0;
+  }
+  .dialog-heading h2 {
+    font-size: 20px;
+  }
+  dialog {
+    padding: 22px;
+  }
+}
 #campaignState {
   display: inline-block !important;
   margin-top: 0;

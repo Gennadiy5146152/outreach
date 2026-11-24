@@ -1,6 +1,11 @@
-import { prepareForm, validateForm } from "./form-validation.js";
+import {
+  prepareForm,
+  validateForm,
+  clearFormErrors,
+} from "./form-validation.js";
 const $ = (id) => document.getElementById(id);
 let csrf = "",
+  connections = [],
   campaigns = [],
   campaignId = "",
   draftPage = 1,
@@ -131,12 +136,20 @@ function form(id, fn) {
   prepareForm($(id));
   $(id).addEventListener("submit", (event) => {
     event.preventDefault();
+    const dialog = event.target.closest("dialog");
+    dialog?.querySelector(".dialog-message")?.remove();
     if (!validateForm(event.target)) return;
     work(async () => {
       const b = event.submitter || event.target.querySelector("button");
       if (b) b.disabled = true;
       try {
         await fn(Object.fromEntries(new FormData(event.target)), event.target);
+      } catch (error) {
+        if (!dialog?.open) throw error;
+        const message = node("p", error.message, "dialog-message");
+        message.setAttribute("role", "alert");
+        dialog.append(message);
+        message.scrollIntoView({ block: "nearest", behavior: "instant" });
       } finally {
         if (b) b.disabled = false;
       }
@@ -231,11 +244,13 @@ async function refresh() {
   if (!campaigns.some((c) => c.id === campaignId))
     campaignId = campaigns[0]?.id || "";
   $("campaignSelect").value = campaignId;
+  updateCampaignLayout();
   await loadContent();
   await loadTokens();
 }
 async function loadConnections() {
   const list = await api("/connections");
+  connections = list;
   $("connectionCount").textContent = list.length;
   $("connections").replaceChildren();
   $("connectionSelect").replaceChildren();
@@ -250,10 +265,8 @@ async function loadConnections() {
   };
   for (const c of list) {
     const box = card(
-      c.label,
+      "@" + (c.username || c.expected_username),
       (statuses[c.status] || c.status) +
-        " · @" +
-        (c.username || c.expected_username) +
         (c.error_code
           ? " · " + (errors[c.error_code] || "Нужно подключить профиль заново.")
           : ""),
@@ -279,10 +292,35 @@ async function loadConnections() {
       }),
     );
     $("connections").append(box);
-    const o = node("option", c.label);
+    const o = node("option", "@" + (c.username || c.expected_username));
     o.value = c.id;
     $("connectionSelect").append(o);
   }
+  $("campaignConnectionField").hidden = list.length === 1;
+  updateCampaignLayout();
+}
+function updateCampaignLayout() {
+  const hasProfiles = connections.length > 0;
+  $("newCampaign").hidden = !hasProfiles || !campaigns.length;
+  $("campaignsEmpty").hidden = campaigns.length > 0;
+  $("campaignWorkspace").hidden = !campaigns.length;
+  $("campaignsEmptyTitle").textContent = hasProfiles
+    ? "Пока нет рассылок"
+    : "Подключите Telegram";
+  $("campaignsEmptyText").textContent = hasProfiles
+    ? "Создайте первую рассылку и добавьте сообщения для получателей."
+    : "Подключите профиль, чтобы создать первую рассылку.";
+  $("campaignsConnect").hidden = hasProfiles;
+  $("emptyCreateCampaign").hidden = !hasProfiles;
+  $("campaignPicker").hidden = campaigns.length < 2;
+  $("selectedCampaignName").hidden = campaigns.length > 1;
+}
+function updateDraftSelection() {
+  const selected = $("drafts").querySelectorAll(
+    "input[name=draft]:checked",
+  ).length;
+  $("draftActions").hidden = !selected;
+  $("selectedDraftCount").textContent = "Выбрано: " + selected;
 }
 function watchQr(id) {
   qrId = id;
@@ -328,6 +366,7 @@ async function loadContent() {
   $("queue").replaceChildren();
   $("thread").replaceChildren();
   const c = campaigns.find((c) => c.id === campaignId);
+  $("selectedCampaignName").textContent = c?.name || "";
   $("campaignState").textContent = c
     ? `${c.paused ? "На паузе" : "Запущена"} · до ${c.daily_limit} сообщений в день · ${c.window_start.slice(0, 5)}–${c.window_end.slice(0, 5)} МСК`
     : "Создайте рассылку.";
@@ -339,17 +378,19 @@ async function loadDrafts() {
   if (!campaignId) return;
   const list = await api(`/campaigns/${campaignId}/drafts?page=${draftPage}`);
   $("drafts").replaceChildren();
+  updateDraftSelection();
   if (!list.length)
     $("drafts").append(
       node(
         "p",
-        "Черновиков пока нет. Добавьте сообщение или импортируйте подготовленные тексты.",
-        "muted",
+        "Сообщений пока нет. Нажмите «Добавить сообщение», чтобы подготовить первое.",
+        "empty-drafts",
       ),
     );
   $("draftPage").textContent = "Страница " + draftPage;
   $("prevDrafts").disabled = draftPage <= 1;
   $("nextDrafts").disabled = list.length < 100;
+  $("draftPagination").hidden = draftPage === 1 && list.length < 100;
   for (const d of list) {
     const box = card(d.name || d.address);
     const label = node("label", undefined, "check"),
@@ -381,6 +422,7 @@ async function loadQueue() {
   $("queuePage").textContent = "Страница " + queuePage;
   $("prevQueue").disabled = queuePage <= 1;
   $("nextQueue").disabled = list.length < 100;
+  $("queuePagination").hidden = queuePage === 1 && list.length < 100;
   for (const job of list) {
     const box = card(
       job.address,
@@ -500,12 +542,14 @@ form("campaignForm", async (data) => {
     daily_limit: Number(data.daily_limit),
   });
   campaignId = c.id;
+  $("campaignDialog").close();
   await refresh();
 });
 form("draftForm", async (data, element) => {
   if (!campaignId) throw new Error("Выберите рассылку.");
   await api(`/campaigns/${campaignId}/drafts`, data);
   element.reset();
+  $("draftDialog").close();
   await loadDrafts();
 });
 form("importForm", async (data, element) => {
@@ -523,6 +567,7 @@ form("importForm", async (data, element) => {
     throw new Error(`Сохранено ${saved} из ${rows.length}. ${e.message}`);
   }
   element.reset();
+  $("importDialog").close();
   await loadDrafts();
 });
 form("tokenForm", async (data) => {
@@ -560,6 +605,35 @@ $("hideToken").onclick = () => {
   $("tokenCopyStatus").textContent = "";
   $("tokenReveal").hidden = true;
 };
+function openCampaignDialog() {
+  if (!connections.length) return;
+  $("campaignForm").reset();
+  clearFormErrors($("campaignForm"));
+  $("campaignDialog").querySelector(".dialog-message")?.remove();
+  $("campaignDialog").showModal();
+  $("campaignForm").elements.name.focus();
+}
+$("newCampaign").onclick = openCampaignDialog;
+$("emptyCreateCampaign").onclick = openCampaignDialog;
+$("openDraftDialog").onclick = () => {
+  clearFormErrors($("draftForm"));
+  $("draftDialog").querySelector(".dialog-message")?.remove();
+  $("draftDialog").showModal();
+  $("draftForm").elements.address.focus();
+};
+$("openImportDialog").onclick = () => {
+  $("campaignMore").open = false;
+  clearFormErrors($("importForm"));
+  $("importDialog").querySelector(".dialog-message")?.remove();
+  $("importDialog").showModal();
+  $("importForm").elements.json.focus();
+};
+for (const button of document.querySelectorAll("[data-close-dialog]"))
+  button.addEventListener("click", () => $(button.dataset.closeDialog).close());
+$("drafts").addEventListener("change", updateDraftSelection);
+document.addEventListener("click", (event) => {
+  if (!$("campaignMore").contains(event.target)) $("campaignMore").open = false;
+});
 $("copyToken").onclick = async () => {
   if (!$("tokenValue").textContent) return;
   try {
@@ -595,7 +669,10 @@ $("campaignSelect").onchange = () =>
     await loadContent();
   });
 for (const [id, fn] of Object.entries({
-  refreshDrafts: refresh,
+  refreshDrafts: () => {
+    $("campaignMore").open = false;
+    return refresh();
+  },
   launchPreview: () => preview("launch"),
   stopPreview: () => preview("stop"),
   prevDrafts: () => {
