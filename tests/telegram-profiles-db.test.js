@@ -133,5 +133,22 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
     const resumeImpact=await withClient(outreachStopAllImpact);
     await withClient(db=>stopAllOutreach(db,resumeImpact.snapshot_token));
     await assert.rejects(api.resumeExecute(beforeGlobalStop.confirmation_token),/Outreach data changed/);
+    await api.create({sender:'split_account'});
+    await query("UPDATE outreach_telegram_profiles SET connection_status='connected',heartbeat_at=now(),paused=false,daily_limit=20 WHERE sender='split_account'");
+    const splitRecipients=[];
+    for(let i=0;i<20;i++)splitRecipients.push(await recipient('split_recipient_'+i,901+i));
+    const split=await api.launchPrepare({sender:'split_account',start_date:day,recipients:splitRecipients,windows:[{start:'09:30',end:'11:30',count:10},{start:'17:00',end:'19:00',count:10}]});
+    assert.equal(split.preview.jobs.filter(j=>new Date(j.scheduled_at).getUTCHours()>=14).length,10);
+    assert.equal((await api.get('split_account')).day_overrides[day],undefined,'Prepare cannot change schedule');
+    assert.equal((await api.queueList({sender:'split_account',status:'pending'})).total,0);
+    await api.launchExecute(split.confirmation_token);
+    assert.equal((await api.get('split_account')).day_overrides[day].window_end,'19:00');
+    const splitQueue=(await api.queueList({sender:'split_account',status:'pending',pageSize:100})).items;
+    assert.equal(splitQueue.length,20);
+    assert.equal(splitQueue.filter(j=>j.send_before.toISOString().includes('T08:30:00')).length,10);
+    assert.equal(splitQueue.filter(j=>j.send_before.toISOString().includes('T16:00:00')).length,10);
+    const busyRecipient=await recipient('split_busy_recipient',9901);
+    await assert.rejects(api.launchPrepare({sender:'split_account',start_date:day,recipients:[busyRecipient],windows:[{start:'09:30',end:'11:30',count:1}]}),/telegram_launch_day_busy/);
+    await assert.rejects(api.launchExecute(split.confirmation_token));
   } finally { await pool.end(); }
 });
