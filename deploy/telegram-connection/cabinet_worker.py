@@ -44,7 +44,7 @@ def svg_for(url):
 
 def reply_parent(event):
     """Unthreaded messages, groups, channels and forwarded context are never imported."""
-    if not event.is_private or not event.incoming or not event.sender_id or event.sender_id <= 0:
+    if not event.is_private or event.message.out or not event.sender_id or event.sender_id <= 0:
         return None
     header = event.message.reply_to
     if not header or getattr(header, "reply_to_peer_id", None):

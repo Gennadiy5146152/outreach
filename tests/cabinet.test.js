@@ -723,6 +723,11 @@ test(
         "administrator account disable closes sessions and revokes tokens without exposing messages",
         async () => {
           const root = await request("/root-login", { body: {} });
+          const reserved = await request("/api/cabinet-admin/invites", {
+            cookie: root.cookie,
+            body: { username: env.authUser, display_name: "Reserved login" },
+          });
+          assert.equal(reserved.data.error, "login_reserved");
           const accounts = await request("/api/cabinet-admin/accounts", {
             cookie: root.cookie,
           });

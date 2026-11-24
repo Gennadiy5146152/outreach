@@ -279,6 +279,15 @@ export function createCabinet({ query, withClient, env }) {
     run(async (req, res) => {
       checkOrigin(req);
       limit("invite:" + req.ip);
+      if (
+        String(req.body.username || "")
+          .trim()
+          .toLowerCase() ===
+        String(env.authUser || "")
+          .trim()
+          .toLowerCase()
+      )
+        throw fail("login_reserved");
       res.status(201).json(await store.invite(req.body));
     }),
   );

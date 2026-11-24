@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy/telegram-co
 from cabinet_worker import CabinetWorker, decrypt_password, private_session_path, within_window, svg_for
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import psycopg
-from telethon import types, errors
+from telethon import types, errors, events
 
 URL = os.environ.get("CABINET_TEST_DATABASE_URL")
 UTC = timezone.utc
@@ -132,7 +132,11 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         return job
 
     def event(self, mid, parent=None, peer=None, text='Ответ', private=True):
-        return NS(is_private=private,incoming=True,sender_id=peer or self.peer,message=NS(id=mid,reply_to=NS(reply_to_msg_id=parent,reply_to_peer_id=None) if parent else None,message=text,date=datetime.now(UTC)))
+        sender = peer or self.peer
+        message = types.Message(id=mid,peer_id=types.PeerUser(sender) if private else types.PeerChat(7777),
+                                from_id=types.PeerUser(sender),date=datetime.now(UTC),message=text,out=False,
+                                reply_to=types.MessageReplyHeader(reply_to_msg_id=parent) if parent else None)
+        return events.NewMessage.Event(message)
 
     async def rows(self):
         return await (await self.db.execute('SELECT * FROM cabinet_messages WHERE owner_id=%s ORDER BY telegram_message_id', (self.owner,))).fetchall()
@@ -143,6 +147,9 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         await self.worker.incoming(self.connection,self.event(103,999))  # unrelated history
         await self.worker.incoming(self.connection,self.event(104,101,peer=self.peer+1))
         await self.worker.incoming(self.connection,self.event(105,101,private=False))
+        outgoing = self.event(109,101)
+        outgoing.message.out = True
+        await self.worker.incoming(self.connection,outgoing)
         self.assertEqual(len(await self.rows()),1)
         await self.worker.incoming(self.connection,self.event(106,101,text='Реальный ответ'))
         await self.worker.incoming(self.connection,self.event(107,106,text='Продолжение этой цепочки'))
