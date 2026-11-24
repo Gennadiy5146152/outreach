@@ -325,7 +325,7 @@ async function loadConnections() {
     const box = card(
       "@" + (c.username || c.expected_username),
       (statuses[c.status] || c.status) +
-        (c.error_code
+        (c.error_code && c.status !== "expired"
           ? " · " + (errors[c.error_code] || "Нужно подключить профиль заново.")
           : ""),
     );
