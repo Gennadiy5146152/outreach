@@ -2055,6 +2055,78 @@ input[type="checkbox"] {
   background: #fff0eb;
   border-color: #dfbcb2;
 }
+
+/* One Telegram login flow, without a form and duplicate status cards around it. */
+#telegram { max-width: 800px; }
+.telegram-heading h2 { margin: 0; font-size: 22px; }
+#telegram #connectForm {
+  padding: 0;
+  margin: 22px 0;
+  border: 0;
+  background: none;
+}
+.connection-card h3 { overflow-wrap: anywhere; }
+.connection-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.connection-actions button { margin: 0; min-height: 44px; }
+#qrPanel {
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 20px;
+  margin: 20px 0 0;
+  background: white;
+  border-color: var(--line);
+  text-align: center;
+}
+#qrPanel p, #qrPanel h3 { margin: 0; }
+#qrPanel #qrStatus { font-size: 20px; line-height: 1.35; }
+#qrPanel #qrAccount { color: var(--primary); font-size: 14px; font-weight: 600; }
+#qrPanel #qrHint { max-width: 390px; font-size: 14px; line-height: 1.55; color: #626e80; }
+#qrPanel[data-state="pending_qr"] #qrStatus::before,
+#qrPanel[data-state="network_error"] #qrHint:not(:empty)::before {
+  content: "";
+  display: block;
+  width: 24px;
+  height: 24px;
+  margin: 0 auto 12px;
+  border: 3px solid #dce6f7;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: qr-spin 1s linear infinite;
+}
+@keyframes qr-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #qrPanel #qrStatus::before, #qrPanel #qrHint::before { animation: none; }
+}
+#qrPanel #qrImage { width: 240px; height: auto; padding: 8px; border-radius: 10px; }
+#qrPanel #qrExpires { font-size: 12px; }
+.qr-phone-hint { display: none; }
+#qrPanel #qrError { width: 100%; padding: 12px; border-radius: 8px; background: #fff3ef; font-size: 14px; line-height: 1.5; color: #925346; }
+.qr-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.qr-actions button { min-height: 44px; font-size: 14px; }
+#qrPanel #twoFactor { text-align: left; }
+@media (max-width: 760px) {
+  #telegram { padding: 0; margin: 0; border: 0; box-shadow: none; background: none; }
+  #telegram > h2 { font-size: 23px; }
+  #telegram .telegram-heading { align-items: center; flex-direction: row; }
+  #telegram .telegram-heading button { font-size: 12px; min-height: 40px; padding: 8px 12px; }
+  #telegram > p { font-size: 14px; color: #626e80; }
+  #telegram #connectForm { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 16px; background: white; border: 1px solid var(--line); border-radius: 14px; }
+  #telegram #connectForm label { margin: 0; font-size: 14px; }
+  #telegram #connectForm input { font-size: 16px; min-height: 48px; }
+  #telegram #connectForm > button { width: 100%; margin: 0; min-height: 46px; font-size: 15px; }
+  #telegram .connection-card { padding: 16px; margin-top: 14px; background: white; }
+  #telegram .connection-card h3 { font-size: 16px; }
+  #telegram .connection-card > .body { font-size: 13px; color: #626e80; }
+  #telegram .connection-actions button { font-size: 13px; min-height: 44px; }
+  #qrPanel { padding: 20px 16px; margin-top: 16px; border-radius: 14px; }
+  #qrPanel .qr-phone-hint { display: block; max-width: 360px; padding: 12px; border-radius: 8px; background: #f3f6fb; color: #536379; font-size: 13px; line-height: 1.5; }
+  #qrPanel .qr-actions { width: 100%; }
+  #qrPanel .qr-actions button { flex: 1 1 120px; }
+}
+@media (min-width: 361px) and (max-width: 760px) {
+  .cabinet-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cabinet-nav a { font-size: 11px; min-height: 42px; padding: 8px 5px; gap: 5px; justify-content: center; }
+}
 .status-pill {
   display: inline-flex;
   margin: 10px 0 3px;

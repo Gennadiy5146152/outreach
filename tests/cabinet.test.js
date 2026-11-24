@@ -171,6 +171,12 @@ test(
       const connB = await cabinet.store.connect(b.p, {
         username: "test_bob_" + prefix,
       });
+      const again = await cabinet.store.connect(a.p, { username: "test_alice_" + prefix });
+      assert.equal(again.id, conn.id, "Repeated submission reuses the owner's QR request");
+      await query("UPDATE cabinet_connections SET status='expired' WHERE id=$1", [conn.id]);
+      const renewed = await cabinet.store.connect(a.p, { username: "test_alice_" + prefix });
+      assert.equal(renewed.id, conn.id);
+      assert.equal(renewed.status, "pending_qr");
       const c = await cabinet.store.createCampaign(a.p, {
         connection_id: conn.id,
         name: "Alice campaign",
@@ -199,6 +205,9 @@ test(
         "UPDATE cabinet_connections SET status='connected',telegram_user_id=8800000000+generation,username=expected_username,heartbeat_at=now() WHERE id=$1",
         [conn.id],
       );
+      const connectedAgain = await cabinet.store.connect(a.p, { username: "test_alice_" + prefix });
+      assert.equal(connectedAgain.status, "connected", "Submitting a connected username must not restart authorization");
+      assert.equal(connectedAgain.id, conn.id);
       const mint = async (scopes, ids = [c.id]) =>
         cabinet.store.tokenCreate(a.p, {
           name: "Test",

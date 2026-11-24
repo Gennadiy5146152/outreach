@@ -421,9 +421,17 @@ export function createCabinetStore({
       rows: [c],
     } = await query(
       `INSERT INTO cabinet_connections(owner_id,label,expected_username,status,generation)
-  VALUES($1,$2,$3,'pending_qr',1) RETURNING ${CONNECTION_FIELDS}`,
+  VALUES($1,$2,$3,'pending_qr',1) ON CONFLICT(owner_id,expected_username) DO NOTHING RETURNING ${CONNECTION_FIELDS}`,
       [p.owner_id, text(input.label || "@" + sender, 100), sender],
     );
+    if (!c) {
+      const existing = (await query(`SELECT ${CONNECTION_FIELDS},qr_expires_at FROM cabinet_connections WHERE owner_id=$1 AND expected_username=$2`, [p.owner_id, sender])).rows[0];
+      if (!existing) throw fail("connection_not_found", 404);
+      if (["expired", "error", "disconnected"].includes(existing.status) ||
+          (existing.status === "qr_ready" && new Date(existing.qr_expires_at) <= now()))
+        return requestQr(p, existing.id);
+      return existing;
+    }
     await audit(p, "telegram_qr_requested", c.id);
     return c;
   }

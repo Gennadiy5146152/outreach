@@ -3,6 +3,7 @@ import {
   validateForm,
   clearFormErrors,
 } from "./form-validation.js";
+import { createQrPoller } from "./qr-polling.js";
 const $ = (id) => document.getElementById(id);
 let csrf = "",
   connections = [],
@@ -12,7 +13,8 @@ let csrf = "",
   queuePage = 1,
   qrId = "",
   verifiedEmail = "",
-  qrTimer,
+  qrRetryMode = "new",
+  addingTelegram = false,
   plan = null;
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
@@ -41,6 +43,8 @@ const errors = {
   telegram_account_already_managed:
     "Этот Telegram-профиль уже подключён в другом кабинете.",
   telegram_qr_expired: "QR-код истёк. Запросите новый.",
+  telegram_qr_preparation_timeout: "Не удалось подготовить QR за минуту. Попробуйте ещё раз.",
+  connection_not_found: "Профиль не найден. Обновите страницу.",
   telegram_login_expired: "Время входа истекло. Запросите новый QR-код.",
   telegram_password_invalid:
     "Неверный облачный пароль Telegram. Попробуйте ещё раз.",
@@ -99,7 +103,8 @@ const jobLabels = {
   uncertain: "Нужно проверить результат",
 };
 async function api(path, body, method) {
-  const res = await fetch("/api/cabinet" + path, {
+  let res;
+  try { res = await fetch("/api/cabinet" + path, {
     method: method || (body ? "POST" : "GET"),
     credentials: "same-origin",
     headers: {
@@ -107,18 +112,20 @@ async function api(path, body, method) {
       ...(csrf ? { "X-CSRF-Token": csrf } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  }); } catch {
+    throw Object.assign(new Error("Нет связи с сервером. Проверьте подключение к интернету."), { retryable: true });
+  }
   let data;
   try {
     data = await res.json();
   } catch {
-    throw new Error("Сервис недоступен.");
+    throw Object.assign(new Error("Сервер временно не отвечает. Попробуйте ещё раз."), { retryable: true });
   }
   if (!res.ok)
-    throw new Error(
+    throw Object.assign(new Error(
       errors[data.error] ||
         "Не удалось выполнить действие. Обновите страницу и попробуйте ещё раз.",
-    );
+    ), { status: res.status, retryable: res.status >= 500 || res.status === 429 || res.status === 408 });
   return data;
 }
 function node(tag, text, className) {
@@ -323,33 +330,53 @@ async function loadConnections() {
           : ""),
     );
     box.dataset.status = c.status;
+    box.classList.add("connection-card");
+    box.dataset.connectionId = c.id;
+    box.hidden = qrId === c.id && !$("qrPanel").hidden;
+    const actions = node("div", undefined, "connection-actions");
     if (c.status !== "connected")
-      box.append(
+      actions.append(
         button("Войти по QR", async () => {
-          await api(`/connections/${c.id}/qr`, {});
+          if (!["pending_qr", "qr_ready", "password_required"].includes(c.status))
+            await api(`/connections/${c.id}/qr`, {});
           watchQr(c.id);
         }),
       );
-    box.append(
+    actions.append(
       button("Отключить", async () => {
         if (!confirm("Отключить профиль и отменить его оставшуюся очередь?"))
           return;
         await api(`/connections/${c.id}/disconnect`, {});
         if (qrId === c.id) {
-          clearTimeout(qrTimer);
+          qrPoller.stop();
+          qrId = "";
           $("qrPanel").hidden = true;
+          $("connectForm").hidden = false;
         }
         await refresh();
       }),
     );
+    box.append(actions);
     $("connections").append(box);
     const o = node("option", "@" + (c.username || c.expected_username));
     o.value = c.id;
     $("connectionSelect").append(o);
   }
   $("campaignConnectionField").hidden = list.length === 1;
+  telegramLayout();
   updateCampaignLayout();
 }
+function telegramLayout() {
+  const active = !$("qrPanel").hidden;
+  $("connectForm").hidden = active || (connections.length > 0 && !addingTelegram);
+  $("telegramAddProfile").hidden = active || !connections.length || addingTelegram;
+  $("telegramIntro").hidden = active || (connections.length > 0 && !addingTelegram);
+}
+$("telegramAddProfile").addEventListener("click", () => {
+  addingTelegram = true;
+  telegramLayout();
+  $("connectForm").elements.username.focus();
+});
 function updateCampaignLayout() {
   const hasProfiles = connections.length > 0;
   $("newCampaign").hidden = !hasProfiles || !campaigns.length;
@@ -373,13 +400,9 @@ function updateDraftSelection() {
   $("draftActions").hidden = !selected;
   $("selectedDraftCount").textContent = "Выбрано: " + selected;
 }
-function watchQr(id) {
-  qrId = id;
-  clearTimeout(qrTimer);
-  $("qrPanel").hidden = false;
-  const poll = async () => {
-    try {
-      const data = await api(`/connections/${id}/qr`);
+const qrPoller = createQrPoller({
+  fetchState: id => api(`/connections/${id}/qr`),
+  onState: async (data, id) => {
       if (qrId !== id) return;
       const titles = {
         pending_qr: "Готовим QR-код…",
@@ -391,27 +414,82 @@ function watchQr(id) {
         disconnected: "Telegram отключён",
       };
       $("qrStatus").textContent = titles[data.status] || data.status;
+      $("qrPanel").dataset.state = data.status;
+      $("qrHint").textContent = data.status === "qr_ready"
+        ? "В Telegram на телефоне: Настройки → Устройства → Подключить устройство."
+        : data.status === "password_required" ? "Если у вас включена двухэтапная защита, введите её пароль."
+        : data.status === "pending_qr" ? "Обычно это занимает несколько секунд." : "";
+      $("qrHint").hidden = !$("qrHint").textContent;
       $("qrError").textContent = data.error_code
         ? errors[data.error_code] ||
           "Не удалось подключиться. Попробуйте ещё раз."
         : "";
+      $("qrError").hidden = !$("qrError").textContent;
       $("qrImage").hidden = !data.qr_svg;
       $("qrImage").src = data.qr_svg
-        ? "data:image/svg+xml;base64," + btoa(data.qr_svg)
+        ? "data:image/svg+xml;charset=utf-8," + encodeURIComponent(data.qr_svg)
         : "";
       $("twoFactor").hidden = data.status !== "password_required";
+      $("qrPhoneHint").hidden = data.status !== "qr_ready";
+      $("qrExpires").hidden = data.status !== "qr_ready" || !data.qr_expires_at;
+      if (!$("qrExpires").hidden) $("qrExpires").textContent = "Код действует ещё " + Math.max(0, Math.ceil((new Date(data.qr_expires_at) - Date.now()) / 1000)) + " с";
+      $("qrRetry").hidden = !["expired", "error", "disconnected"].includes(data.status);
+      $("qrRetry").textContent = "Получить новый QR";
+      qrRetryMode = "new";
       if (data.status === "connected") {
+        qrId = "";
+        $("qrPanel").hidden = true;
+        $("connectForm").hidden = false;
         await refresh();
-        return;
       }
-      if (["expired", "error", "disconnected"].includes(data.status)) return;
-      qrTimer = setTimeout(poll, 2000);
-    } catch (e) {
-      $("qrError").textContent = e.message;
-    }
-  };
-  poll();
+  },
+  onError: (error, { retrying, id }) => {
+    if (qrId !== id) return;
+    $("qrStatus").textContent = retrying ? "Восстанавливаем соединение…" : "Подключение прервалось";
+    $("qrPanel").dataset.state = "network_error";
+    $("qrHint").textContent = retrying ? "Повторяем проверку автоматически. Не закрывайте страницу." : "";
+    $("qrHint").hidden = !$("qrHint").textContent;
+    $("qrError").textContent = retrying ? "" : (errors[error.message] || error.message);
+    $("qrError").hidden = !$("qrError").textContent;
+    $("qrImage").hidden = $("qrPhoneHint").hidden = $("qrExpires").hidden = $("twoFactor").hidden = true;
+    $("qrRetry").hidden = retrying || error.status === 401 || error.status === 403;
+    qrRetryMode = error.message === "telegram_qr_preparation_timeout" ? "new" : "check";
+    $("qrRetry").textContent = qrRetryMode === "new" ? "Получить новый QR" : "Повторить проверку";
+  },
+});
+function watchQr(id) {
+  qrId = id;
+  const c = connections.find(x => x.id === id);
+  $("qrAccount").textContent = "@" + (c?.username || c?.expected_username || "Telegram");
+  $("qrStatus").textContent = "Готовим QR-код…";
+  $("qrHint").textContent = "Обычно это занимает несколько секунд.";
+  $("qrHint").hidden = false;
+  $("qrError").hidden = $("qrImage").hidden = $("qrRetry").hidden = $("qrPhoneHint").hidden = $("qrExpires").hidden = $("twoFactor").hidden = true;
+  $("qrPanel").hidden = false;
+  $("qrPanel").dataset.state = "pending_qr";
+  $("connectForm").hidden = true;
+  telegramLayout();
+  $("notice").textContent = "";
+  $("connections").querySelectorAll("[data-connection-id]").forEach(box => { box.hidden = box.dataset.connectionId === id; });
+  qrPoller.start(id);
 }
+$("qrBack").addEventListener("click", () => {
+  qrPoller.stop(); qrId = "";
+  $("qrPanel").hidden = true;
+  $("connectForm").hidden = false;
+  work(loadConnections);
+});
+$("qrRetry").addEventListener("click", () => {
+  const id = qrId;
+  $("qrRetry").disabled = true;
+  (async () => {
+    try {
+      if (qrRetryMode === "new") await api(`/connections/${id}/qr`, {});
+      watchQr(id);
+    } catch (e) { $("qrError").hidden = false; $("qrError").textContent = e.message; }
+    finally { $("qrRetry").disabled = false; }
+  })();
+});
 async function loadContent() {
   $("drafts").replaceChildren();
   $("queue").replaceChildren();
@@ -577,8 +655,9 @@ form("authForm", async (data) => {
 });
 form("connectForm", async (data) => {
   const c = await api("/connections", data);
+  addingTelegram = false;
   await loadConnections();
-  watchQr(c.id);
+  if (c.status !== "connected") watchQr(c.id);
 });
 form("twoFactor", async (data, element) => {
   try {
@@ -710,7 +789,7 @@ $("requestPasswordReset").onclick = () =>
 $("logout").onclick = () =>
   work(async () => {
     await api("/auth/logout", {});
-    clearTimeout(qrTimer);
+    qrPoller.stop();
     location.reload();
   });
 $("campaignSelect").onchange = () =>
@@ -787,6 +866,12 @@ function renderCabinetPage({ focus = false } = {}) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
+  if (id !== "telegram") qrPoller.stop();
+  else {
+    const active = connections.find(c => ["pending_qr", "qr_ready", "password_required"].includes(c.status));
+    if (qrId && !$("qrPanel").hidden) watchQr(qrId);
+    else if (active) watchQr(active.id);
+  }
   if (focus) {
     $("notice").textContent = "";
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });

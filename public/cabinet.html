@@ -239,8 +239,8 @@
         </div>
 
         <section id="telegram" data-cabinet-page hidden>
-          <h2><span class="section-number">01</span> Подключение Telegram</h2>
-          <p>Укажите свой @username, затем войдите по QR-коду.</p>
+          <div class="section-heading telegram-heading"><h2>Telegram</h2><button id="telegramAddProfile" type="button" class="secondary" hidden>Добавить профиль</button></div>
+          <p id="telegramIntro">Подключите профиль для отправки сообщений.</p>
           <form id="connectForm" class="row">
             <label
               >Логин Telegram<input
@@ -254,11 +254,9 @@
           </form>
           <div id="connections"></div>
           <div id="qrPanel" hidden>
+            <p id="qrAccount" class="muted"></p>
             <h3 id="qrStatus"></h3>
-            <p class="muted">
-              В мобильном Telegram откройте Настройки → Устройства → Подключить
-              устройство.
-            </p>
+            <p id="qrHint">Обычно это занимает несколько секунд.</p>
             <img
               id="qrImage"
               alt="QR-код входа Telegram"
@@ -266,7 +264,9 @@
               width="260"
               height="260"
             />
-            <p id="qrError"></p>
+            <p id="qrExpires" class="muted" hidden></p>
+            <p class="qr-phone-hint" id="qrPhoneHint" hidden>Вы на телефоне? Откройте эту страницу на компьютере, чтобы отсканировать код через Telegram на телефоне.</p>
+            <p id="qrError" role="status" hidden></p>
             <form id="twoFactor" method="post" hidden>
               <label
                 >Облачный пароль Telegram<input
@@ -276,6 +276,10 @@
                   required /></label
               ><button>Подтвердить</button>
             </form>
+            <div class="qr-actions">
+              <button id="qrRetry" type="button" hidden>Получить новый QR</button>
+              <button id="qrBack" type="button" class="secondary">К профилям</button>
+            </div>
           </div>
         </section>
         <section id="instagram" data-cabinet-page hidden>
