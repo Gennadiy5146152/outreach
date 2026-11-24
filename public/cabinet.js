@@ -5,6 +5,7 @@ let csrf = "",
   draftPage = 1,
   queuePage = 1,
   qrId = "",
+  verifiedEmail = "",
   qrTimer,
   plan = null;
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
@@ -128,12 +129,12 @@ function form(id, fn) {
   $(id).addEventListener("submit", (event) => {
     event.preventDefault();
     work(async () => {
-      const b = event.submitter;
-      b.disabled = true;
+      const b = event.submitter || event.target.querySelector("button");
+      if (b) b.disabled = true;
       try {
         await fn(Object.fromEntries(new FormData(event.target)), event.target);
       } finally {
-        b.disabled = false;
+        if (b) b.disabled = false;
       }
     });
   });
@@ -178,21 +179,17 @@ async function boot() {
       me.display_name + " · " + (me.email || me.login);
     $("identity").title = $("identity").textContent;
     $("profileEmail").value = me.email || "";
+    verifiedEmail = me.email_verified ? me.email : "";
+    $("requestPasswordReset").disabled = !verifiedEmail;
+    $("mcpBaseUrl").textContent = location.origin;
     $("emailStatus").textContent = me.email_verified
       ? "Почта подтверждена. По ней можно войти и восстановить пароль."
       : "Привяжите почту, чтобы восстанавливать доступ самостоятельно.";
     $("auth").hidden = true;
-    $("workspace").hidden = false;
     $("logout").hidden = false;
     await refresh();
-    const initialSection = document.getElementById(location.hash.slice(1));
-    if (
-      initialSection &&
-      ["overview", "telegram", "campaigns", "tokens", "profile"].includes(
-        initialSection.id,
-      )
-    )
-      initialSection.scrollIntoView({ block: "start" });
+    renderCabinetPage();
+    $("workspace").hidden = false;
   } catch (e) {
     location.replace("/login.html");
   }
@@ -542,6 +539,7 @@ form("tokenForm", async (data) => {
     campaign_ids,
   });
   $("tokenValue").textContent = result.token;
+  $("tokenCopyStatus").textContent = "";
   $("tokenReveal").hidden = false;
   await loadTokens();
 });
@@ -551,8 +549,31 @@ form("emailForm", async (data) => {
 });
 $("hideToken").onclick = () => {
   $("tokenValue").textContent = "";
+  $("tokenCopyStatus").textContent = "";
   $("tokenReveal").hidden = true;
 };
+$("copyToken").onclick = async () => {
+  if (!$("tokenValue").textContent) return;
+  try {
+    await navigator.clipboard.writeText($("tokenValue").textContent);
+    $("tokenCopyStatus").textContent = "Токен скопирован.";
+  } catch {
+    $("tokenCopyStatus").textContent =
+      "Не удалось скопировать автоматически. Выделите токен и скопируйте вручную.";
+  }
+};
+$("requestPasswordReset").onclick = () =>
+  work(async () => {
+    if (!verifiedEmail) throw new Error("Сначала подтвердите почту кабинета.");
+    const button = $("requestPasswordReset");
+    button.disabled = true;
+    try {
+      const result = await api("/auth/recover", { email: verifiedEmail });
+      $("passwordMessage").textContent = result.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
 $("logout").onclick = () =>
   work(async () => {
     await api("/auth/logout", {});
@@ -608,28 +629,53 @@ for (const [id, fn] of Object.entries({
   },
 }))
   $(id).addEventListener("click", () => work(fn));
-function highlightSection(id) {
+const pageTitles = {
+  overview: "Обзор",
+  telegram: "Telegram",
+  campaigns: "Рассылки",
+  tokens: "Доступы MCP",
+  profile: "Мой профиль",
+};
+function renderCabinetPage({ focus = false } = {}) {
+  const requested = location.hash.slice(1);
+  const id = Object.hasOwn(pageTitles, requested) ? requested : "overview";
+  if (requested !== id) history.replaceState(null, "", "#" + id);
+  document.querySelectorAll("[data-cabinet-page]").forEach((page) => {
+    page.hidden = page.id !== id;
+  });
+  $("currentPageTitle").textContent = pageTitles[id];
   document.querySelectorAll(".cabinet-nav a").forEach((link) => {
     const active = link.getAttribute("href") === "#" + id;
     link.classList.toggle("active", active);
-    if (active) link.setAttribute("aria-current", "location");
+    if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
+  if (focus) {
+    $("notice").textContent = "";
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    const heading = $(id).querySelector("h1,h2");
+    heading.tabIndex = -1;
+    heading.classList.add("page-heading");
+    heading.focus({ preventScroll: true });
+  }
 }
-highlightSection(location.hash.slice(1) || "overview");
-window.addEventListener("hashchange", () =>
-  highlightSection(location.hash.slice(1) || "overview"),
-);
-if ("IntersectionObserver" in window) {
-  const sectionObserver = new IntersectionObserver(
-    (entries) => {
-      const visible = entries.filter((entry) => entry.isIntersecting);
-      if (visible.length) highlightSection(visible[0].target.id);
-    },
-    { rootMargin: "-12% 0px -65% 0px" },
-  );
-  document
-    .querySelectorAll("#overview,#telegram,#campaigns,#tokens,#profile")
-    .forEach((section) => sectionObserver.observe(section));
-}
+history.scrollRestoration = "manual";
+document.querySelectorAll(".cabinet-nav a").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    event.preventDefault();
+    const hash = link.getAttribute("href");
+    if (location.hash !== hash) history.pushState(null, "", hash);
+    renderCabinetPage({ focus: true });
+  });
+});
+window.addEventListener("hashchange", () => renderCabinetPage({ focus: true }));
+renderCabinetPage();
 boot();

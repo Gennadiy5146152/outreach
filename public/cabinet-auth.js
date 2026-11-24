@@ -54,6 +54,10 @@ async function request(path, body) {
 function pane(name) {
   for (const mode of ["login", "register", "recover", "confirm"])
     $(mode + "Pane").hidden = mode !== name;
+  const heading = $(name + "Pane").querySelector("h1");
+  heading.tabIndex = -1;
+  heading.classList.add("page-heading");
+  document.title = heading.textContent + " · Outreach";
 }
 function mode() {
   const current = location.hash.slice(1);
@@ -71,8 +75,8 @@ function mode() {
 function bind(id, callback) {
   $(id).onsubmit = async (event) => {
     event.preventDefault();
-    const button = event.submitter;
-    button.disabled = true;
+    const button = event.submitter || event.target.querySelector("button");
+    if (button) button.disabled = true;
     $("loginMessage").hidden = true;
     try {
       await callback(
@@ -82,7 +86,7 @@ function bind(id, callback) {
     } catch (error) {
       message(error.message);
     } finally {
-      button.disabled = false;
+      if (button) button.disabled = false;
     }
   };
 }
@@ -130,8 +134,15 @@ window.addEventListener("hashchange", () => {
     confirmation = incoming;
     history.replaceState(null, "", location.pathname + "#confirm");
     boot();
-  } else mode();
+  } else {
+    mode();
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    document
+      .querySelector(".auth-card > div:not([hidden]) h1")
+      .focus({ preventScroll: true });
+  }
 });
+history.scrollRestoration = "manual";
 async function boot() {
   mode();
   try {
@@ -151,6 +162,7 @@ async function boot() {
           : kind === "register"
             ? "Задайте пароль"
             : "Новый пароль";
+      document.title = $("confirmTitle").textContent + " · Outreach";
       $("confirmEmail").textContent = info.email;
       $("confirmForm").hidden = false;
       $("newPasswordFields").hidden = kind === "attach";
@@ -164,6 +176,11 @@ async function boot() {
     if (status.authenticated && (!location.hash || location.hash === "#login"))
       location.href = status.redirect || "/";
   } catch (error) {
+    if (confirmation && location.hash === "#confirm") {
+      $("confirmTitle").textContent = "Не удалось открыть ссылку";
+      $("confirmForm").hidden = true;
+      document.title = "Проверка ссылки · Outreach";
+    }
     message(error.message);
   }
 }

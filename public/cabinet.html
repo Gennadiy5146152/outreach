@@ -102,7 +102,8 @@
     </aside>
     <header class="cabinet-header">
       <div class="header-crumb">
-        Рабочее пространство<span>/</span><strong>Личный кабинет</strong>
+        Рабочее пространство<span>/</span
+        ><strong id="currentPageTitle">Обзор</strong>
       </div>
       <div class="header-account">
         <span class="account-mark"
@@ -146,93 +147,95 @@
         </p>
       </section>
       <div id="workspace" hidden>
-        <div class="cabinet-intro" id="overview">
-          <div>
-            <span class="eyebrow">ВАШ OUTREACH</span>
-            <h1>Всё для следующего контакта.</h1>
-            <p>Подключения, сообщения и доступы. Всё на своих местах.</p>
+        <div id="overview" data-cabinet-page>
+          <div class="cabinet-intro">
+            <div>
+              <span class="eyebrow">ВАШ OUTREACH</span>
+              <h1>Всё для следующего контакта.</h1>
+              <p>Подключения, сообщения и доступы. Всё на своих местах.</p>
+            </div>
+            <span class="workspace-badge"
+              ><span class="status-dot"></span> Личный кабинет</span
+            >
           </div>
-          <span class="workspace-badge"
-            ><span class="status-dot"></span> Личный кабинет</span
-          >
-        </div>
-        <div class="overview-metrics">
-          <article class="overview-metric">
-            <div class="metric-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="m21 3-7 18-4-7-7-4L21 3ZM10 14l11-11" />
-              </svg>
-            </div>
-            <div>
-              <span>Telegram-профили</span
-              ><strong id="connectionCount">…</strong>
-            </div>
-            <small>Ваши подключения</small>
-          </article>
-          <article class="overview-metric">
-            <div class="metric-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M4 7h16v13H4zM8 3v8M16 3v8M4 11h16M8 15h3" />
-              </svg>
-            </div>
-            <div>
-              <span>Рассылки</span><strong id="campaignCount">…</strong>
-            </div>
-            <small>В вашем кабинете</small>
-          </article>
-          <article class="overview-metric">
-            <div class="metric-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="8" cy="15" r="5" />
-                <path d="m12 11 8-8M16 7l3 3M18 5l3 3" />
-              </svg>
-            </div>
-            <div>
-              <span>Активные токены</span
-              ><strong id="activeTokenCount">…</strong>
-            </div>
-            <small>Только выданные вами</small>
-          </article>
-        </div>
-        <p id="sendingDisabled" class="privacy" hidden>
-          Отправка из личных кабинетов отключена администратором. Можно
-          подключить Telegram и подготовить черновики; запуск станет доступен
-          после настройки обработчика.
-        </p>
-        <details class="privacy">
-          <summary>Доступ и приватность</summary>
-          <p>
-            Здесь доступны только ваши подключения и рассылки. MCP не получает
-            Telegram-сессию, QR-код, список диалогов или общую историю
-            переписки. Доступ администратора сервера сохраняется.
+          <div class="overview-metrics">
+            <article class="overview-metric">
+              <div class="metric-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m21 3-7 18-4-7-7-4L21 3ZM10 14l11-11" />
+                </svg>
+              </div>
+              <div>
+                <span>Telegram-профили</span
+                ><strong id="connectionCount">…</strong>
+              </div>
+              <small>Ваши подключения</small>
+            </article>
+            <article class="overview-metric">
+              <div class="metric-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 7h16v13H4zM8 3v8M16 3v8M4 11h16M8 15h3" />
+                </svg>
+              </div>
+              <div>
+                <span>Рассылки</span><strong id="campaignCount">…</strong>
+              </div>
+              <small>В вашем кабинете</small>
+            </article>
+            <article class="overview-metric">
+              <div class="metric-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="8" cy="15" r="5" />
+                  <path d="m12 11 8-8M16 7l3 3M18 5l3 3" />
+                </svg>
+              </div>
+              <div>
+                <span>Активные токены</span
+                ><strong id="activeTokenCount">…</strong>
+              </div>
+              <small>Только выданные вами</small>
+            </article>
+          </div>
+          <p id="sendingDisabled" class="privacy" hidden>
+            Отправка из личных кабинетов отключена администратором. Можно
+            подключить Telegram и подготовить черновики; запуск станет доступен
+            после настройки обработчика.
           </p>
-        </details>
+          <details class="privacy">
+            <summary>Доступ и приватность</summary>
+            <p>
+              Здесь доступны только ваши подключения и рассылки. MCP не получает
+              Telegram-сессию, QR-код, список диалогов или общую историю
+              переписки. Доступ администратора сервера сохраняется.
+            </p>
+          </details>
+        </div>
 
-        <section id="telegram">
+        <section id="telegram" data-cabinet-page hidden>
           <h2><span class="section-number">01</span> Подключение Telegram</h2>
           <p>
             Укажите свой логин Telegram. Войдите по QR в мобильном Telegram:
@@ -270,7 +273,7 @@
             </form>
           </div>
         </section>
-        <section id="campaigns">
+        <section id="campaigns" data-cabinet-page hidden>
           <h2><span class="section-number">02</span> Рассылки и очередь</h2>
           <form id="campaignForm" class="row">
             <label
@@ -393,7 +396,7 @@
           </p>
           <div id="thread"></div>
         </section>
-        <section id="tokens">
+        <section id="tokens" data-cabinet-page hidden>
           <h2><span class="section-number">03</span> Доступ через MCP</h2>
           <p>
             Токен действует только для выбранных рассылок. Отправка возможна
@@ -460,7 +463,11 @@
               настройки MCP. Не отправляйте в обычный чат.
             </p>
             <pre id="tokenValue"></pre>
-            <button id="hideToken">Скрыть</button>
+            <div class="token-actions">
+              <button id="copyToken" type="button">Скопировать токен</button>
+              <button id="hideToken" type="button" class="quiet">Скрыть</button>
+            </div>
+            <p id="tokenCopyStatus" role="status"></p>
           </div>
           <div id="tokenList"></div>
           <details>
@@ -474,9 +481,9 @@
               инструменты.
             </p>
             <p>
-              Для текущего адреса <code>http://213.171.10.147:3000</code> также
-              задайте <code>OUTREACH_ALLOW_HTTP=true</code> в окружении MCP. При
-              HTTP токен передаётся без шифрования.
+              Адрес сервиса для подключения:
+              <code id="mcpBaseUrl">https://outreach.korotkov.dev</code>.
+              Используйте HTTPS, чтобы токен передавался с шифрованием.
             </p>
             <p>
               Отзыв токена закрывает дальнейший доступ через MCP. Уже
@@ -484,7 +491,7 @@
             </p>
           </details>
         </section>
-        <section id="profile">
+        <section id="profile" data-cabinet-page hidden>
           <h2><span class="section-number">04</span> Почта и восстановление</h2>
           <p id="emailStatus" class="muted"></p>
           <form id="emailForm" class="row">
@@ -498,6 +505,16 @@
             ><button>Подтвердить почту</button>
           </form>
           <p id="emailMessage" role="status"></p>
+          <h3>Сменить пароль</h3>
+          <p class="muted">
+            Отправим одноразовую ссылку на подтверждённую почту кабинета. После
+            смены пароля нужно будет войти заново; прежние сеансы и MCP-токены
+            будут отозваны, очередь этого кабинета остановится.
+          </p>
+          <button id="requestPasswordReset" type="button" disabled>
+            Получить ссылку для смены пароля
+          </button>
+          <p id="passwordMessage" role="status"></p>
         </section>
       </div>
     </main>
