@@ -7,6 +7,7 @@ export const SCOPES = [
   "outreach:draft",
   "outreach:send",
   "outreach:stop",
+  "instagram:read",
 ];
 export function fail(code, status = 400) {
   return Object.assign(new Error(code), { status, code });

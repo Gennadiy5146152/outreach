@@ -52,6 +52,9 @@
           >
             <path d="m21 3-7 18-4-7-7-4L21 3ZM10 14l11-11" /></svg
           ><span>Telegram</span></a
+        ><a href="#instagram"
+          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8"/></svg
+          ><span>Instagram</span></a
         ><a href="#campaigns"
           ><svg
             viewBox="0 0 24 24"
@@ -275,6 +278,22 @@
             </form>
           </div>
         </section>
+        <section id="instagram" data-cabinet-page hidden>
+          <h2>Подключение Instagram</h2>
+          <p>Войдите в Instagram и разрешите подключить профессиональный аккаунт Business или Creator.</p>
+          <p class="muted">Пароль вводится на странице Instagram. В Outreach он не передаётся.</p>
+          <div class="section-heading">
+            <button id="instagramConnect" type="button" disabled>Подключить Instagram</button>
+            <button id="instagramRefresh" type="button" class="secondary">Обновить статус</button>
+          </div>
+          <p id="instagramStatus" role="status"></p>
+          <div id="instagramAccounts"></div>
+          <details class="history-panel">
+            <summary>Что доступно после подключения</summary>
+            <p>Профиль сохраняется только в вашем кабинете. Здесь можно проверить подключение и отключить аккаунт.</p>
+            <p>Отправка и чтение Direct пока не добавлены. Официальный API позволяет отвечать на обращения, но не начинать холодную переписку с произвольными пользователями.</p>
+          </details>
+        </section>
         <section id="campaigns" data-cabinet-page hidden>
           <div class="section-heading">
             <h2>Рассылки Telegram</h2>
@@ -376,7 +395,7 @@
         <section id="tokens" data-cabinet-page hidden>
           <h2><span class="section-number">03</span> Доступ через MCP</h2>
           <p>
-            Токен действует только для выбранных рассылок. Отправка возможна
+            Права на сообщения действуют только для выбранных рассылок. Отправка возможна
             после подготовки точного плана и вашего подтверждения. Доступ к
             подключению Telegram и другим кабинетам не предоставляется.
           </p>
@@ -426,6 +445,8 @@
                   name="scope"
                   value="outreach:draft"
                 />Создавать и править черновики</label
+              ><label class="check"
+                ><input type="checkbox" name="scope" value="instagram:read" />Смотреть статус Instagram-профилей этого кабинета (без переписки и доступа к входу)</label
               >
             </fieldset>
             <fieldset>

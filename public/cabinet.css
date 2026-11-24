@@ -1250,6 +1250,7 @@ form .row {
   padding: 10px 13px;
 }
 #refreshDrafts,
+.secondary,
 .card button,
 #prevDrafts,
 #nextDrafts,
@@ -1262,6 +1263,7 @@ form .row {
   box-shadow: none;
 }
 .card button:hover,
+.secondary:hover,
 #refreshDrafts:hover,
 #cancelPlan:hover {
   background: var(--tint);

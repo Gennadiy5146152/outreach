@@ -44,6 +44,14 @@ export function createCabinetMcpServer({ client, scopes = [] }) {
     () => client.get("/api/cabinet/mcp/context"),
   );
   register(
+    "instagram_connections_list",
+    "Показать подключённые Instagram-профили и срок доступа. Без токенов Instagram, входа, переписки и отправки.",
+    z.object({}).strict(),
+    "instagram:read",
+    true,
+    () => client.get("/api/cabinet/instagram"),
+  );
+  register(
     "campaigns_list",
     "Получить только разрешённые этому токену рассылки.",
     z.object({}).strict(),

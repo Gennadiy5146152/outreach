@@ -497,7 +497,7 @@ export function createCabinetStore({
     if (
       !scopes.length ||
       scopes.some((x) => !SCOPES.includes(x)) ||
-      !ids.length ||
+      (scopes.some((s) => s.startsWith("outreach:")) && !ids.length) ||
       ids.length > 100
     )
       throw fail("token_scope_invalid");

@@ -3,6 +3,7 @@ import { createCabinetStore } from "./store.js";
 import { createEmailAuth, normalizeEmail } from "./email-auth.js";
 import { createAuthMailer } from "./auth-mail.js";
 import { createAuthRateLimiter } from "./auth-rate-limit.js";
+import { createInstagramConnection } from "./instagram.js";
 import {
   cookie,
   readCookie,
@@ -22,6 +23,7 @@ export function createCabinet({
   env,
   sendAuthEmail,
   onAdminReset,
+  instagramRequest,
 }) {
   const store = createCabinetStore({
       query,
@@ -41,6 +43,7 @@ export function createCabinet({
     reportError: (code) => console.error(code),
   });
   const authLimit = createAuthRateLimiter({ query });
+  const instagram = createInstagramConnection({ query, withClient, env, request: instagramRequest });
   async function loginLimit(req) {
     await authLimit("login-ip", req.ip);
     const name = String(req.body.username || "")
@@ -114,6 +117,19 @@ export function createCabinet({
     };
   }
   router.use(transport);
+  // Public cross-site callback: browser binding and live originating session are
+  // checked by the OAuth service instead of accepting a general cabinet token.
+  router.get("/instagram/oauth/callback", async (req, res) => {
+    res.set("Referrer-Policy", "no-referrer");
+    let result = "connected";
+    try { await instagram.complete(req); }
+    catch (e) {
+      const safe = ["instagram_oauth_expired", "instagram_oauth_declined", "instagram_not_configured", "instagram_professional_required", "instagram_account_already_managed", "cabinet_auth_required"];
+      result = safe.includes(e.code) ? e.code : "instagram_provider_error";
+    }
+    res.append("Set-Cookie", instagram.oauthCookie());
+    res.redirect(303, "/cabinet?instagram=" + result + "#instagram");
+  });
   router.get("/auth/options", (_req, res) =>
     res.json({
       registration: env.cabinetSignupEnabled === true && emailAuth.available(),
@@ -216,6 +232,20 @@ export function createCabinet({
         : { scopes: p.scopes, campaign_ids: p.campaign_ids }),
     });
   });
+  router.get("/instagram", run(async (req, res) => res.json(await instagram.status(req.cabinet))));
+  router.post("/instagram/oauth/start", run(async (req, res) => {
+    ownerOnly(req.cabinet);
+    limit("instagram:" + req.cabinet.owner_id);
+    const result = await instagram.start(req.cabinet);
+    res.append("Set-Cookie", result.cookie);
+    res.json({ authorization_url: result.authorization_url });
+  }));
+  router.post("/instagram/:id/check", run(async (req, res) => {
+    ownerOnly(req.cabinet);
+    limit("instagram:" + req.cabinet.owner_id);
+    res.json(await instagram.check(req.cabinet, req.params.id));
+  }));
+  router.post("/instagram/:id/disconnect", run(async (req, res) => res.json(await instagram.disconnect(req.cabinet, req.params.id))));
   router.get("/mcp/context", (req, res) =>
     res.json({
       login: req.cabinet.login,

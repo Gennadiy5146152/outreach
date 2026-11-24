@@ -31,6 +31,13 @@ async function session(scopes, fn) {
     await server.close();
   }
 }
+test("Instagram status is independently scoped and cannot connect, send or read Direct", async () => {
+  await session(["instagram:read"], async (client, calls) => {
+    assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ["cabinet_access", "instagram_connections_list"]);
+    await client.callTool({ name: "instagram_connections_list", arguments: {} });
+    assert.deepEqual(calls, ["/api/cabinet/instagram"]);
+  });
+});
 test("scoped MCP advertises only granted tools, no account, QR or arbitrary history endpoints", async () => {
   await session(["outreach:read"], async (client, calls) => {
     const names = (await client.listTools()).tools.map((t) => t.name);

@@ -17,6 +17,14 @@ let csrf = "",
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
 const errors = {
+  instagram_not_configured: "Подключение Instagram пока не настроено администратором.",
+  instagram_oauth_expired: "Время входа истекло или вход открыт в другом браузере. Подключите Instagram заново.",
+  instagram_oauth_declined: "Вы отменили подключение Instagram. Можно попробовать снова.",
+  instagram_professional_required: "Подключить можно профессиональный аккаунт Instagram Business или Creator.",
+  instagram_account_already_managed: "Этот Instagram-профиль уже подключён в другом кабинете.",
+  instagram_provider_error: "Instagram не подтвердил подключение. Попробуйте снова. Если ошибка повторяется, администратору нужно проверить настройки приложения Meta.",
+  instagram_authorization_expired: "Доступ Instagram отозван или истёк. Подключите аккаунт заново.",
+  instagram_connection_not_found: "Подключение Instagram не найдено.",
   telegram_connection_attention_required:
     "Отправка остановлена из-за ограничения Telegram или неопределённой доставки. Проверьте результат в Telegram, затем подключите профиль заново после решения проблемы.",
   invalid_email: "Проверьте адрес электронной почты.",
@@ -76,6 +84,7 @@ const errors = {
   too_many_requests: "Слишком много попыток. Попробуйте позже.",
 };
 const scopeLabels = {
+  "instagram:read": "Статус Instagram-профилей без переписки",
   "outreach:read": "Чтение сообщений и очереди",
   "outreach:draft": "Создание и правка черновиков",
   "outreach:send": "Запуск сохранённых сообщений",
@@ -207,22 +216,27 @@ async function boot() {
     await refresh();
     renderCabinetPage();
     $("workspace").hidden = false;
+    const result = new URLSearchParams(location.search).get("instagram");
+    if (result) {
+      $("notice").textContent = result === "connected" ? "Instagram подключён." : (errors[result] || errors.instagram_provider_error);
+      history.replaceState(null, "", "/cabinet#instagram");
+    }
   } catch (e) {
     location.replace("/login.html");
   }
 }
 async function refresh() {
   await loadConnections();
+  await loadInstagram();
   campaigns = await api("/campaigns");
   $("campaignCount").textContent = campaigns.length;
   $("campaignSelect").replaceChildren();
   $("tokenCampaigns").replaceChildren();
-  $("tokenForm").querySelector("button").disabled = !campaigns.length;
   if (!campaigns.length)
     $("tokenCampaigns").append(
       node(
         "p",
-        "Сначала создайте рассылку. Затем выберите, к каким рассылкам будет доступ у токена.",
+        "Рассылок пока нет. Для просмотра статуса Instagram можно выдать отдельное право без выбора рассылки.",
         "muted",
       ),
     );
@@ -248,6 +262,43 @@ async function refresh() {
   await loadContent();
   await loadTokens();
 }
+async function loadInstagram() {
+  try {
+    const result = await api("/instagram");
+    $("instagramConnect").disabled = !result.configured;
+    $("instagramStatus").textContent = !result.configured
+      ? "Для входа администратору нужно завершить настройку приложения Meta."
+      : result.accounts.length ? "Подключённые аккаунты" : "Аккаунтов пока нет. Подключите свой профиль через Instagram.";
+    $("instagramAccounts").replaceChildren();
+    for (const account of result.accounts) {
+      const box = card("@" + account.username, account.name);
+      box.append(node("p", account.status === "connected" ? "Доступ до " + at(account.token_expires_at) : "Доступ истёк. Подключите аккаунт заново.", "muted"));
+      box.append(button("Проверить подключение", async () => {
+        await api(`/instagram/${account.id}/check`, {});
+        await loadInstagram();
+        $("notice").textContent = "Instagram отвечает. Подключение работает.";
+      }), button("Отключить", async () => {
+        if (!window.confirm("Отключить @" + account.username + " от этого кабинета?")) return;
+        await api(`/instagram/${account.id}/disconnect`, {});
+        await loadInstagram();
+      }));
+      $("instagramAccounts").append(box);
+    }
+  } catch (e) {
+    $("instagramStatus").textContent = e.message;
+    $("instagramConnect").disabled = true;
+  }
+}
+$("instagramConnect").addEventListener("click", () => work(async () => {
+  $("instagramConnect").disabled = true;
+  try {
+    const result = await api("/instagram/oauth/start", {});
+    const url = new URL(result.authorization_url);
+    if (url.origin !== "https://www.instagram.com" || url.pathname !== "/oauth/authorize") throw new Error(errors.instagram_provider_error);
+    location.assign(url.href);
+  } finally { $("instagramConnect").disabled = false; }
+}));
+$("instagramRefresh").addEventListener("click", () => work(loadInstagram));
 async function loadConnections() {
   const list = await api("/connections");
   connections = list;
@@ -717,6 +768,7 @@ for (const [id, fn] of Object.entries({
 const pageTitles = {
   overview: "Обзор",
   telegram: "Telegram",
+  instagram: "Instagram",
   campaigns: "Рассылки",
   tokens: "Доступы MCP",
   profile: "Мой профиль",
