@@ -3,7 +3,7 @@ import test from "node:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createCabinetMcpServer } from "../../src/mcp/cabinet-server.js";
 
-async function session(scopes, fn) {
+async function session(scopes, fn, options = {}) {
   const calls = [];
   const api = {
     get: async (path) => {
@@ -19,7 +19,7 @@ async function session(scopes, fn) {
       };
     },
   };
-  const server = createCabinetMcpServer({ client: api, scopes });
+  const server = createCabinetMcpServer({ client: api, scopes, ...options });
   const client = new Client({ name: "cabinet-test", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
@@ -37,6 +37,44 @@ test("Instagram status is independently scoped and cannot connect, send or read 
     await client.callTool({ name: "instagram_connections_list", arguments: {} });
     assert.deepEqual(calls, ["/api/cabinet/instagram"]);
   });
+});
+test("only cabinet-wide draft tokens can select senders and create bounded empty campaigns", async () => {
+  for (const [scopes, allCampaigns] of [
+    [["outreach:draft"], false],
+    [["outreach:read", "outreach:send"], true],
+  ]) {
+    await session(scopes, async client => {
+      const names = (await client.listTools()).tools.map(t => t.name);
+      assert.equal(names.includes("campaign_create"), false);
+      assert.equal(names.includes("campaign_connections_list"), false);
+    }, { allCampaigns });
+  }
+  await session(["outreach:draft"], async (client, calls) => {
+    const names = (await client.listTools()).tools.map(t => t.name);
+    assert.ok(names.includes("campaign_create"));
+    assert.ok(names.includes("campaign_connections_list"));
+    const input = {
+      connection_id: "00000000-0000-4000-8000-000000000001",
+      name: "Reviewed messages",
+    };
+    for (const invalid of [
+      { ...input, daily_limit: 0 },
+      { ...input, daily_limit: 101 },
+      { ...input, window_start: "25:00" },
+      { ...input, owner_id: "00000000-0000-4000-8000-000000000002" },
+      { ...input, paused: false },
+    ]) {
+      assert.equal((await client.callTool({ name: "campaign_create", arguments: invalid })).isError, true);
+    }
+    assert.equal(calls.length, 0);
+    await client.callTool({ name: "campaign_connections_list", arguments: {} });
+    assert.equal(calls[0], "/api/cabinet/campaign-connections");
+    await client.callTool({ name: "campaign_create", arguments: input });
+    assert.deepEqual(calls[1], {
+      path: "/api/cabinet/campaigns",
+      input: { ...input, daily_limit: 10, window_start: "09:30", window_end: "11:30" },
+    });
+  }, { allCampaigns: true });
 });
 test("scoped MCP advertises only granted tools, no account, QR or arbitrary history endpoints", async () => {
   await session(["outreach:read"], async (client, calls) => {

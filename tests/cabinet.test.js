@@ -373,6 +373,56 @@ test(
         },
       );
       await t.test(
+        "cabinet-wide draft tokens create only own paused campaigns without jobs or session access",
+        async () => {
+          const wide = await cabinet.store.tokenCreate(a.p, {
+            name: "Campaign drafting", scopes: ["outreach:read", "outreach:draft"], campaign_access: "all",
+          });
+          const input = { connection_id: conn.id, name: "MCP reviewed contacts" };
+          for (const token of [read.token, send.token, full.token]) {
+            assert.equal((await request("/api/cabinet/campaigns", { token, body: input })).status, 403);
+            assert.equal((await request("/api/cabinet/campaign-connections", { token })).status, 403);
+          }
+          const wideRead = await cabinet.store.tokenCreate(a.p, {
+            name: "Cabinet read", scopes: ["outreach:read"], campaign_access: "all",
+          });
+          assert.equal((await request("/api/cabinet/campaigns", { token: wideRead.token, body: input })).status, 403);
+          assert.equal((await request("/api/cabinet/campaign-connections", { token: wideRead.token })).status, 403);
+          const visible = await request("/api/cabinet/campaign-connections", { token: wide.token });
+          assert.equal(visible.status, 200);
+          assert.deepEqual(visible.data.map(x => x.id), [conn.id]);
+          assert.deepEqual(Object.keys(visible.data[0]).sort(), ["id", "label", "username", "expected_username", "status"].sort());
+          assert.equal((await request("/api/cabinet/connections", { token: wide.token })).status, 403);
+          assert.equal((await request(`/api/cabinet/connections/${conn.id}/qr`, { token: wide.token })).status, 403);
+          assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, connection_id: connB.id } })).status, 404);
+          assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, daily_limit: 0 } })).status, 400);
+          assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, window_start: "11:30", window_end: "09:30" } })).status, 400);
+          for (const value of ["", false, null]) {
+            for (const field of ["window_start", "window_end"])
+              assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, [field]: value } })).status, 400);
+          }
+          assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, daily_limit: 11 } })).status, 409);
+          const created = await request("/api/cabinet/campaigns", {
+            token: wide.token, body: { ...input, owner_id: b.p.owner_id, paused: false },
+          });
+          assert.equal(created.status, 201);
+          assert.equal(created.data.owner_id, a.p.owner_id);
+          assert.equal(created.data.connection_id, conn.id);
+          assert.equal(created.data.paused, true);
+          assert.equal(created.data.daily_limit, 10);
+          assert.equal(created.data.window_start, "09:30:00");
+          assert.equal(created.data.window_end, "11:30:00");
+          assert.deepEqual((await request(`/api/cabinet/campaigns/${created.data.id}/drafts`, { token: wide.token })).data, []);
+          assert.equal((await query("SELECT count(*)::int AS n FROM cabinet_jobs WHERE campaign_id=$1", [created.data.id])).rows[0].n, 0);
+          assert.equal((await query("SELECT count(*)::int AS n FROM cabinet_audit WHERE owner_id=$1 AND target_id=$2 AND action='campaign_created'", [a.p.owner_id, created.data.id])).rows[0].n, 1);
+          const principal = await cabinet.store.authenticate({ headers: { authorization: "Bearer " + wide.token } });
+          await cabinet.store.tokenRevoke(a.p, wide.id);
+          await assert.rejects(cabinet.store.createCampaign(principal, input), /cabinet_auth_required/);
+          assert.equal((await request("/api/cabinet/campaign-connections", { token: wide.token })).status, 401);
+          assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: input })).status, 401);
+        },
+      );
+      await t.test(
         "CSRF, origin, absent scope and arbitrary paths fail closed",
         async () => {
           assert.equal(
