@@ -336,6 +336,10 @@ export function createCabinet({
     }),
   );
   router.get(
+    "/campaign-connections",
+    run(async (req, res) => res.json(await store.campaignConnections(req.cabinet))),
+  );
+  router.get(
     "/campaigns",
     run(async (req, res) => res.json(await store.campaigns(req.cabinet))),
   );

@@ -16,7 +16,7 @@ if (env.mcpApiToken.startsWith("ocp_")) {
   }
   const client = createOutreachClient({ baseUrl: env.outreachBaseUrl, token: env.mcpApiToken, timeoutMs: env.mcpRequestTimeoutMs });
   const context = await client.get("/api/cabinet/mcp/context");
-  void serveStdio(() => createCabinetMcpServer({ client, scopes: context.scopes }));
+  void serveStdio(() => createCabinetMcpServer({ client, scopes: context.scopes, allCampaigns: context.all_campaigns === true }));
 } else {
   void serveStdio(() => createOutreachMcpServer());
 }

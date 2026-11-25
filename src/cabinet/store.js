@@ -283,8 +283,22 @@ export function createCabinetStore({
       )
     ).rows;
   }
+  function assertCampaignCreation(p) {
+    assertScope(p, "outreach:draft");
+    if (p.kind !== "owner" && p.all_campaigns !== true)
+      throw fail("campaign_creation_requires_all_campaigns", 403);
+  }
+  async function campaignConnections(p) {
+    assertCampaignCreation(p);
+    return (
+      await query(
+        "SELECT id,label,username,expected_username,status FROM cabinet_connections WHERE owner_id=$1 ORDER BY created_at DESC",
+        [p.owner_id],
+      )
+    ).rows;
+  }
   async function createCampaign(p, input) {
-    ownerOnly(p);
+    assertCampaignCreation(p);
     const connection = uuid(input.connection_id);
     const name = text(input.name, 200);
     const limit = Number(input.daily_limit ?? 10),
@@ -819,6 +833,7 @@ export function createCabinetStore({
     activate,
     campaign,
     campaigns,
+    campaignConnections,
     createCampaign,
     drafts,
     saveDraft,

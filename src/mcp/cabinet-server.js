@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { safeTool, toolSuccess } from "./result.js";
 
-export function createCabinetMcpServer({ client, scopes = [] }) {
+export function createCabinetMcpServer({ client, scopes = [], allCampaigns = false }) {
   const server = new McpServer(
     { name: "outreach-private-cabinet", version: "1.0.0" },
     {
@@ -59,6 +59,30 @@ export function createCabinetMcpServer({ client, scopes = [] }) {
     true,
     () => client.get("/api/cabinet/campaigns"),
   );
+  if (allCampaigns === true) {
+    register(
+      "campaign_connections_list",
+      "Показать только ID, имя и статус собственных Telegram-профилей для создания рассылки. Без QR, сессий, переписки и управления подключением.",
+      z.object({}).strict(),
+      "outreach:draft",
+      true,
+      () => client.get("/api/cabinet/campaign-connections"),
+    );
+    register(
+      "campaign_create",
+      "Создать пустую рассылку на паузе в кабинете владельца токена. Нужны право на черновики и доступ ко всем рассылкам. Сообщения и очередь не создаются.",
+      z.object({
+        connection_id: id,
+        name: z.string().trim().min(1).max(200),
+        daily_limit: z.number().int().min(1).max(100).default(10),
+        window_start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("09:30"),
+        window_end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("11:30"),
+      }).strict(),
+      "outreach:draft",
+      false,
+      input => client.post("/api/cabinet/campaigns", input),
+    );
+  }
   register(
     "drafts_list",
     "Прочитать черновики выбранной разрешённой рассылки.",
