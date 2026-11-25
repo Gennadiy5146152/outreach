@@ -227,10 +227,11 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
       for (const q of rows) {
         telegramRecipient(q);
         const d = await draft(q);
-        if (!await eligible(d,q,{query},q.id) || d.address!==q.address || d.body!==q.body) {
+        if (!await eligible(d,q,{query},q.id) || d.address!==q.address) {
           excluded.push({id:q.id,address:q.address,reason:'draft_or_contact_changed'}); continue;
         }
-        jobs.push({...q,name:d.name,company:d.company});
+        jobs.push({...q,name:d.name,company:d.company,body:d.body,
+          body_changed:d.body!==q.body,previous_body:q.body});
       }
       if (!jobs.length || totalToday > jobs.length) fail('telegram_resume_no_eligible_contacts',409);
       const ids = rows.map(q=>q.id);
@@ -264,7 +265,7 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
       if (index!==jobs.length) fail('telegram_schedule_unavailable',409);
       const payload={sender:p.sender,jobs,excluded,day,override,windows:today_windows,daily_limit:normal.daily_limit};
       return confirmations.prepare({operation:'telegram_resume',payload,snapshot:{profile:configuration(p),rows},
-        summary:`@${p.sender}: возобновить ${jobs.length} сообщений, пропустить ${excluded.length}. Сегодня ${totalToday}; далее ${normal.daily_limit}/день, ${p.window_start.slice(0,5)}–${p.window_end.slice(0,5)} МСК. Получатели и тексты сохранены.`,preview:payload});
+        summary:`@${p.sender}: возобновить ${jobs.length} сообщений, пропустить ${excluded.length}. Обновить текстов из проверенных карточек: ${jobs.filter(j=>j.body_changed).length}. Сегодня ${totalToday}; далее ${normal.daily_limit}/день, ${p.window_start.slice(0,5)}–${p.window_end.slice(0,5)} МСК. Адресаты сохранены; точные тексты в плане.`,preview:payload});
     },
     async resumeExecute(token) {
       const plan=confirmations.claim({token,operation:'telegram_resume',confirm:true});
@@ -288,9 +289,9 @@ export function createTelegramProfiles({ query, withClient, confirmations = crea
         }
         for (const skip of plan.payload.excluded) {
           const job=rows.find(q=>q.id===skip.id),d=await draft(job,db,true);
-          if (await eligible(d,job,db,job.id) && d.body===job.body && d.address===job.address) fail('telegram_plan_changed',409);
+          if (await eligible(d,job,db,job.id) && d.address===job.address) fail('telegram_plan_changed',409);
         }
-        for (const job of planned) await db.query('UPDATE outreach_telegram_deliveries SET scheduled_at=$2,send_before=$3 WHERE id=$1',[job.id,job.scheduled_at,job.send_before]);
+        for (const job of planned) await db.query('UPDATE outreach_telegram_deliveries SET scheduled_at=$2,send_before=$3,body=$4 WHERE id=$1',[job.id,job.scheduled_at,job.send_before,job.body]);
         for (const skip of plan.payload.excluded) await db.query("UPDATE outreach_telegram_deliveries SET status='skipped',detail=$2,completed_at=now() WHERE id=$1",[skip.id,skip.reason]);
         const overrides={...p.day_overrides};
         if (plan.payload.override) overrides[plan.payload.day]=plan.payload.override;

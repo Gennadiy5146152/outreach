@@ -96,9 +96,9 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
     ] : [];
     const original=(await api.queueList({sender:'resume_account',pageSize:100})).items;
     const resume=await api.resumePrepare({sender:'resume_account',today_windows:windows});
-    assert.equal(resume.preview.jobs.length,69);
+    assert.equal(resume.preview.jobs.length,70);
     assert.equal(resume.preview.daily_limit,10);
-    assert.equal(resume.preview.excluded.length,2);
+    assert.equal(resume.preview.excluded.length,1);
     assert.equal((await api.get('resume_account')).paused,true,'prepare must not enable sending');
     assert.deepEqual((await api.queueList({sender:'resume_account',pageSize:100})).items,original);
     const firstId=original[0].id,firstBody=original[0].body;
@@ -109,7 +109,7 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
     const refreshed=await api.resumePrepare({sender:'resume_account',today_windows:windows,daily_limit:20});
     assert.equal(refreshed.preview.daily_limit,20);
     const result=await api.resumeExecute(refreshed.confirmation_token);
-    assert.equal(result.resumed,69);assert.equal(result.skipped,2);
+    assert.equal(result.resumed,70);assert.equal(result.skipped,1);
     await assert.rejects(api.resumeExecute(refreshed.confirmation_token));
     const profile=await api.get('resume_account');
     assert.equal(profile.paused,false);assert.equal(profile.daily_limit,20);
@@ -117,16 +117,18 @@ test('two profiles: migration, isolated limits, global duplicates, stop-list and
     const queued=(await api.queueList({sender:'resume_account',status:'pending',pageSize:100})).items;
     for(const q of queued){
       const old=original.find(o=>o.id===q.id);
-      assert.equal(q.random_id,old.random_id);assert.equal(q.body,old.body);assert.equal(q.address,old.address);
+      assert.equal(q.random_id,old.random_id);
+      assert.equal(q.body,q.draft_id===recipients[0].draft_id?'Changed after queueing':old.body);
+      assert.equal(q.address,old.address);
       assert.ok(q.send_before>q.scheduled_at);
     }
     if(sameDay){
       for(const w of windows) assert.equal(queued.filter(q=>q.scheduled_at>=new Date(w.start)&&q.scheduled_at<new Date(w.end)).length,10);
       const tomorrowJobs=queued.filter(q=>q.scheduled_at>=new Date(windows.at(-1).end));
-      assert.equal(tomorrowJobs.length,49);
+      assert.equal(tomorrowJobs.length,50);
       const dailyCounts={};
       for(const q of tomorrowJobs){const date=new Date(+q.scheduled_at+10800000).toISOString().slice(0,10);dailyCounts[date]=(dailyCounts[date]||0)+1;}
-      assert.deepEqual(Object.values(dailyCounts),[20,20,9]);
+      assert.deepEqual(Object.values(dailyCounts),[20,20,10]);
       assert.ok(tomorrowJobs.every(q=>new Date(+q.scheduled_at+10800000).toISOString().slice(11,16)>='09:30'&&new Date(+q.scheduled_at+10800000).toISOString().slice(11,16)<'11:30'));
     }
     const beforeGlobalStop=await api.resumePrepare({sender:'resume_account'});
