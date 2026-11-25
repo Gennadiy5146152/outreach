@@ -302,8 +302,8 @@ export function createCabinetStore({
     const connection = uuid(input.connection_id);
     const name = text(input.name, 200);
     const limit = Number(input.daily_limit ?? 10),
-      start = String(input.window_start || "09:30"),
-      end = String(input.window_end || "11:30");
+      start = input.window_start === undefined ? "09:30" : String(input.window_start),
+      end = input.window_end === undefined ? "11:30" : String(input.window_end);
     if (
       !Number.isInteger(limit) ||
       limit < 1 ||

@@ -397,6 +397,10 @@ test(
           assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, connection_id: connB.id } })).status, 404);
           assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, daily_limit: 0 } })).status, 400);
           assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, window_start: "11:30", window_end: "09:30" } })).status, 400);
+          for (const value of ["", false, null]) {
+            for (const field of ["window_start", "window_end"])
+              assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, [field]: value } })).status, 400);
+          }
           assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: { ...input, daily_limit: 11 } })).status, 409);
           const created = await request("/api/cabinet/campaigns", {
             token: wide.token, body: { ...input, owner_id: b.p.owner_id, paused: false },
