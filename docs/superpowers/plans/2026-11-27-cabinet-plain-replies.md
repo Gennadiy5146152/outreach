@@ -35,8 +35,10 @@ Files: deploy/telegram-connection/cabinet_worker.py, deploy/telegram-connection/
 Files: docs/private-cabinets.md, src/mcp/cabinet-server.js and deployment evidence.
 
 - [x] Document scoped conversation semantics and maintenance command; review complete diff independently.
-- [ ] Deploy reviewed worker and descriptions; verify actual running hash and health.
-- [ ] Hold connection lock and restore exact 14 approved job threads for today's bounded time range.
-- [ ] Verify through MCP and report actual replies with remaining limitations.
+- [x] Deploy reviewed worker and descriptions; verify actual running hash and health.
+- [x] Hold connection lock and restore exact 14 approved job threads for today's bounded time range.
+- [x] Verify through MCP and report actual replies with remaining limitations.
 
 Validation: 53 worker tests passed against disposable PostgreSQL, including real pinned Telethon history pagination with fake RPCs; 89 cabinet/MCP tests passed, npm run check passed. Independent review found short-page truncation, problematic wire min_id, and maintenance update-cursor loss. Recovery now uses Telethon's bounded chronological iterator; a real SQLiteSession regression confirms maintenance cannot overwrite live update state. A send/ingestion lock plus sequential update dispatch and attempted-at timestamp regression covers replies arriving before the RPC receipt.
+
+Production completion, 27 November 17:36 MSK: PR #8 merged as `9dead19bbc019a6ec56031709e7390e5eec22530`; CI run 46016927209 passed. Actual running cabinet worker SHA-256 `2baaeeb4b0143429362058ebf98dd691181529388165177594c9f3f7cbfa7fd7` verified. Bounded recovery of the approved 14 sent jobs completed: 31 messages imported, comprising 17 inbound messages and 14 manual outbound continuation messages in four recipient threads. Read-back through the owner's scoped MCP confirms all four conversations. Worker restarted, Artem connected, web health OK, no new outreach deliveries created. Private transcripts are in the existing ignored MSKWRAPCAR storage directory, not committed.
