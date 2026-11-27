@@ -118,7 +118,7 @@ export function createCabinetStore({
         p.kind === "token" &&
         !(
           await db.query(
-            "SELECT 1 FROM cabinet_api_tokens WHERE id=$1 AND owner_id=$2 AND revoked_at IS NULL AND expires_at>now()",
+            "SELECT 1 FROM cabinet_api_tokens WHERE id=$1 AND owner_id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR SHARE",
             [p.id, p.owner_id],
           )
         ).rowCount
@@ -128,7 +128,7 @@ export function createCabinetStore({
         p.kind === "owner" &&
         !(
           await db.query(
-            "SELECT 1 FROM cabinet_sessions WHERE token_hash=$1 AND owner_id=$2 AND expires_at>now()",
+            "SELECT 1 FROM cabinet_sessions WHERE token_hash=$1 AND owner_id=$2 AND expires_at>clock_timestamp() FOR SHARE",
             [p.actor_key.slice(8), p.owner_id],
           )
         ).rowCount
@@ -438,8 +438,8 @@ export function createCabinetStore({
     return ownerTransaction(p, async (db) => {
       await campaign(p, id, "outreach:draft", db);
       if ((await db.query(
-        "SELECT 1 FROM cabinet_jobs WHERE owner_id=$1 AND draft_id=$2 AND status IN ('queued','sending','sent','uncertain')",
-        [p.owner_id, draftId],
+        "SELECT 1 FROM cabinet_jobs WHERE owner_id=$1 AND draft_id=$2 AND campaign_id=$3 AND status IN ('queued','sending','sent','uncertain')",
+        [p.owner_id, draftId, id],
       )).rowCount) throw fail("draft_already_dispatched", 409);
       const { rows: [d] } = await db.query(
         "UPDATE cabinet_drafts SET body=coalesce($4,body),source_url=coalesce($5,source_url),permission_kind=coalesce($6,permission_kind),permission_evidence=coalesce($7,permission_evidence),updated_at=now() WHERE owner_id=$1 AND campaign_id=$2 AND id=$3 RETURNING *",
