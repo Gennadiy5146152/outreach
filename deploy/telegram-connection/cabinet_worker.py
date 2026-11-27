@@ -18,10 +18,20 @@ import qrcode
 import qrcode.image.svg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from telethon import TelegramClient, events, errors, functions, types
+from telethon.sessions import SQLiteSession
 
 logging.getLogger("telethon").setLevel(logging.CRITICAL)
 MSK = timezone(timedelta(hours=3))
 UTC = timezone.utc
+
+
+class RecoverySession(SQLiteSession):
+    """Reuse the server session without consuming the live worker's update cursor."""
+
+    def set_update_state(self, entity_id, state):
+        # Telethon connect/disconnect may save the current server pts even when
+        # receive_updates=False. The live worker must retain its previous pts.
+        pass
 
 
 def private_session_path(root, connection_id, generation):
@@ -44,7 +54,7 @@ def svg_for(url):
 
 
 def reply_parent(event):
-    """Unthreaded messages, groups, channels and forwarded context are never imported."""
+    """Extract only a local private-chat reply reference."""
     if not event.is_private or event.message.out or not event.sender_id or event.sender_id <= 0:
         return None
     header = event.message.reply_to
@@ -106,17 +116,25 @@ class CabinetWorker:
     async def db(self):
         return await psycopg.AsyncConnection.connect(self.url, autocommit=True, row_factory=dict_row, connect_timeout=8)
 
-    def client(self, path, catch_up=False):
-        return TelegramClient(str(path), self.api_id, self.api_hash, catch_up=catch_up,
+    def client(self, path, catch_up=False, receive_updates=True):
+        session = str(path) if receive_updates else RecoverySession(str(path))
+        return TelegramClient(session, self.api_id, self.api_hash, catch_up=catch_up,
+                              receive_updates=receive_updates, sequential_updates=True,
                               connection_retries=1, request_retries=0, flood_sleep_threshold=0)
 
     @asynccontextmanager
-    async def delivery_lock(self, db, owner_id):
+    async def delivery_lock(self, db, owner_id, connection_id):
         await db.execute("SELECT pg_advisory_lock_shared(hashtext('outreach_delivery_control'))")
         try:
             await db.execute("SELECT pg_advisory_lock(hashtext(%s))", ("cabinet:" + str(owner_id),))
             try:
-                yield
+                # Incoming events can arrive before SendMessage returns. Let them wait
+                # for the receipt rather than discard them or attach to an older job.
+                await db.execute("SELECT pg_advisory_lock(hashtext(%s))", ("cabinet-replies:" + str(connection_id),))
+                try:
+                    yield
+                finally:
+                    await db.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("cabinet-replies:" + str(connection_id),))
             finally:
                 await db.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("cabinet:" + str(owner_id),))
         finally:
@@ -201,24 +219,129 @@ class CabinetWorker:
                 waiter.cancel()
             await asyncio.gather(waiter, return_exceptions=True)
 
-    async def incoming(self, row, event):
-        parent = reply_parent(event)
-        if not parent:
-            return
-        # No get_history, get_dialogs, contact export, media download or personal-chat endpoint.
+    async def incoming(self, row, event, allowed_job_ids=None):
+        """Record only correspondence after a verified delivery to this exact peer."""
+        message = event.message
+        if not event.is_private or not isinstance(message, types.Message):
+            return False
+        peer = getattr(message.peer_id, 'user_id', None)
+        if (type(peer) is not int or peer <= 0 or type(message.id) is not int or message.id <= 0
+                or not isinstance(message.date, datetime) or message.date.utcoffset() is None
+                or (not message.out and (event.sender_id != peer
+                    or (message.from_id is not None and getattr(message.from_id, 'user_id', None) != peer)))):
+            return False
+        header = message.reply_to
+        if header and (getattr(header, 'reply_to_peer_id', None) or not header.reply_to_msg_id):
+            return False
+        parent = header.reply_to_msg_id if header else None
+        direction = 'outbound' if message.out else 'inbound'
         async with await self.db() as db:
             async with db.transaction():
                 await db.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("cabinet-replies:" + str(row["id"]),))
-                await db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,
-                    telegram_message_id,reply_to_message_id,direction,body,sent_at)
-                    SELECT m.owner_id,m.job_id,m.connection_id,m.recipient_id,%s,%s,'inbound',%s,%s
-                    FROM cabinet_messages m JOIN cabinet_connections c ON c.id=m.connection_id
+                # Telegram timestamps have second precision; delivery receipts use DB microseconds.
+                # A reply ID must still be strictly later than the service message ID.
+                job = await (await db.execute("""SELECT j.id,j.owner_id,j.connection_id,j.recipient_id
+                    FROM cabinet_jobs j JOIN cabinet_connections c ON c.id=j.connection_id AND c.owner_id=j.owner_id
                     JOIN cabinet_accounts a ON a.id=c.owner_id
-                    WHERE c.id=%s AND c.generation=%s AND c.status='connected' AND a.active
-                      AND m.recipient_id=%s AND m.telegram_message_id=%s
+                    JOIN cabinet_messages anchor ON anchor.job_id=j.id AND anchor.owner_id=j.owner_id
+                        AND anchor.connection_id=j.connection_id AND anchor.recipient_id=j.recipient_id
+                        AND anchor.telegram_message_id=j.telegram_message_id AND anchor.direction='outbound'
+                    WHERE c.id=%s AND c.owner_id=%s AND c.generation=%s AND c.status='connected' AND a.active
+                      AND j.status='sent' AND j.recipient_id=%s AND anchor.telegram_message_id<%s
+                      AND date_trunc('second',COALESCE(j.attempted_at,anchor.sent_at))<=%s
+                      AND (%s::bigint IS NULL OR EXISTS (
+                          SELECT 1 FROM cabinet_messages p WHERE p.job_id=j.id AND p.owner_id=j.owner_id
+                            AND p.connection_id=j.connection_id AND p.recipient_id=j.recipient_id
+                            AND p.telegram_message_id=%s AND p.telegram_message_id<%s
+                            AND date_trunc('second',CASE WHEN p.telegram_message_id=j.telegram_message_id
+                                THEN COALESCE(j.attempted_at,p.sent_at) ELSE p.sent_at END)<=%s))
+                      AND (%s=false OR NOT EXISTS (
+                          SELECT 1 FROM cabinet_jobs sending WHERE sending.connection_id=j.connection_id
+                            AND sending.recipient_id=j.recipient_id AND sending.status IN ('sending','uncertain')))
+                    ORDER BY anchor.telegram_message_id DESC,anchor.sent_at DESC,j.id DESC LIMIT 1
+                    FOR SHARE OF c,a""",
+                    (row['id'], row['owner_id'], row['generation'], peer, message.id, message.date,
+                     parent, parent, message.id, message.date, bool(message.out)))).fetchone()
+                if not job or (allowed_job_ids is not None and job['id'] not in allowed_job_ids):
+                    return False
+                saved = await db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,
+                    telegram_message_id,reply_to_message_id,direction,body,sent_at)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT(connection_id,telegram_message_id) DO NOTHING""",
-                    (event.message.id, parent, (event.message.message or "")[:16000], event.message.date,
-                     row["id"], row["generation"], event.sender_id, parent))
+                    (job['owner_id'], job['id'], job['connection_id'], peer, message.id, parent,
+                     direction, (message.message or '')[:16000], message.date))
+                return saved.rowcount == 1
+
+    async def recover_messages(self, row, client, job_ids, since, until, *, max_messages=1000):
+        """Server-only, explicit sent-job recovery. Caller must hold the connection lock."""
+        if (not isinstance(since, datetime) or not isinstance(until, datetime)
+                or since.utcoffset() is None or until.utcoffset() is None
+                or not timedelta(0) < until-since <= timedelta(days=1)
+                or until > datetime.now(UTC)+timedelta(seconds=1)
+                or not 1 <= len(job_ids) <= 100 or len(set(job_ids)) != len(job_ids)
+                or type(max_messages) is not int or not 1 <= max_messages <= 2000):
+            raise ValueError('recovery_bounds_invalid')
+        job_ids = [UUID(str(value)) for value in job_ids]
+        async with await self.db() as db:
+            jobs = await (await db.execute("""SELECT j.*,COALESCE(j.attempted_at,m.sent_at) AS anchor_at
+                FROM cabinet_jobs j JOIN cabinet_connections c ON c.id=j.connection_id AND c.owner_id=j.owner_id
+                JOIN cabinet_accounts a ON a.id=c.owner_id
+                JOIN cabinet_messages m ON m.job_id=j.id AND m.connection_id=j.connection_id
+                    AND m.owner_id=j.owner_id AND m.recipient_id=j.recipient_id
+                    AND m.telegram_message_id=j.telegram_message_id AND m.direction='outbound'
+                WHERE c.id=%s AND c.owner_id=%s AND c.generation=%s AND c.status='connected' AND a.active
+                  AND j.status='sent' AND j.id=ANY(%s) AND m.sent_at<%s
+                ORDER BY m.telegram_message_id,j.id""",
+                (row['id'], row['owner_id'], row['generation'], job_ids, until))).fetchall()
+        if len(jobs) != len(job_ids):
+            raise ValueError('recovery_jobs_invalid')
+        identity = await client.get_me()
+        if (not identity or identity.bot or identity.id != row.get('telegram_user_id')
+                or (identity.username or '').lower() != row['expected_username'].lower()):
+            raise ValueError('recovery_identity_mismatch')
+        peers = {}
+        for job in jobs:
+            peers.setdefault(job['recipient_id'], job)
+        saved, fetched = 0, 0
+        for uid, job in peers.items():
+            try:
+                peer = await client.get_input_entity(types.PeerUser(uid))
+            except ValueError:
+                if job.get('recipient_source') is not None:
+                    peer = await self.source_peer(job, client)
+                else:
+                    peer = await client.get_input_entity(job['address'].rsplit('/',1)[-1])
+            if not isinstance(peer, (types.InputPeerUser, types.InputPeerUserFromMessage)) or peer.user_id != uid:
+                raise ValueError('recovery_recipient_mismatch')
+            messages = []
+            floor = max(since, job['anchor_at'].replace(microsecond=0))
+            previous = job['telegram_message_id']
+            count = 0
+            # Telethon emulates min_id locally because Telegram may return an empty
+            # page for a wire min_id. Reverse iteration starts immediately after the
+            # approved anchor and correctly follows short MessagesSlice pages.
+            async for message in client.iter_messages(peer, min_id=job['telegram_message_id'],
+                                                       reverse=True, limit=max_messages+1, wait_time=0):
+                fetched += 1
+                count += 1
+                if count > max_messages:
+                    raise ValueError('recovery_incomplete')
+                if message.id <= previous:
+                    raise ValueError('recovery_page_invalid')
+                previous = message.id
+                if getattr(message.peer_id, 'user_id', None) != uid:
+                    raise ValueError('recovery_peer_mismatch')
+                if message.date.utcoffset() is None:
+                    raise ValueError('recovery_date_invalid')
+                if message.date >= until:
+                    break
+                if message.date >= floor and isinstance(message, types.Message):
+                    messages.append(message)
+            # Parents must exist before their explicit replies, including across history pages.
+            for message in sorted(messages, key=lambda m:m.id):
+                saved += bool(await self.incoming(row, events.NewMessage.Event(message), set(job_ids)))
+            await asyncio.sleep(0.25)
+        return {'complete': True, 'jobs': len(jobs), 'peers': len(peers), 'fetched': fetched, 'inserted': saved}
 
     async def pause(self, db, row, code):
         await db.execute("UPDATE cabinet_campaigns SET paused=true,revision=revision+1 WHERE connection_id=%s", (row["id"],))
@@ -306,7 +429,7 @@ class CabinetWorker:
     async def send_one(self, db, row, client):
         if not self.enabled:
             return
-        async with self.delivery_lock(db, row["owner_id"]):
+        async with self.delivery_lock(db, row["owner_id"], row['id']):
             # Expiry also releases paused/stopped jobs, which the delivery query excludes.
             local = datetime.now(UTC).astimezone(MSK)
             await db.execute("""UPDATE cabinet_jobs SET status='cancelled',error_code='one_off_window_expired',completed_at=now()
@@ -405,7 +528,7 @@ class CabinetWorker:
                         path.unlink(missing_ok=True)
                     return
                 client = self.client(path, catch_up=True)
-                client.add_event_handler(lambda event: self.incoming(row, event), events.NewMessage(incoming=True))
+                client.add_event_handler(lambda event: self.incoming(row, event), events.NewMessage())
                 await asyncio.wait_for(client.connect(), 20)
                 if row["status"] == "connected":
                     if not await client.is_user_authorized():
@@ -415,7 +538,7 @@ class CabinetWorker:
                         return
                 elif not await self.qr_login(db, row, client):
                     return
-                # Recover explicit replies from Telegram's update state, without arbitrary history reads.
+                # Recover scoped correspondence from Telegram's update state, without inbox/history scans.
                 await client.catch_up()
                 while not self.stopping.is_set():
                     current = await self.state(db, row)
