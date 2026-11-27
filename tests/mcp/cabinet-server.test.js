@@ -218,3 +218,15 @@ test('one-off tools require cabinet-wide send plus draft and accept only two sto
     await client.callTool({name:'telegram_one_off_execute',arguments:confirmation});assert.deepEqual(calls[1],{path:'/api/cabinet/one-off/execute',input:confirmation});
   },{allCampaigns:true});
 });
+
+test('draft_create accepts exactly one personal address mode and never permits source identity edits',async()=>{
+  await session(['outreach:draft'],async(client,calls)=>{
+    const source={chat_id:'9223372036854775807',username:'public_group',message_id:2147483647};
+    const input={campaign_id:'00000000-0000-4000-8000-000000000001',recipient_id:'9007199254740993',body:'Exact copy',recipient_source:source};
+    for(const recipient_source of [null,[],{},'group',{...source,extra:true},{...source,chat_id:123},{...source,chat_id:'0'},{...source,chat_id:'9223372036854775808'},{...source,username:'Public_Group'},{...source,username:'@public_group'},{...source,message_id:0},{...source,message_id:2147483648},{...source,message_id:'123'}])assert.equal((await client.callTool({name:'draft_create',arguments:{...input,recipient_source}})).isError,true);
+    assert.equal((await client.callTool({name:'draft_create',arguments:{...input,address:'https://t.me/not_the_author'}})).isError,true);assert.equal(calls.length,0);
+    const saved=await client.callTool({name:'draft_create',arguments:input});assert.notEqual(saved.isError,true);const {campaign_id,...body}=input;assert.deepEqual(calls[0],{path:`/api/cabinet/campaigns/${campaign_id}/drafts`,input:{...body,name:''}});
+    await client.callTool({name:'draft_create',arguments:{campaign_id,recipient_id:'9912345',body:'Legacy copy',address:'https://t.me/legacy_person'}});assert.equal(calls[1].input.address,'https://t.me/legacy_person');assert.equal(Object.hasOwn(calls[1].input,'recipient_source'),false);
+    assert.equal((await client.callTool({name:'draft_update',arguments:{campaign_id,draft_id:'00000000-0000-4000-8000-000000000002',recipient_source:source}})).isError,true);
+  });
+});

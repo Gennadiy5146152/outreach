@@ -19,6 +19,10 @@ let csrf = "",
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
 const errors = {
+  telegram_source_invalid: "Группа или автор исходного сообщения не совпадают с выбранным получателем. Отправка не выполнена.",
+  telegram_source_unavailable: "Не удалось проверить исходное сообщение в группе. Отправка не выполнена.",
+  recipient_source_invalid: "Проверьте группу, числовой ID группы и номер исходного сообщения.",
+  recipient_address_conflict: "Укажите либо личный username, либо исходное сообщение в группе.",
   instagram_not_configured: "Подключение Instagram пока не настроено администратором.",
   instagram_oauth_expired: "Время входа истекло или вход открыт в другом браузере. Подключите Instagram заново.",
   instagram_oauth_declined: "Вы отменили подключение Instagram. Можно попробовать снова.",
@@ -505,6 +509,11 @@ async function loadContent() {
   await loadDrafts();
   await loadQueue();
 }
+function recipientLabel(item) {
+  if (!item.recipient_source) return item.address;
+  const source = item.recipient_source;
+  return `ID ${item.recipient_id} · автор сообщения @${source.username}/${source.message_id}`;
+}
 async function loadDrafts() {
   if (!campaignId) return;
   const list = await api(`/campaigns/${campaignId}/drafts?page=${draftPage}`);
@@ -523,7 +532,7 @@ async function loadDrafts() {
   $("nextDrafts").disabled = list.length < 100;
   $("draftPagination").hidden = draftPage === 1 && list.length < 100;
   for (const d of list) {
-    const box = card(d.name || d.address);
+    const box = card(d.name || recipientLabel(d));
     const label = node("label", undefined, "check"),
       input = node("input");
     input.type = "checkbox";
@@ -531,7 +540,7 @@ async function loadDrafts() {
     input.name = "draft";
     label.append(
       input,
-      document.createTextNode(d.address + (d.stopped ? " · остановлен" : "")),
+      document.createTextNode(recipientLabel(d) + (d.stopped ? " · остановлен" : "")),
     );
     box.append(label, node("div", d.body, "body"));
     box.append(
@@ -556,7 +565,7 @@ async function loadQueue() {
   $("queuePagination").hidden = queuePage === 1 && list.length < 100;
   for (const job of list) {
     const box = card(
-      job.address,
+      recipientLabel(job),
       (jobLabels[job.status] || "Требует проверки") +
         " · " +
         at(job.scheduled_at) +
@@ -604,7 +613,7 @@ async function preview(kind) {
   for (const item of plan.preview.items)
     $("previewItems").append(
       card(
-        item.address + (item.scheduled_at ? " · " + at(item.scheduled_at) : ""),
+        recipientLabel(item) + (item.scheduled_at ? " · " + at(item.scheduled_at) : ""),
         item.body,
       ),
     );

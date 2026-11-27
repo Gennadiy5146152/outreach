@@ -29,22 +29,22 @@
 
 Own src/cabinet/store.js, src/cabinet/router.js, src/mcp/cabinet-server.js, db/migrations/032_cabinet_one_off_launch.sql, new tests/cabinet-one-off.test.js, tests/mcp/cabinet-server.test.js, package.json test list if required. Coordinate exact four job field names with worker B.
 
-- [ ] Write failing store/HTTP/MCP tests for the five review focus cases and successful 10+2 exact-date launch.
-- [ ] Run RED with a disposable local cabinet_test database.
-- [ ] Implement narrow prepare/execute, strict schemas and migration. Lock/re-read the connection before final snapshot validation. Include override metadata and all exact texts/times in preview. Reject rollover and outstanding jobs. Use existing actor-bound plan machinery and permissions.
-- [ ] Run GREEN on new and existing cabinet/MCP suites; commit only owned implementation files.
+- [x] Write failing store/HTTP/MCP tests for the five review focus cases and successful 10+2 exact-date launch.
+- [x] Run RED with a disposable local cabinet_test database.
+- [x] Implement narrow prepare/execute, strict schemas and migration. Lock/re-read the connection before final snapshot validation. Include override metadata and all exact texts/times in preview. Reject rollover and outstanding jobs. Use existing actor-bound plan machinery and permissions.
+- [x] Run GREEN on new and existing cabinet/MCP suites; commit only owned implementation files.
 
 ## Task B: Dispatch enforcement (worker B)
 
 Own deploy/telegram-connection/cabinet_worker.py and tests/cabinet_worker_test.py. Consume only four nullable job fields from task A; no API/schema edits.
 
-- [ ] Write failing offline worker tests for ordinary cap, exact-day/window exception, current-base+2 clamp, expired cancellation, and no send after stop/identity/rate/uncertain checks.
-- [ ] Run RED, implement minimal worker handling using DB job fields and existing delivery locking, then run GREEN. Never connect to Telegram in tests.
-- [ ] Commit only the two owned files.
+- [x] Write failing offline worker tests for ordinary cap, exact-day/window exception, current-base+2 clamp, expired cancellation, and no send after stop/identity/rate/uncertain checks.
+- [x] Run RED, implement minimal worker handling using DB job fields and existing delivery locking, then run GREEN. Never connect to Telegram in tests.
+- [x] Commit only the two owned files.
 
 ## Task C: Review, deploy and real approved plan (root)
 
-- [ ] Independently review migration, snapshot/concurrency, scopes, exact day/window and worker expiration.
-- [ ] Run full required checks and build; create/update a focused PR and deploy the exact tested commit through the established workflow.
-- [ ] Read MCP capabilities, prepare only the two saved draft IDs using a remaining today window, show the complete returned plan and request fresh approval.
-- [ ] Execute only approved unexpired plan; monitor the two exact jobs to confirmed sent or an actionable failure. Verify permanent campaign is 20/day with window 12:02–15:55, update monitoring instructions to the verified setting, and report actual results.
+- [x] Independently review migration, snapshot/concurrency, scopes, exact day/window and worker expiration.
+- [x] Run full required checks and build; create/update a focused PR and deploy the exact tested commit through the established workflow.
+- [x] Read MCP capabilities, prepare only the two saved draft IDs using a remaining today window, show the complete returned plan and request fresh approval.
+- [x] Execute only approved unexpired plan; monitor the two exact jobs to confirmed sent or an actionable failure. Verify permanent campaign is 20/day with window 12:02–15:55, update monitoring instructions to the verified setting, and report actual results.

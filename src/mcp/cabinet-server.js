@@ -108,10 +108,15 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
   );
   register(
     "draft_create",
-    "Сохранить черновик без отправки. Право на редактирование должно быть выдано отдельно.",
+    "Сохранить черновик без отправки: address и recipient_id либо recipient_source и recipient_id без address. Источник неизменяемый; точное авторство Telegram проверит перед отправкой. Право на редактирование должно быть выдано отдельно.",
     campaign
       .extend({
-        address: z.string().min(4).max(100),
+        address: z.string().min(4).max(100).optional(),
+        recipient_source: z.object({
+          chat_id: z.string().regex(/^[1-9]\d{0,18}$/).refine(value => /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n),
+          username: z.string().regex(/^[a-z][a-z0-9_]{4,31}$/),
+          message_id: z.number().int().min(1).max(2147483647),
+        }).strict().optional(),
         recipient_id: z.string().regex(/^[1-9]\d{0,18}$/),
         name: z.string().max(200).default(""),
         body: z.string().min(1).max(4000),
@@ -119,7 +124,7 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
         permission_kind: z.enum(["request", "consent"]).optional(),
         permission_evidence: z.string().max(1000).optional(),
       })
-      .strict(),
+      .strict().refine(input => (input.address !== undefined) !== (input.recipient_source !== undefined)),
     "outreach:draft",
     false,
     ({ campaign_id, ...body }) =>
