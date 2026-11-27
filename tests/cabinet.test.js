@@ -422,6 +422,13 @@ test(
           assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: input })).status, 401);
         },
       );
+      await t.test("launch preview preserves reviewed warmth order instead of random UUID order", async () => {
+        const selected = [await draft(c, 96), await draft(c, 97)];
+        const ids = selected.map(d => d.id).sort().reverse();
+        const prepared = await request(`/api/cabinet/campaigns/${c.id}/launch/prepare`, { token: full.token, body: { draft_ids: ids } });
+        assert.equal(prepared.status, 200);
+        assert.deepEqual(prepared.data.preview.items.map(d => d.draft_id), ids);
+      });
       await t.test("draft metadata edits preserve identity and require complete evidenced permission", async () => {
         const fresh = await draft(c, 91);
         const path = `/api/cabinet/campaigns/${c.id}/drafts/${fresh.id}`;
