@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import sys
+import tempfile
 import unittest
 from datetime import datetime, time, timedelta, timezone
 from types import SimpleNamespace as NS
@@ -14,10 +15,12 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy/telegram-connection"))
-from cabinet_worker import CabinetWorker, MSK, decrypt_password, private_session_path, within_window, svg_for
+from cabinet_worker import CabinetWorker, RecoverySession, MSK, decrypt_password, private_session_path, within_window, svg_for
+from recover_replies import recover
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import psycopg
-from telethon import types, errors, events, functions
+from telethon import TelegramClient, types, errors, events, functions
+from telethon.sessions import MemorySession, SQLiteSession
 from psycopg.types.json import Jsonb
 
 URL = os.environ.get("CABINET_TEST_DATABASE_URL")
@@ -25,6 +28,27 @@ UTC = timezone.utc
 
 
 class PrimitiveTests(unittest.TestCase):
+    def test_maintenance_cannot_advance_or_erase_live_update_cursor(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = str(Path(root)/'test-only')
+            initial = types.updates.State(pts=123, qts=4, date=datetime.now(UTC), seq=5, unread_count=0)
+            live = SQLiteSession(path)
+            live.set_update_state(0, initial)
+            live.set_update_state(42, initial)
+            live.save()
+            live.close()
+            maintenance = RecoverySession(path)
+            newer = types.updates.State(pts=999, qts=9, date=datetime.now(UTC), seq=99, unread_count=0)
+            maintenance.set_update_state(0, newer)
+            maintenance.set_update_state(42, newer)
+            maintenance.set_update_state(99, newer)
+            maintenance.save()
+            maintenance.close()
+            restored = SQLiteSession(path)
+            self.assertEqual(restored.get_update_state(0).pts, 123)
+            self.assertEqual(restored.get_update_state(42).pts, 123)
+            self.assertIsNone(restored.get_update_state(99))
+            restored.close()
     def test_encrypted_password_keeps_spaces_and_rejects_tampering(self):
         secret = "test-only-" * 4
         nonce = secrets.token_bytes(12)
@@ -138,6 +162,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.owner = owner['id']
         self.connection = (await (await self.db.execute("""INSERT INTO cabinet_connections(owner_id,label,expected_username,username,status,generation)
             VALUES(%s,'Test','worker_test','worker_test','connected',1) RETURNING *""", (self.owner,))).fetchone())
+        await self.db.execute('UPDATE cabinet_connections SET telegram_user_id=88888 WHERE id=%s', (self.connection['id'],))
+        self.connection['telegram_user_id'] = 88888
         self.campaign = (await (await self.db.execute("INSERT INTO cabinet_campaigns(owner_id,connection_id,name,paused) VALUES(%s,%s,'Worker test',false) RETURNING id", (self.owner, self.connection['id']))).fetchone())['id']
         self.peer = 990000001
 
@@ -150,10 +176,13 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
     async def job(self, peer=None, status='queued', message_id=None):
         peer = peer or self.peer
         draft = (await (await self.db.execute("""INSERT INTO cabinet_drafts(owner_id,campaign_id,address,recipient_id,body,permission_kind,permission_evidence)
-            VALUES(%s,%s,'https://t.me/test_recipient',%s,'Точное согласованное сообщение','consent','Тест без отправки') RETURNING id""", (self.owner, self.campaign, peer))).fetchone())['id']
+            VALUES(%s,%s,'https://t.me/test_recipient',%s,'Точное согласованное сообщение','consent','Тест без отправки')
+            ON CONFLICT(campaign_id,recipient_id) DO UPDATE SET address=EXCLUDED.address RETURNING id""", (self.owner, self.campaign, peer))).fetchone())['id']
         job = await (await self.db.execute("""INSERT INTO cabinet_jobs(owner_id,draft_id,campaign_id,connection_id,address,recipient_id,body,random_id,status,scheduled_at)
             VALUES(%s,%s,%s,%s,'https://t.me/test_recipient',%s,'Точное согласованное сообщение',%s,%s,now()-interval '1 minute') RETURNING *""", (self.owner, draft, self.campaign, self.connection['id'], peer, secrets.randbits(62)+1, status))).fetchone()
         if message_id:
+            await self.db.execute('UPDATE cabinet_jobs SET telegram_message_id=%s,completed_at=now() WHERE id=%s',
+                                  (message_id, job['id']))
             await self.db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,telegram_message_id,direction,body,sent_at)
                 VALUES(%s,%s,%s,%s,%s,'outbound','Исходящее',now())""", (self.owner, job['id'], self.connection['id'], peer, message_id))
         return job
@@ -232,15 +261,11 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
     async def rows(self):
         return await (await self.db.execute('SELECT * FROM cabinet_messages WHERE owner_id=%s ORDER BY telegram_message_id', (self.owner,))).fetchall()
 
-    async def test_only_explicit_replies_to_service_chain_are_imported(self):
+    async def test_explicit_replies_cannot_fall_back_to_unrelated_threads(self):
         await self.job(status='sent',message_id=101)
-        await self.worker.incoming(self.connection,self.event(102))  # ordinary private chat
         await self.worker.incoming(self.connection,self.event(103,999))  # unrelated history
         await self.worker.incoming(self.connection,self.event(104,101,peer=self.peer+1))
         await self.worker.incoming(self.connection,self.event(105,101,private=False))
-        outgoing = self.event(109,101)
-        outgoing.message.out = True
-        await self.worker.incoming(self.connection,outgoing)
         self.assertEqual(len(await self.rows()),1)
         await self.worker.incoming(self.connection,self.event(106,101,text='Реальный ответ'))
         await self.worker.incoming(self.connection,self.event(107,106,text='Продолжение этой цепочки'))
@@ -249,6 +274,244 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         await self.db.execute("UPDATE cabinet_connections SET generation=2 WHERE id=%s", (self.connection['id'],))
         await self.worker.incoming(self.connection,self.event(108,101))
         self.assertEqual(len(await self.rows()),3)
+
+    async def test_ordinary_reply_and_manual_continuation_are_recorded_once(self):
+        job = await self.job(status='sent', message_id=101)
+        answer = self.event(102, text='Да, сколько стоит?')
+        await self.worker.incoming(self.connection, answer)
+        await self.worker.incoming(self.connection, answer)
+        manual = self.event(103, text='Какая у вас модель?')
+        manual.message.out = True
+        manual.message.from_id = types.PeerUser(88888)
+        await self.worker.incoming(self.connection, manual)
+        await self.worker.incoming(self.connection, self.event(104, text='L7'))
+        rows = await self.rows()
+        self.assertEqual([(r['telegram_message_id'], r['direction'], r['body']) for r in rows],
+                         [(101, 'outbound', 'Исходящее'), (102, 'inbound', 'Да, сколько стоит?'),
+                          (103, 'outbound', 'Какая у вас модель?'), (104, 'inbound', 'L7')])
+        self.assertTrue(all(r['job_id'] == job['id'] for r in rows))
+        self.assertIsNone(rows[1]['reply_to_message_id'])
+
+    async def test_ordinary_messages_require_sent_anchor_correct_peer_time_and_live_connection(self):
+        await self.job(status='sent', message_id=101)
+        before = self.event(102)
+        before.message.date -= timedelta(hours=1)
+        for event in (before, self.event(100), self.event(103, peer=self.peer+1),
+                      self.event(104, private=False)):
+            await self.worker.incoming(self.connection, event)
+        mismatched = self.event(105)
+        mismatched.message.from_id = types.PeerUser(self.peer+1)
+        await self.worker.incoming(self.connection, mismatched)
+        await self.db.execute("UPDATE cabinet_connections SET status='disconnected' WHERE id=%s", (self.connection['id'],))
+        await self.worker.incoming(self.connection, self.event(106))
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_ordinary_messages_never_cross_owner_generation_or_unsent_job(self):
+        job = await self.job(status='queued', message_id=101)
+        await self.worker.incoming(self.connection, self.event(102))
+        await self.db.execute("UPDATE cabinet_jobs SET status='sent' WHERE id=%s", (job['id'],))
+        await self.worker.incoming({**self.connection, 'owner_id': uuid4()}, self.event(103))
+        await self.worker.incoming({**self.connection, 'generation': 99}, self.event(104))
+        await self.db.execute('UPDATE cabinet_accounts SET active=false WHERE id=%s', (self.owner,))
+        await self.worker.incoming(self.connection, self.event(105))
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_same_second_reply_is_not_lost_to_database_subsecond_precision(self):
+        await self.job(status='sent', message_id=101)
+        stamp = datetime.now(UTC).replace(microsecond=900000)
+        await self.db.execute('UPDATE cabinet_messages SET sent_at=%s WHERE owner_id=%s', (stamp, self.owner))
+        event = self.event(102)
+        event.message.date = stamp.replace(microsecond=0)
+        await self.worker.incoming(self.connection, event)
+        self.assertEqual(len(await self.rows()), 2)
+
+    async def test_reply_before_delayed_send_receipt_is_not_lost(self):
+        job = await self.job(status='sent', message_id=101)
+        receipt = datetime.now(UTC)
+        await self.db.execute('UPDATE cabinet_jobs SET attempted_at=%s WHERE id=%s',
+                              (receipt-timedelta(seconds=5), job['id']))
+        event = self.event(102)
+        event.message.date = receipt-timedelta(seconds=2)
+        await self.worker.incoming(self.connection, event)
+        explicit = self.event(103, 101)
+        explicit.message.date = event.message.date
+        await self.worker.incoming(self.connection, explicit)
+        self.assertEqual(len(await self.rows()), 3)
+
+    async def test_ordinary_reply_uses_latest_preceding_job_but_explicit_keeps_its_chain(self):
+        old = await self.job(status='sent', message_id=101)
+        new = await self.job(status='sent', message_id=201)
+        await self.worker.incoming(self.connection, self.event(202))
+        await self.worker.incoming(self.connection, self.event(203, 101))
+        rows = {r['telegram_message_id']: r for r in await self.rows()}
+        self.assertEqual(rows[202]['job_id'], new['id'])
+        self.assertEqual(rows[203]['job_id'], old['id'])
+
+    async def test_manual_outgoing_during_delivery_does_not_steal_service_receipt(self):
+        await self.job(status='sent', message_id=101)
+        await self.job(status='sending')
+        event = self.event(202)
+        event.message.out = True
+        await self.worker.incoming(self.connection, event)
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_reply_during_send_waits_for_verified_anchor(self):
+        job = await self.job()
+        pending = []
+        test = self
+        class Client:
+            async def get_input_entity(self, _address): return types.InputPeerUser(test.peer, 123)
+            async def __call__(self, request):
+                pending.append(asyncio.create_task(test.worker.incoming(test.connection, test.event(202))))
+                await asyncio.sleep(0.05)
+                return NS(updates=[types.UpdateMessageID(id=201,random_id=request.random_id)])
+        with patch('cabinet_worker.within_window', return_value=True):
+            await self.worker.send_one(self.db, self.connection, Client())
+        await asyncio.gather(*pending)
+        rows = await self.rows()
+        self.assertEqual([r['telegram_message_id'] for r in rows], [201,202])
+        self.assertTrue(all(r['job_id'] == job['id'] for r in rows))
+
+    def history_client(self, batches, *, wrong_identity=False):
+        test = self
+        class Client(TelegramClient):
+            def __init__(self):
+                super().__init__(MemorySession(), 12345, 'test-only-hash', receive_updates=False)
+                self.requests = []
+            async def get_me(self):
+                return NS(id=88889 if wrong_identity else 88888, username='worker_test', bot=False)
+            async def get_input_entity(self, peer):
+                test.assertIn(peer, (types.PeerUser(test.peer), types.InputPeerUser(test.peer, 123)))
+                return types.InputPeerUser(test.peer, 123)
+            async def __call__(self, request):
+                # Only scoped, non-mutating history RPCs are allowed by this double.
+                test.assertIsInstance(request, functions.messages.GetHistoryRequest)
+                test.assertEqual(request.peer.user_id, test.peer)
+                test.assertEqual(request.min_id, 0)
+                test.assertEqual(request.add_offset, -request.limit)
+                test.assertGreater(request.offset_id, 101)
+                self.requests.append(NS(offset_id=request.offset_id, min_id=request.min_id))
+                result = batches[len(self.requests)-1]
+                if isinstance(result, Exception): raise result
+                if isinstance(result, types.messages.MessagesSlice): return result
+                return types.messages.Messages(messages=result, topics=[], chats=[], users=[])
+        return Client()
+
+    async def test_recovery_imports_only_approved_peer_after_anchor_and_is_idempotent(self):
+        job = await self.job(status='sent', message_id=101)
+        since = datetime.now(UTC) - timedelta(hours=1)
+        first, second = self.event(102), self.event(103, 102)
+        until = datetime.now(UTC)
+        for _ in range(2):
+            result = await self.worker.recover_messages(self.connection,
+                self.history_client([[second.message, first.message]]), [job['id']], since, until)
+            self.assertEqual(result['complete'], True)
+        self.assertEqual([r['telegram_message_id'] for r in await self.rows()], [101,102,103])
+
+    async def test_recovery_rejects_other_jobs_stale_generation_wrong_identity_and_excessive_range(self):
+        job = await self.job(status='sent', message_id=101)
+        since, until = datetime.now(UTC)-timedelta(hours=1), datetime.now(UTC)
+        for ids, row, client, start in (
+            ([uuid4()], self.connection, self.history_client([]), since),
+            ([job['id']], {**self.connection, 'generation': 99}, self.history_client([]), since),
+            ([job['id']], self.connection, self.history_client([], wrong_identity=True), since),
+            ([job['id']], self.connection, self.history_client([]), since-timedelta(days=2)),
+        ):
+            with self.subTest(ids=ids, start=start), self.assertRaises(ValueError):
+                await self.worker.recover_messages(row, client, ids, start, until)
+            self.assertEqual(client.requests, [])
+
+    async def test_recovery_validates_returned_peer_and_reports_floodwait_without_retry(self):
+        job = await self.job(status='sent', message_id=101)
+        since, until = datetime.now(UTC)-timedelta(hours=1), datetime.now(UTC)
+        wrong = self.event(102, peer=self.peer+1)
+        client = self.history_client([[wrong.message]])
+        with self.assertRaises(ValueError):
+            await self.worker.recover_messages(self.connection, client, [job['id']], since, until)
+        self.assertEqual(len(await self.rows()), 1)
+        client = self.history_client([errors.FloodWaitError(request=None, capture=30)])
+        with self.assertRaises(errors.FloodWaitError):
+            await self.worker.recover_messages(self.connection, client, [job['id']], since, until)
+        self.assertEqual(len(client.requests), 1)
+
+    async def test_recovery_paginates_chronologically_and_does_not_silently_truncate(self):
+        job = await self.job(status='sent', message_id=101)
+        since = datetime.now(UTC)-timedelta(hours=1)
+        batch = [self.event(mid).message for mid in range(201,101,-1)]
+        tail = [self.event(202).message]
+        until = datetime.now(UTC)
+        slice_page = types.messages.MessagesSlice(count=101, messages=batch, topics=[], chats=[], users=[])
+        client = self.history_client([slice_page, tail])
+        await self.worker.recover_messages(self.connection, client, [job['id']], since, until)
+        self.assertEqual(client.requests[1].offset_id, 202)
+        self.assertEqual(len(await self.rows()), 102)
+        with self.assertRaises(ValueError):
+            await self.worker.recover_messages(self.connection, self.history_client([batch]),
+                                               [job['id']], since, until, max_messages=10)
+
+    async def test_recovery_follows_short_slices_using_real_telethon_iterator(self):
+        job = await self.job(status='sent', message_id=101)
+        since = datetime.now(UTC)-timedelta(hours=1)
+        first, second = self.event(102), self.event(103)
+        until = datetime.now(UTC)
+        slice_page = types.messages.MessagesSlice(count=2, messages=[first.message], topics=[], chats=[], users=[])
+        client = self.history_client([slice_page, [second.message]])
+        await self.worker.recover_messages(self.connection, client, [job['id']], since, until)
+        self.assertEqual([r['telegram_message_id'] for r in await self.rows()], [101,102,103])
+        self.assertEqual(client.requests[1].offset_id, 103)
+
+    async def test_recovery_does_not_import_outside_time_or_selected_jobs(self):
+        first = await self.job(status='sent', message_id=101)
+        selected_since = datetime.now(UTC)-timedelta(minutes=30)
+        before = self.event(102)
+        before.message.date = selected_since-timedelta(seconds=1)
+        # Set the verified anchor earlier than the requested recovery interval.
+        await self.db.execute("UPDATE cabinet_messages SET sent_at=%s WHERE job_id=%s",
+                              (selected_since-timedelta(minutes=10), first['id']))
+        latest = await self.job(status='sent', message_id=201)
+        after = self.event(202)
+        until = datetime.now(UTC)
+        await self.worker.recover_messages(self.connection, self.history_client([[after.message, before.message]]),
+                                           [first['id']], selected_since, until)
+        self.assertEqual([r['telegram_message_id'] for r in await self.rows()], [101,201])
+
+    async def test_maintenance_refuses_busy_connection_before_opening_session(self):
+        job = await self.job(status='sent', message_id=101)
+        args = NS(owner_id=self.owner, connection_id=self.connection['id'], job_id=[job['id']],
+                  since=datetime.now(UTC)-timedelta(hours=1), until=datetime.now(UTC))
+        key = 'cabinet-connection:' + str(self.connection['id'])
+        await self.db.execute('SELECT pg_advisory_lock(hashtext(%s))', (key,))
+        try:
+            with patch('recover_replies.CabinetWorker', return_value=self.worker):
+                with self.assertRaisesRegex(ValueError, 'recovery_connection_busy'):
+                    await recover(args)
+        finally:
+            await self.db.execute('SELECT pg_advisory_unlock(hashtext(%s))', (key,))
+
+    async def test_maintenance_disconnects_and_releases_lock_after_failed_recovery(self):
+        job = await self.job(status='sent', message_id=101)
+        args = NS(owner_id=self.owner, connection_id=self.connection['id'], job_id=[job['id']],
+                  since=datetime.now(UTC)-timedelta(hours=1), until=datetime.now(UTC))
+        client = self.history_client([errors.FloodWaitError(request=None, capture=30)])
+        connected, disconnected = [], []
+        async def connect(): connected.append(True)
+        async def disconnect(): disconnected.append(True)
+        client.connect, client.disconnect = connect, disconnect
+        def maintenance_client(_path, *, receive_updates):
+            self.assertFalse(receive_updates)
+            return client
+        self.worker.client = maintenance_client
+        with tempfile.TemporaryDirectory() as root:
+            self.worker.root = Path(root)
+            private_session_path(self.worker.root, self.connection['id'], 1).touch()
+            with patch('recover_replies.CabinetWorker', return_value=self.worker):
+                with self.assertRaises(errors.FloodWaitError):
+                    await recover(args)
+        self.assertEqual((len(connected), len(disconnected)), (1,1))
+        key = 'cabinet-connection:' + str(self.connection['id'])
+        lock = await (await self.db.execute('SELECT pg_try_advisory_lock(hashtext(%s)) AS locked', (key,))).fetchone()
+        self.assertTrue(lock['locked'])
+        await self.db.execute('SELECT pg_advisory_unlock(hashtext(%s))', (key,))
 
     def client(self, peer=None, exception=None):
         test = self
