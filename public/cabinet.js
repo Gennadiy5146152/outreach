@@ -22,6 +22,7 @@ const errors = {
   telegram_source_invalid: "Группа или автор исходного сообщения не совпадают с выбранным получателем. Отправка не выполнена.",
   telegram_source_unavailable: "Не удалось проверить исходное сообщение в группе. Отправка не выполнена.",
   recipient_source_invalid: "Проверьте группу, числовой ID группы и номер исходного сообщения.",
+  recipient_address_conflict: "Укажите либо личный username, либо исходное сообщение в группе.",
   instagram_not_configured: "Подключение Instagram пока не настроено администратором.",
   instagram_oauth_expired: "Время входа истекло или вход открыт в другом браузере. Подключите Instagram заново.",
   instagram_oauth_declined: "Вы отменили подключение Instagram. Можно попробовать снова.",
