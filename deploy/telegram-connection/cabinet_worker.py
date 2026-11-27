@@ -5,6 +5,7 @@ import hashlib
 import io
 import logging
 import os
+import re
 import signal
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
@@ -234,6 +235,74 @@ class CabinetWorker:
             return False
         return within_window(job, at)
 
+    async def pending_job(self, db, row, job_id=None):
+        condition = " AND j.id=%s" if job_id is not None else ""
+        args = (row["id"], row["generation"]) + ((job_id,) if job_id is not None else ())
+        return await (await db.execute(f"""SELECT j.*,c.window_start,c.window_end,c.daily_limit,
+                t.telegram_user_id AS sender_user_id,t.expected_username AS sender_expected_username,
+                t.username AS sender_username
+            FROM cabinet_jobs j JOIN cabinet_campaigns c ON c.id=j.campaign_id
+            JOIN cabinet_connections t ON t.id=j.connection_id JOIN cabinet_accounts a ON a.id=j.owner_id
+            JOIN cabinet_drafts d ON d.id=j.draft_id
+            WHERE j.connection_id=%s AND t.generation=%s AND t.status='connected' AND a.active
+              AND NOT c.paused AND NOT d.stopped AND j.status='queued' AND j.scheduled_at<=now(){condition}
+            ORDER BY j.scheduled_at,j.id LIMIT 1""", args)).fetchone()
+
+    async def quota_available(self, db, row, job):
+        usage = await (await db.execute("""SELECT count(*) n,max(attempted_at) last_at FROM cabinet_jobs
+            WHERE connection_id=%s AND attempted_at >= (date_trunc('day',now() AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow')""", (row["id"],))).fetchone()
+        daily_limit = job["daily_limit"]
+        if job.get("one_off_day") is not None:
+            daily_limit = min(job["one_off_daily_limit"], daily_limit + 2, 100)
+        return usage["n"] < daily_limit and (not usage["last_at"] or datetime.now(UTC) - usage["last_at"] >= timedelta(minutes=3))
+
+    async def source_peer(self, job, client):
+        source = job.get("recipient_source")
+        uid = job["recipient_id"]
+        if (type(source) is not dict or set(source) != {"chat_id", "username", "message_id"}
+                or type(uid) is not int or not 1 <= uid <= 9223372036854775807
+                or job["address"] != f"tg://user?id={uid}"):
+            raise ValueError("telegram_source_invalid")
+        chat_id, username, mid = source["chat_id"], source["username"], source["message_id"]
+        if (type(chat_id) is not str or not re.fullmatch(r"[1-9][0-9]{0,18}", chat_id)
+                or int(chat_id) > 9223372036854775807
+                or type(username) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{4,31}", username)
+                or type(mid) is not int or not 1 <= mid <= 2147483647):
+            raise ValueError("telegram_source_invalid")
+        chat_id = int(chat_id)
+        # Resolve freshly: get_input_entity(username) can return a stale cached owner.
+        resolved = await client(functions.contacts.ResolveUsernameRequest(username))
+        if not isinstance(resolved.peer, types.PeerChannel) or resolved.peer.channel_id != chat_id:
+            raise ValueError("telegram_source_invalid")
+        channels = [chat for chat in resolved.chats if isinstance(chat, types.Channel) and chat.id == chat_id]
+        if len(channels) != 1:
+            raise ValueError("telegram_source_invalid")
+        channel = channels[0]
+        public_names = {channel.username.lower()} if channel.username else set()
+        public_names.update(alias.username.lower() for alias in (channel.usernames or []) if alias.active)
+        if (not channel.megagroup or channel.broadcast or channel.min or channel.access_hash is None
+                or username not in public_names):
+            raise ValueError("telegram_source_invalid")
+        public_peer = types.InputPeerChannel(chat_id, channel.access_hash)
+        proof = await client(functions.channels.GetMessagesRequest(
+            channel=types.InputChannel(chat_id, channel.access_hash), id=[types.InputMessageID(mid)]))
+        if len(proof.messages) != 1:
+            raise ValueError("telegram_source_invalid")
+        message = proof.messages[0]
+        if (not isinstance(message, types.Message) or message.id != mid
+                or not isinstance(message.peer_id, types.PeerChannel) or message.peer_id.channel_id != chat_id
+                or not isinstance(message.from_id, types.PeerUser) or message.from_id.user_id != uid
+                or message.fwd_from is not None):
+            raise ValueError("telegram_source_invalid")
+        authors = [user for user in proof.users if isinstance(user, types.User) and user.id == uid]
+        if len(authors) != 1 or authors[0].bot or authors[0].deleted:
+            raise ValueError("telegram_source_invalid")
+        return types.InputPeerUserFromMessage(public_peer, mid, uid)
+
+    async def fail_queued_job(self, db, job, code):
+        await db.execute("UPDATE cabinet_jobs SET status='failed',error_code=%s,completed_at=now() WHERE id=%s AND status='queued'",
+                         (code, job["id"]))
+
     async def send_one(self, db, row, client):
         if not self.enabled:
             return
@@ -244,34 +313,45 @@ class CabinetWorker:
                 WHERE connection_id=%s AND status='queued' AND one_off_day IS NOT NULL
                   AND (one_off_day<%s OR (one_off_day=%s AND one_off_window_end<=%s))""",
                 (row["id"], local.date(), local.date(), local.time()))
-            job = await (await db.execute("""SELECT j.*,c.window_start,c.window_end,c.daily_limit
-                FROM cabinet_jobs j JOIN cabinet_campaigns c ON c.id=j.campaign_id
-                JOIN cabinet_connections t ON t.id=j.connection_id JOIN cabinet_accounts a ON a.id=j.owner_id
-                JOIN cabinet_drafts d ON d.id=j.draft_id
-                WHERE j.connection_id=%s AND t.generation=%s AND t.status='connected' AND a.active
-                  AND NOT c.paused AND NOT d.stopped AND j.status='queued' AND j.scheduled_at<=now()
-                ORDER BY j.scheduled_at,j.id LIMIT 1""", (row["id"], row["generation"]))).fetchone()
+            job = await self.pending_job(db, row)
             if not job or not await self.check_delivery_window(db, job):
                 return
-            usage = await (await db.execute("""SELECT count(*) n,max(attempted_at) last_at FROM cabinet_jobs
-                WHERE connection_id=%s AND attempted_at >= (date_trunc('day',now() AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow')""", (row["id"],))).fetchone()
-            daily_limit = job["daily_limit"]
-            if job.get("one_off_day") is not None:
-                daily_limit = min(job["one_off_daily_limit"], daily_limit + 2, 100)
-            if usage["n"] >= daily_limit or (usage["last_at"] and datetime.now(UTC) - usage["last_at"] < timedelta(minutes=3)):
+            if not await self.quota_available(db, row, job):
                 return
-            # Username reassignment must never redirect a scheduled message to another person.
+            has_source = job.get("recipient_source") is not None
             try:
-                peer = await asyncio.wait_for(client.get_input_entity(job["address"].rsplit('/', 1)[-1]), timeout=20)
-                if not isinstance(peer, types.InputPeerUser) or peer.user_id != job["recipient_id"]:
-                    raise ValueError("telegram_recipient_changed")
-            except (ValueError, errors.UsernameInvalidError, errors.UsernameNotOccupiedError):
-                await db.execute("UPDATE cabinet_jobs SET status='failed',error_code='telegram_recipient_changed',completed_at=now() WHERE id=%s AND status='queued'", (job["id"],))
+                if has_source:
+                    peer = await asyncio.wait_for(self.source_peer(job, client), timeout=20)
+                else:
+                    # Username reassignment must never redirect a scheduled message.
+                    peer = await asyncio.wait_for(client.get_input_entity(job["address"].rsplit('/', 1)[-1]), timeout=20)
+                    if not isinstance(peer, types.InputPeerUser) or peer.user_id != job["recipient_id"]:
+                        raise ValueError("telegram_recipient_changed")
+            except (errors.FloodWaitError, errors.PeerFloodError):
+                await self.fail_queued_job(db, job, "telegram_rate_limit")
+                await self.pause(db, row, "telegram_rate_limit")
                 return
-            if not await self.check_delivery_window(db, job):
+            except (ValueError, errors.UsernameInvalidError, errors.UsernameNotOccupiedError, errors.MsgIdInvalidError, errors.ChannelInvalidError):
+                await self.fail_queued_job(db, job, "telegram_source_invalid" if has_source else "telegram_recipient_changed")
+                return
+            except (asyncio.TimeoutError, OSError, errors.RPCError):
+                if not has_source:
+                    raise
+                await self.fail_queued_job(db, job, "telegram_source_unavailable")
+                return
+            # The proof awaits network RPCs. Re-read all delivery controls before attempting.
+            current = await self.pending_job(db, row, job["id"])
+            bound = ("address", "recipient_id", "recipient_source", "body", "random_id",
+                     "sender_user_id", "sender_expected_username", "sender_username")
+            if not self.enabled or not current or any(current.get(key) != job.get(key) for key in bound):
+                return
+            job = current
+            if not await self.check_delivery_window(db, job) or not await self.quota_available(db, row, job):
                 return
             # Commit attempt before the RPC. Restart/timeout never blindly re-sends it.
-            await db.execute("UPDATE cabinet_jobs SET status='sending',attempted_at=now() WHERE id=%s AND status='queued'", (job["id"],))
+            attempt = await db.execute("UPDATE cabinet_jobs SET status='sending',attempted_at=now() WHERE id=%s AND status='queued'", (job["id"],))
+            if attempt.rowcount != 1:
+                return
             try:
                 result = await asyncio.wait_for(client(functions.messages.SendMessageRequest(
                     peer=peer, message=job["body"], random_id=job["random_id"], no_webpage=True)), timeout=35)

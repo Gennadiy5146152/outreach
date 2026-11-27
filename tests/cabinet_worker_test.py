@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy/telegram-co
 from cabinet_worker import CabinetWorker, MSK, decrypt_password, private_session_path, within_window, svg_for
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import psycopg
-from telethon import types, errors, events
+from telethon import types, errors, events, functions
+from psycopg.types.json import Jsonb
 
 URL = os.environ.get("CABINET_TEST_DATABASE_URL")
 UTC = timezone.utc
@@ -156,6 +157,49 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             await self.db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,telegram_message_id,direction,body,sent_at)
                 VALUES(%s,%s,%s,%s,%s,'outbound','Исходящее',now())""", (self.owner, job['id'], self.connection['id'], peer, message_id))
         return job
+
+    async def source_job(self, peer=None):
+        job = await self.job(peer=peer)
+        source = {'chat_id': '111222333', 'username': 'public_source_test', 'message_id': 42}
+        address = 'tg://user?id=' + str(job['recipient_id'])
+        await self.db.execute('UPDATE cabinet_drafts SET recipient_source=%s,address=%s WHERE id=%s',
+                              (Jsonb(source), address, job['draft_id']))
+        return await (await self.db.execute('UPDATE cabinet_jobs SET recipient_source=%s,address=%s WHERE id=%s RETURNING *',
+                                           (Jsonb(source), address, job['id']))).fetchone()
+
+    def source_client(self, uid=None, exception_stage=None, exception=None, callback=None):
+        uid = uid or self.peer
+        class Client:
+            def __init__(self):
+                self.requests, self.sent, self.fallback_calls = [], [], []
+                self.channel = types.Channel(id=111222333, title='Public fixture', photo=types.ChatPhotoEmpty(),
+                    date=datetime.now(UTC), username='public_source_test', megagroup=True, access_hash=12345)
+                self.message = types.Message(id=42, peer_id=types.PeerChannel(111222333),
+                    from_id=types.PeerUser(uid), date=datetime.now(UTC), message='Exact public source')
+                self.author = types.User(id=uid, first_name='Public author', min=True)
+                self.resolved = types.contacts.ResolvedPeer(peer=types.PeerChannel(111222333), chats=[self.channel], users=[])
+                self.proof = types.messages.Messages(messages=[self.message], topics=[], chats=[self.channel], users=[self.author])
+            async def get_input_entity(self, address):
+                self.fallback_calls.append(address)
+                return types.InputPeerUser(user_id=0, access_hash=0)
+            async def __call__(self, request):
+                self.requests.append(request)
+                if isinstance(request, functions.contacts.ResolveUsernameRequest):
+                    stage, result = 'resolve', self.resolved
+                elif isinstance(request, functions.channels.GetMessagesRequest):
+                    stage, result = 'proof', self.proof
+                elif isinstance(request, functions.messages.SendMessageRequest):
+                    stage = 'send'
+                    self.sent.append(request)
+                    result = NS(updates=[types.UpdateMessageID(id=201, random_id=request.random_id)])
+                else:
+                    raise AssertionError('Unexpected Telegram RPC: ' + type(request).__name__)
+                if callback:
+                    await callback(stage)
+                if stage == exception_stage:
+                    raise exception
+                return result
+        return Client()
 
     async def grant(self, job, day=None, start=time(0), end=time(23, 59), limit=12, offset_seconds=0):
         now = (await (await self.db.execute('SELECT now() at')).fetchone())['at'].astimezone(MSK)
@@ -457,6 +501,254 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((state['status'], state['error_code']), (status, code))
                 self.assertIsNotNone(state['attempted_at'])
                 self.assertEqual((await self.job_state(other))['status'], 'cancelled')
+
+    async def test_source_metadata_is_strict_and_rejected_before_any_rpc(self):
+        source = {'chat_id': '111222333', 'username': 'public_source_test', 'message_id': 42}
+        malformed = (False, 0, [], {}, {**source, 'unexpected': 1},
+            {**source, 'chat_id': 111222333}, {**source, 'chat_id': '0'},
+            {**source, 'chat_id': '-100111222333'}, {**source, 'chat_id': '0111222333'},
+            {**source, 'chat_id': '9223372036854775808'},
+            {**source, 'username': 'Public_source_test'}, {**source, 'username': 'abcd'},
+            {**source, 'username': 't.me/public_source_test'}, {**source, 'username': 'a' * 33},
+            {**source, 'message_id': True}, {**source, 'message_id': '42'},
+            {**source, 'message_id': 42.0}, {**source, 'message_id': 0},
+            {**source, 'message_id': 2147483648})
+        for value in malformed:
+            with self.subTest(source=value):
+                client = self.source_client()
+                job = {'recipient_source': value, 'recipient_id': self.peer, 'address': 'tg://user?id=' + str(self.peer)}
+                with self.assertRaisesRegex(ValueError, '^telegram_source_invalid$'):
+                    await self.worker.source_peer(job, client)
+                self.assertFalse(client.requests)
+                self.assertFalse(client.fallback_calls)
+        for address in ('https://t.me/test_recipient', 'tg://user?id=999', 'tg://user?id=0990000001'):
+            with self.subTest(address=address):
+                client = self.source_client()
+                with self.assertRaisesRegex(ValueError, '^telegram_source_invalid$'):
+                    await self.worker.source_peer({'recipient_source': source, 'recipient_id': self.peer, 'address': address}, client)
+                self.assertFalse(client.requests)
+
+    async def test_source_recipient_sends_only_after_exact_public_proof_with_stable_id(self):
+        job = await self.source_job()
+        async def check_durable_attempt(stage):
+            state = await self.job_state(job)
+            if stage == 'send':
+                self.assertEqual(state['status'], 'sending')
+                self.assertIsNotNone(state['attempted_at'])
+            else:
+                self.assertIsNone(state['attempted_at'])
+        client = self.source_client(callback=check_durable_attempt)
+        with patch('cabinet_worker.within_window', return_value=True):
+            await self.worker.send_one(self.db, self.connection, client)
+            await self.worker.send_one(self.db, self.connection, client)
+        self.assertFalse(client.fallback_calls)
+        self.assertEqual([type(request) for request in client.requests], [
+            functions.contacts.ResolveUsernameRequest, functions.channels.GetMessagesRequest,
+            functions.messages.SendMessageRequest])
+        self.assertEqual(client.requests[0].username, 'public_source_test')
+        read = client.requests[1]
+        self.assertIsInstance(read.channel, types.InputChannel)
+        self.assertEqual(read.channel.channel_id, 111222333)
+        self.assertEqual([(type(item), item.id) for item in read.id], [(types.InputMessageID, 42)])
+        sent = client.sent[0]
+        self.assertIsInstance(sent.peer, types.InputPeerUserFromMessage)
+        self.assertIsInstance(sent.peer.peer, types.InputPeerChannel)
+        self.assertEqual((sent.peer.peer.channel_id, sent.peer.msg_id, sent.peer.user_id), (111222333, 42, self.peer))
+        self.assertEqual((sent.message, sent.random_id), (job['body'], job['random_id']))
+        self.assertIsNone(sent.reply_to)
+        self.assertIsNone(sent.allow_paid_stars)
+        self.assertEqual((await self.job_state(job))['status'], 'sent')
+        self.assertEqual([(row['recipient_id'], row['body']) for row in await self.rows()], [(self.peer, job['body'])])
+
+    async def test_source_group_requires_pinned_public_megagroup_and_active_username(self):
+        cases = (
+            ('reassigned', lambda c: setattr(c.resolved, 'peer', types.PeerChannel(999))),
+            ('user', lambda c: setattr(c.resolved, 'peer', types.PeerUser(self.peer))),
+            ('no_group', lambda c: setattr(c.resolved, 'chats', [])),
+            ('wrong_group', lambda c: setattr(c.channel, 'id', 999)),
+            ('broadcast', lambda c: setattr(c.channel, 'broadcast', True)),
+            ('not_megagroup', lambda c: setattr(c.channel, 'megagroup', False)),
+            ('min', lambda c: setattr(c.channel, 'min', True)),
+            ('no_hash', lambda c: setattr(c.channel, 'access_hash', None)),
+            ('private', lambda c: setattr(c.channel, 'username', None)),
+            ('inactive_alias', lambda c: (setattr(c.channel, 'username', None),
+                setattr(c.channel, 'usernames', [types.Username(username='public_source_test', active=False)]))),
+            ('forbidden', lambda c: setattr(c.resolved, 'chats', [types.ChannelForbidden(id=111222333,
+                access_hash=12345, title='Not accessible', megagroup=True)])),
+        )
+        for index, (name, mutate) in enumerate(cases):
+            with self.subTest(case=name):
+                job = await self.source_job(peer=self.peer + index)
+                client = self.source_client(uid=job['recipient_id'])
+                mutate(client)
+                with patch('cabinet_worker.within_window', return_value=True):
+                    await self.worker.send_one(self.db, self.connection, client)
+                self.assertFalse(client.sent)
+                self.assertEqual(await self.job_state(job), {'status': 'failed', 'error_code': 'telegram_source_invalid', 'attempted_at': None})
+                self.assertEqual(len(client.requests), 1)
+
+    async def test_source_accepts_an_active_public_alias_without_user_access_hash(self):
+        job = await self.source_job()
+        client = self.source_client()
+        client.channel.username = 'other_public_name'
+        client.channel.usernames = [types.Username(username='public_source_test', active=True)]
+        self.assertIsNone(client.author.access_hash)
+        with patch('cabinet_worker.within_window', return_value=True):
+            await self.worker.send_one(self.db, self.connection, client)
+        self.assertEqual((await self.job_state(job))['status'], 'sent')
+        self.assertEqual(len(client.sent), 1)
+
+    async def test_source_post_and_direct_human_author_must_match_exactly(self):
+        cases = (
+            ('missing', lambda c: setattr(c.proof, 'messages', [])),
+            ('extra_message', lambda c: c.proof.messages.append(c.message)),
+            ('empty', lambda c: setattr(c.proof, 'messages', [types.MessageEmpty(id=42, peer_id=types.PeerChannel(111222333))])),
+            ('service', lambda c: setattr(c.proof, 'messages', [types.MessageService(id=42,
+                peer_id=types.PeerChannel(111222333), date=datetime.now(UTC), action=types.MessageActionEmpty())])),
+            ('wrong_message', lambda c: setattr(c.message, 'id', 43)),
+            ('wrong_chat', lambda c: setattr(c.message, 'peer_id', types.PeerChannel(999))),
+            ('private_message', lambda c: setattr(c.message, 'peer_id', types.PeerUser(self.peer))),
+            ('wrong_author', lambda c: setattr(c.message, 'from_id', types.PeerUser(999))),
+            ('anonymous', lambda c: setattr(c.message, 'from_id', None)),
+            ('channel_author', lambda c: setattr(c.message, 'from_id', types.PeerChannel(111222333))),
+            ('forward', lambda c: setattr(c.message, 'fwd_from', types.MessageFwdHeader(date=datetime.now(UTC), from_id=types.PeerUser(c.author.id)))),
+            ('no_user', lambda c: setattr(c.proof, 'users', [])),
+            ('empty_user', lambda c: setattr(c.proof, 'users', [types.UserEmpty(id=c.author.id)])),
+            ('wrong_user', lambda c: setattr(c.author, 'id', 999)),
+            ('bot', lambda c: setattr(c.author, 'bot', True)),
+            ('deleted', lambda c: setattr(c.author, 'deleted', True)),
+        )
+        for index, (name, mutate) in enumerate(cases):
+            with self.subTest(case=name):
+                job = await self.source_job(peer=self.peer + index)
+                client = self.source_client(uid=job['recipient_id'])
+                mutate(client)
+                with patch('cabinet_worker.within_window', return_value=True):
+                    await self.worker.send_one(self.db, self.connection, client)
+                self.assertFalse(client.sent)
+                self.assertEqual(await self.job_state(job), {'status': 'failed', 'error_code': 'telegram_source_invalid', 'attempted_at': None})
+                self.assertEqual(len(client.requests), 2)
+
+    async def test_source_read_errors_fail_without_attempt_or_automatic_retry(self):
+        cases = (
+            ('resolve', errors.UsernameInvalidError(request=None), 'telegram_source_invalid'),
+            ('resolve', errors.UsernameNotOccupiedError(request=None), 'telegram_source_invalid'),
+            ('proof', errors.ChannelPrivateError(request=None), 'telegram_source_unavailable'),
+            ('proof', errors.UserBannedInChannelError(request=None), 'telegram_source_unavailable'),
+            ('proof', errors.MsgIdInvalidError(request=None), 'telegram_source_invalid'),
+            ('resolve', asyncio.TimeoutError(), 'telegram_source_unavailable'),
+            ('proof', asyncio.TimeoutError(), 'telegram_source_unavailable'),
+            ('proof', ConnectionError(), 'telegram_source_unavailable'),
+        )
+        for index, (stage, exception, code) in enumerate(cases):
+            with self.subTest(stage=stage, exception=type(exception).__name__):
+                job = await self.source_job(peer=self.peer + index)
+                client = self.source_client(uid=job['recipient_id'], exception_stage=stage, exception=exception)
+                with patch('cabinet_worker.within_window', return_value=True):
+                    await self.worker.send_one(self.db, self.connection, client)
+                    await self.worker.send_one(self.db, self.connection, client)
+                self.assertFalse(client.sent)
+                self.assertEqual(await self.job_state(job), {'status': 'failed', 'error_code': code, 'attempted_at': None})
+                self.assertEqual(len(client.requests), 1 if stage == 'resolve' else 2)
+
+    async def test_source_proof_flood_wait_pauses_and_cancels_queue_without_attempt(self):
+        for index, (stage, exception) in enumerate((
+            ('resolve', errors.FloodWaitError(request=None, capture=60)),
+            ('proof', errors.FloodWaitError(request=None, capture=60)),
+            ('resolve', errors.PeerFloodError(request=None)),
+            ('proof', errors.PeerFloodError(request=None)),
+        )):
+            with self.subTest(stage=stage, exception=type(exception).__name__):
+                await self.db.execute('UPDATE cabinet_campaigns SET paused=false WHERE id=%s', (self.campaign,))
+                job = await self.source_job(peer=self.peer + index * 2)
+                other = await self.job(peer=self.peer + index * 2 + 1)
+                client = self.source_client(uid=job['recipient_id'], exception_stage=stage, exception=exception)
+                with patch('cabinet_worker.within_window', return_value=True):
+                    await self.worker.send_one(self.db, self.connection, client)
+                self.assertFalse(client.sent)
+                self.assertEqual(await self.job_state(job), {'status': 'failed', 'error_code': 'telegram_rate_limit', 'attempted_at': None})
+                self.assertEqual((await self.job_state(other))['status'], 'cancelled')
+                campaign = await (await self.db.execute('SELECT paused FROM cabinet_campaigns WHERE id=%s', (self.campaign,))).fetchone()
+                self.assertTrue(campaign['paused'])
+
+    async def test_source_proof_rechecks_every_delivery_stop_after_await(self):
+        mutations = (
+            ('cabinet_campaigns', 'paused', True), ('cabinet_drafts', 'stopped', True),
+            ('cabinet_accounts', 'active', False), ('cabinet_connections', 'generation', 2),
+            ('cabinet_connections', 'status', 'disconnected'),
+            ('cabinet_connections', 'telegram_user_id', 77777),
+            ('cabinet_connections', 'expected_username', 'different_sender'),
+            ('cabinet_jobs', 'status', 'cancelled'),
+        )
+        for index, (table, column, value) in enumerate(mutations):
+            with self.subTest(changed=column):
+                job = await self.source_job(peer=self.peer + index)
+                key = {'cabinet_campaigns': self.campaign, 'cabinet_drafts': job['draft_id'],
+                       'cabinet_accounts': self.owner, 'cabinet_connections': self.connection['id'],
+                       'cabinet_jobs': job['id']}[table]
+                original = (await (await self.db.execute(f'SELECT {column} FROM {table} WHERE id=%s', (key,))).fetchone())[column]
+                async def mutate(stage):
+                    if stage == 'proof':
+                        await self.db.execute(f'UPDATE {table} SET {column}=%s WHERE id=%s', (value, key))
+                client = self.source_client(uid=job['recipient_id'], callback=mutate)
+                with patch('cabinet_worker.within_window', return_value=True):
+                    await self.worker.send_one(self.db, self.connection, client)
+                self.assertFalse(client.sent)
+                self.assertIsNone((await self.job_state(job))['attempted_at'])
+                await self.db.execute(f'UPDATE {table} SET {column}=%s WHERE id=%s', (original, key))
+                await self.db.execute("UPDATE cabinet_jobs SET status='cancelled' WHERE id=%s", (job['id'],))
+
+    async def test_source_proof_rechecks_quota_and_spacing_after_await(self):
+        job = await self.source_job()
+        async def fill_quota(stage):
+            if stage == 'proof':
+                await self.seed_attempts(10)
+        client = self.source_client(callback=fill_quota)
+        with patch('cabinet_worker.within_window', return_value=True):
+            await self.worker.send_one(self.db, self.connection, client)
+        self.assertFalse(client.sent)
+        self.assertIsNone((await self.job_state(job))['attempted_at'])
+        # Quota is available again, but a new account-wide attempt is too recent.
+        await self.db.execute('UPDATE cabinet_campaigns SET daily_limit=20 WHERE id=%s', (self.campaign,))
+        async def recent_attempt(stage):
+            if stage == 'proof':
+                await self.db.execute("UPDATE cabinet_jobs SET attempted_at=now() WHERE owner_id=%s AND status='failed'", (self.owner,))
+        client = self.source_client(callback=recent_attempt)
+        with patch('cabinet_worker.within_window', return_value=True):
+            await self.worker.send_one(self.db, self.connection, client)
+        self.assertFalse(client.sent)
+        self.assertIsNone((await self.job_state(job))['attempted_at'])
+
+    async def test_source_one_off_expiry_during_proof_cancels_without_attempt(self):
+        job = await self.source_job()
+        await self.grant(job)
+        instant = (await (await self.db.execute('SELECT now() at')).fetchone())['at']
+        class ClockMeta(type):
+            def __instancecheck__(cls, instance): return isinstance(instance, datetime)
+        class Clock(datetime, metaclass=ClockMeta):
+            at = instant
+            @classmethod
+            def now(cls, tz=None): return cls.at.astimezone(tz) if tz else cls.at.replace(tzinfo=None)
+        async def expire(stage):
+            if stage == 'proof': Clock.at += timedelta(days=1)
+        client = self.source_client(callback=expire)
+        with patch('cabinet_worker.datetime', Clock):
+            await self.worker.send_one(self.db, self.connection, client)
+        self.assertFalse(client.sent)
+        self.assertEqual(await self.job_state(job), {'status': 'cancelled', 'error_code': 'one_off_window_expired', 'attempted_at': None})
+
+    async def test_source_send_uncertainty_is_not_retried_and_pauses_remaining_jobs(self):
+        job = await self.source_job()
+        other = await self.job(peer=self.peer + 1)
+        client = self.source_client(exception_stage='send', exception=asyncio.TimeoutError())
+        with patch('cabinet_worker.within_window', return_value=True):
+            await self.worker.send_one(self.db, self.connection, client)
+            await self.worker.send_one(self.db, self.connection, client)
+        self.assertEqual(len(client.sent), 1)
+        state = await self.job_state(job)
+        self.assertEqual((state['status'], state['error_code']), ('uncertain', 'telegram_delivery_uncertain'))
+        self.assertIsNotNone(state['attempted_at'])
+        self.assertEqual((await self.job_state(other))['status'], 'cancelled')
 
     async def test_paused_campaign_and_disabled_sender_never_send(self):
         await self.job()
