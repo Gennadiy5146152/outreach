@@ -100,3 +100,9 @@ TELEGRAM_REFRESH_TEST_DATABASE_URL=postgres://.../outreach_refresh_test node --t
 Последняя команда требует отдельной пустой тестовой базы и применяет все
 миграции. Проверяет перенос старой очереди, независимость профилей, общий
 стоп-лист, дубли, одноразовые подтверждения, изменённый текст и общую остановку.
+
+## Private cabinet MCP
+
+The private cabinet is independent from legacy profiles. `draft_update` accepts an optional body and optional verified source/permission fields. `permission_kind` and `permission_evidence` must be supplied together. Identity fields cannot be edited; queued, sending, sent and uncertain drafts cannot be changed. Body-only calls remain supported.
+
+`campaign_window_update` changes only the start/end of a paused campaign with no queued, sending or uncertain jobs on its connection. It requires cabinet-wide draft access (or the owner), retains the daily limit and pause, rejects conflicting sibling campaign schedules, audits the change and invalidates older prepared plans. It does not launch delivery. A launch still requires prepare, review of every exact recipient/body/time and explicit approval before execute.

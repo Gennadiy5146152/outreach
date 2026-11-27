@@ -10,6 +10,7 @@ async function session(scopes, fn, options = {}) {
       calls.push(path);
       return { allowed: true };
     },
+    patch: async (path, input) => { calls.push({ path, input }); return input; },
     post: async (path, input) => {
       calls.push({ path, input });
       return {
@@ -162,4 +163,26 @@ test("send scope accepts stored draft IDs only, preserves confirmation preview a
     assert.equal(denied.isError, true);
     assert.equal(calls.length, 1);
   });
+});
+
+test("draft_update accepts paired evidence or body without identity edits", async () => {
+  await session(["outreach:draft"], async (client, calls) => {
+    const ids = { campaign_id: "00000000-0000-4000-8000-000000000001", draft_id: "00000000-0000-4000-8000-000000000002" };
+    const evidence = { permission_kind: "request", permission_evidence: "Dated genuine request", source_url: "https://t.me/example/123" };
+    assert.equal((await client.callTool({ name: "draft_update", arguments: { ...ids, ...evidence } })).isError, undefined);
+    assert.deepEqual(calls[0], { path: `/api/cabinet/campaigns/${ids.campaign_id}/drafts/${ids.draft_id}`, input: evidence });
+    for (const value of [{}, { permission_kind: "request" }, { permission_evidence: "Request" }, { body: "Hello", recipient_id: "123" }]) assert.equal((await client.callTool({ name: "draft_update", arguments: { ...ids, ...value } })).isError, true);
+    assert.equal(calls.length, 1);
+  });
+});
+test("idle window MCP is all-campaigns draft scoped and cannot change daily limit or pause", async () => {
+  await session(["outreach:draft"], async client => assert.equal((await client.listTools()).tools.some(t => t.name === "campaign_window_update"), false));
+  await session(["outreach:send"], async client => assert.equal((await client.listTools()).tools.some(t => t.name === "campaign_window_update"), false), { allCampaigns: true });
+  await session(["outreach:draft"], async (client, calls) => {
+    const input = { campaign_id: "00000000-0000-4000-8000-000000000001", window_start: "09:30", window_end: "14:00" };
+    await client.callTool({ name: "campaign_window_update", arguments: input });
+    assert.deepEqual(calls[0], { path: `/api/cabinet/campaigns/${input.campaign_id}/window`, input: { window_start: "09:30", window_end: "14:00" } });
+    for (const extra of [{ paused: false }, { daily_limit: 100 }]) assert.equal((await client.callTool({ name: "campaign_window_update", arguments: { ...input, ...extra } })).isError, true);
+    assert.equal(calls.length, 1);
+  }, { allCampaigns: true });
 });

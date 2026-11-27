@@ -69,6 +69,16 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
       () => client.get("/api/cabinet/campaign-connections"),
     );
     register(
+      "campaign_window_update",
+      "Изменить только окно пустой очереди рассылки на паузе. Лимит и пауза сохраняются, отправка не запускается. Нужны черновики и доступ ко всем рассылкам.",
+      campaign.extend({
+        window_start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+        window_end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+      }).strict(),
+      "outreach:draft", false,
+      ({ campaign_id, ...body }) => client.patch(`/api/cabinet/campaigns/${campaign_id}/window`, body),
+    );
+    register(
       "campaign_create",
       "Создать пустую рассылку на паузе в кабинете владельца токена. Нужны право на черновики и доступ ко всем рассылкам. Сообщения и очередь не создаются.",
       z.object({
@@ -117,16 +127,19 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
   );
   register(
     "draft_update",
-    "Изменить только текст неотправленного черновика.",
-    campaign
-      .extend({ draft_id: id, body: z.string().min(1).max(4000) })
-      .strict(),
+    "Изменить текст или подтверждённое основание обращения неотправленного черновика. Вид основания и доказательство указываются вместе. Получатель неизменен; отправка не запускается.",
+    campaign.extend({
+      draft_id: id,
+      body: z.string().min(1).max(4000).optional(),
+      source_url: z.url().startsWith("https://").max(2000).optional(),
+      permission_kind: z.enum(["request", "consent"]).optional(),
+      permission_evidence: z.string().trim().min(3).max(1000).optional(),
+    }).strict().refine(input => (input.permission_kind !== undefined) === (input.permission_evidence !== undefined))
+      .refine(input => [input.body, input.source_url, input.permission_kind].some(v => v !== undefined)),
     "outreach:draft",
     false,
-    ({ campaign_id, draft_id, body }) =>
-      client.patch(`/api/cabinet/campaigns/${campaign_id}/drafts/${draft_id}`, {
-        body,
-      }),
+    ({ campaign_id, draft_id, ...body }) =>
+      client.patch(`/api/cabinet/campaigns/${campaign_id}/drafts/${draft_id}`, body),
   );
   register(
     "queue_list",

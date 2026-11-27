@@ -349,6 +349,10 @@ export function createCabinet({
       res.status(201).json(await store.createCampaign(req.cabinet, req.body)),
     ),
   );
+  router.patch(
+    "/campaigns/:id/window",
+    run(async (req, res) => res.json(await store.editCampaignWindow(req.cabinet, req.params.id, req.body))),
+  );
   router.get(
     "/campaigns/:id/drafts",
     run(async (req, res) =>
