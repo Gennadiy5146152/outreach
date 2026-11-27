@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Each worker owns only its assigned files and must preserve other changes.
 
-**Goal:** Prepare, explicitly approve and dispatch at most two additional Artem messages today, raise the permanent daily limit to 20 as subsequently requested, and preserve the normal window.
+**Goal:** Prepare, explicitly approve and dispatch at most two additional Artem messages today, raise the permanent daily limit to 20, and extend the ordinary window by two hours to 12:02–15:55 as subsequently requested.
 
 **Architecture:** Server-issued one_off_launch plan binds exact draft/recipient/body/schedule and job-specific date/window/ceiling. The worker interprets the exception only for those jobs on that day. Ordinary scheduling stays unchanged.
 
@@ -23,7 +23,7 @@
 2. Two concurrent/repeated plans cannot exceed the day ceiling or reuse a consumed token.
 3. A changed body, receiver, pause, quota, connection generation/status or outstanding queue invalidates the plan.
 4. Read/send-only/selected-campaign/cross-owner tokens cannot obtain the one-off exception.
-5. Without a permanent change ordinary jobs retain their configured cap. With the explicit approved change they use 20. The two one-off jobs remain bound to today's window; no other drafts are launched.
+5. Without a permanent change ordinary jobs retain their configured cap/window. With the explicit approved changes they use 20 and 12:02–15:55. The two one-off jobs remain bound to today's separately shown window; no other drafts are launched.
 
 ## Task A: Server, migration, HTTP and MCP (API worker)
 
@@ -47,4 +47,4 @@ Own deploy/telegram-connection/cabinet_worker.py and tests/cabinet_worker_test.p
 - [ ] Independently review migration, snapshot/concurrency, scopes, exact day/window and worker expiration.
 - [ ] Run full required checks and build; create/update a focused PR and deploy the exact tested commit through the established workflow.
 - [ ] Read MCP capabilities, prepare only the two saved draft IDs using a remaining today window, show the complete returned plan and request fresh approval.
-- [ ] Execute only approved unexpired plan; monitor the two exact jobs to confirmed sent or an actionable failure. Verify permanent campaign is 20/day with its original window, update monitoring instructions to the verified setting, and report actual results.
+- [ ] Execute only approved unexpired plan; monitor the two exact jobs to confirmed sent or an actionable failure. Verify permanent campaign is 20/day with window 12:02–15:55, update monitoring instructions to the verified setting, and report actual results.
