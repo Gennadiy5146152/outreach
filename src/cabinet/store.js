@@ -377,17 +377,31 @@ export function createCabinetStore({
       )
     ).rows;
   }
+  function recipientSource(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        Object.keys(value).length !== 3 || !Object.hasOwn(value, "chat_id") ||
+        !Object.hasOwn(value, "username") || !Object.hasOwn(value, "message_id") ||
+        typeof value.chat_id !== "string" || !/^[1-9]\d{0,18}$/.test(value.chat_id) ||
+        BigInt(value.chat_id) > 9223372036854775807n ||
+        typeof value.username !== "string" || !/^[a-z][a-z0-9_]{4,31}$/.test(value.username) ||
+        !Number.isInteger(value.message_id) || value.message_id < 1 || value.message_id > 2147483647)
+      throw fail("recipient_source_invalid");
+    return { chat_id: value.chat_id, username: value.username, message_id: value.message_id };
+  }
   async function saveDraft(p, id, input) {
     await campaign(p, id, "outreach:draft");
-    const body = text(input.body),
-      address =
-        "https://t.me/" +
-        username(String(input.address || "").replace(/^https:\/\/t\.me\//, ""));
+    const body = text(input.body);
+    const hasSource = Object.hasOwn(input, "recipient_source");
+    if (hasSource && Object.hasOwn(input, "address")) throw fail("recipient_address_conflict");
+    const sourceRecipient = hasSource ? recipientSource(input.recipient_source) : null;
     if (
+      (hasSource && typeof input.recipient_id !== "string") ||
       !/^[1-9]\d{0,18}$/.test(String(input.recipient_id)) ||
       BigInt(input.recipient_id) > 9223372036854775807n
     )
       throw fail("recipient_id_required");
+    const address = hasSource ? "tg://user?id=" + input.recipient_id :
+      "https://t.me/" + username(String(input.address || "").replace(/^https:\/\/t\.me\//, ""));
     const kind = input.permission_kind || null;
     if (kind && !["request", "consent"].includes(kind))
       throw fail("permission_kind_invalid");
@@ -399,8 +413,8 @@ export function createCabinetStore({
     const {
       rows: [d],
     } = await query(
-      `INSERT INTO cabinet_drafts(owner_id,campaign_id,address,recipient_id,name,body,source_url,permission_kind,permission_evidence)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO cabinet_drafts(owner_id,campaign_id,address,recipient_id,name,body,source_url,permission_kind,permission_evidence,recipient_source)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         p.owner_id,
         id,
@@ -411,6 +425,7 @@ export function createCabinetStore({
         source,
         kind,
         evidence,
+        sourceRecipient,
       ],
     );
     await audit(p, "draft_created", d.id);
@@ -716,6 +731,7 @@ export function createCabinetStore({
           draft_id: d.id,
           address: d.address,
           recipient_id: String(d.recipient_id),
+          recipient_source: d.recipient_source,
           body: d.body,
           scheduled_at: slots[i] || null,
         })),
@@ -785,7 +801,7 @@ export function createCabinetStore({
             BigInt("0x" + crypto.randomBytes(8).toString("hex")) &
             ((1n << 63n) - 1n);
           await db.query(
-            `INSERT INTO cabinet_jobs(owner_id,draft_id,campaign_id,connection_id,address,recipient_id,body,random_id,scheduled_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            `INSERT INTO cabinet_jobs(owner_id,draft_id,campaign_id,connection_id,address,recipient_id,body,random_id,scheduled_at,recipient_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
             [
               p.owner_id,
               item.draft_id,
@@ -796,6 +812,7 @@ export function createCabinetStore({
               item.body,
               String(random || 1n),
               item.scheduled_at,
+              item.recipient_source ?? null,
             ],
           );
         }
@@ -926,7 +943,7 @@ export function createCabinetStore({
         one_off_day: options.day, one_off_window_start: options.start, one_off_window_end: options.end,
         one_off_daily_limit: ceiling,
         items: s.ds.map((d, i) => ({draft_id: d.id, name: d.name, address: d.address,
-          recipient_id: d.recipient_id, body: d.body, scheduled_at: slots[i]})),
+          recipient_id: d.recipient_id, recipient_source: d.recipient_source, body: d.body, scheduled_at: slots[i]})),
       };
       const token = randomSecret("plan_");
       await db.query(
@@ -971,9 +988,9 @@ export function createCabinetStore({
         const random = BigInt("0x" + crypto.randomBytes(8).toString("hex")) & ((1n << 63n) - 1n);
         await db.query(
           `INSERT INTO cabinet_jobs(owner_id,draft_id,campaign_id,connection_id,address,recipient_id,body,random_id,scheduled_at,
-            one_off_day,one_off_window_start,one_off_window_end,one_off_daily_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            one_off_day,one_off_window_start,one_off_window_end,one_off_daily_limit,recipient_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
           [p.owner_id, item.draft_id, plan.campaign_id, s.c.connection_id, item.address, item.recipient_id, item.body,
-            String(random || 1n), item.scheduled_at, options.day, options.start, options.end, ceiling],
+            String(random || 1n), item.scheduled_at, options.day, options.start, options.end, ceiling, item.recipient_source ?? null],
         );
       }
       await db.query("UPDATE cabinet_campaigns SET daily_limit=coalesce($3,daily_limit),window_end=coalesce($4::time,window_end),paused=false,revision=revision+1 WHERE owner_id=$1 AND id=$2",
@@ -1025,7 +1042,8 @@ export function createCabinetStore({
     )).rows;
     const eligible = rows.length === items.length && rows.every(({job,draft}) =>
       job.status === "queued" && job.connection_id === c.connection_id &&
-      job.address === draft.address && String(job.recipient_id) === String(draft.recipient_id)) &&
+      job.address === draft.address && String(job.recipient_id) === String(draft.recipient_id) &&
+      stableJson(job.recipient_source) === stableJson(draft.recipient_source)) &&
       new Set(rows.map(r => r.draft.id)).size === rows.length;
     // JSONB retains PostgreSQL timestamp precision; canonical key ordering makes
     // the snapshot independent of object/property order and preview round trips.
@@ -1050,7 +1068,7 @@ export function createCabinetStore({
         sender_id: s.c.telegram_user_id, connection_id: s.c.connection_id,
         items: s.rows.map(({job,draft}, i) => ({
           job_id: job.id, draft_id: draft.id, address: job.address,
-          recipient_id: String(job.recipient_id), name: draft.name,
+          recipient_id: String(job.recipient_id), recipient_source: job.recipient_source, name: draft.name,
           scheduled_at: new Date(job.scheduled_at).toISOString(),
           old_body: job.body, old_draft_body: draft.body, new_body: items[i].body,
         })),
@@ -1105,7 +1123,7 @@ export function createCabinetStore({
     await campaign(p, id);
     return (
       await query(
-        "SELECT id,draft_id,address,body,status,scheduled_at,completed_at,error_code FROM cabinet_jobs WHERE owner_id=$1 AND campaign_id=$2 ORDER BY scheduled_at DESC,id LIMIT 100 OFFSET $3",
+        "SELECT id,draft_id,address,recipient_id::text recipient_id,recipient_source,body,status,scheduled_at,completed_at,error_code FROM cabinet_jobs WHERE owner_id=$1 AND campaign_id=$2 ORDER BY scheduled_at DESC,id LIMIT 100 OFFSET $3",
         [
           p.owner_id,
           id,
