@@ -118,7 +118,7 @@ export function createCabinetStore({
         p.kind === "token" &&
         !(
           await db.query(
-            "SELECT 1 FROM cabinet_api_tokens WHERE id=$1 AND owner_id=$2 AND revoked_at IS NULL AND expires_at>now()",
+            "SELECT 1 FROM cabinet_api_tokens WHERE id=$1 AND owner_id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR SHARE",
             [p.id, p.owner_id],
           )
         ).rowCount
@@ -128,7 +128,7 @@ export function createCabinetStore({
         p.kind === "owner" &&
         !(
           await db.query(
-            "SELECT 1 FROM cabinet_sessions WHERE token_hash=$1 AND owner_id=$2 AND expires_at>now()",
+            "SELECT 1 FROM cabinet_sessions WHERE token_hash=$1 AND owner_id=$2 AND expires_at>clock_timestamp() FOR SHARE",
             [p.actor_key.slice(8), p.owner_id],
           )
         ).rowCount
@@ -343,6 +343,30 @@ export function createCabinetStore({
       return c;
     });
   }
+  async function editCampaignWindow(p, id, input) {
+    assertCampaignCreation(p);
+    if (Object.keys(input).some(k => !["window_start", "window_end"].includes(k)))
+      throw fail("invalid_schedule");
+    const start = input.window_start, end = input.window_end;
+    if (typeof start !== "string" || typeof end !== "string" ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(start) ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(end) || end <= start)
+      throw fail("invalid_schedule");
+    return ownerTransaction(p, async db => {
+      const c = await campaign(p, id, "outreach:draft", db);
+      const minutes = v => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
+      if (minutes(end) - minutes(start) < c.daily_limit * 3)
+        throw fail("invalid_schedule");
+      if (!c.paused) throw fail("campaign_must_be_paused", 409);
+      if ((await db.query("SELECT 1 FROM cabinet_jobs WHERE owner_id=$1 AND connection_id=$2 AND status IN ('queued','sending','uncertain')", [p.owner_id, c.connection_id])).rowCount)
+        throw fail("connection_has_outstanding_jobs", 409);
+      if ((await db.query("SELECT 1 FROM cabinet_campaigns WHERE owner_id=$1 AND connection_id=$2 AND id<>$3 AND (daily_limit<>$4 OR window_start<>$5::time OR window_end<>$6::time)", [p.owner_id, c.connection_id, c.id, c.daily_limit, start, end])).rowCount)
+        throw fail("connection_schedule_conflict", 409);
+      const { rows: [updated] } = await db.query("UPDATE cabinet_campaigns SET window_start=$3::time,window_end=$4::time,revision=revision+1 WHERE owner_id=$1 AND id=$2 RETURNING *", [p.owner_id, c.id, start, end]);
+      await audit(p, "campaign_window_edited", c.id, db);
+      return updated;
+    });
+  }
   async function drafts(p, id, page = 1) {
     await campaign(p, id);
     const n = Math.max(1, Math.min(10000, Math.trunc(Number(page)) || 1));
@@ -395,24 +419,31 @@ export function createCabinetStore({
   async function editDraft(p, id, draftId, input) {
     await campaign(p, id, "outreach:draft");
     uuid(draftId);
-    return transaction(async (db) => {
-      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-        "cabinet:" + p.owner_id,
-      ]);
-      if (
-        (
-          await db.query(
-            "SELECT 1 FROM cabinet_jobs WHERE owner_id=$1 AND draft_id=$2 AND status IN ('queued','sending','sent','uncertain')",
-            [p.owner_id, draftId],
-          )
-        ).rowCount
-      )
-        throw fail("draft_already_dispatched", 409);
-      const {
-        rows: [d],
-      } = await db.query(
-        "UPDATE cabinet_drafts SET body=$4,updated_at=now() WHERE owner_id=$1 AND campaign_id=$2 AND id=$3 RETURNING *",
-        [p.owner_id, id, draftId, text(input.body)],
+    const allowed = ["body", "source_url", "permission_kind", "permission_evidence"];
+    if (!Object.keys(input).length || Object.keys(input).some(k => !allowed.includes(k)))
+      throw fail("draft_edit_invalid");
+    const has = key => Object.hasOwn(input, key);
+    const body = has("body") ? text(input.body) : null;
+    const source = has("source_url") ? input.source_url : null;
+    if (has("source_url") && (typeof source !== "string" || !source.startsWith("https://") || source.length > 2000))
+      throw fail("source_url_invalid");
+    if (has("permission_kind") !== has("permission_evidence"))
+      throw fail("permission_pair_required");
+    const kind = has("permission_kind") ? input.permission_kind : null;
+    const evidence = has("permission_evidence") ? input.permission_evidence : null;
+    if (has("permission_kind") && !["request", "consent"].includes(kind))
+      throw fail("permission_kind_invalid");
+    if (has("permission_evidence") && (typeof evidence !== "string" || evidence.trim().length < 3 || evidence.length > 1000))
+      throw fail("permission_evidence_invalid");
+    return ownerTransaction(p, async (db) => {
+      await campaign(p, id, "outreach:draft", db);
+      if ((await db.query(
+        "SELECT 1 FROM cabinet_jobs WHERE owner_id=$1 AND draft_id=$2 AND campaign_id=$3 AND status IN ('queued','sending','sent','uncertain')",
+        [p.owner_id, draftId, id],
+      )).rowCount) throw fail("draft_already_dispatched", 409);
+      const { rows: [d] } = await db.query(
+        "UPDATE cabinet_drafts SET body=coalesce($4,body),source_url=coalesce($5,source_url),permission_kind=coalesce($6,permission_kind),permission_evidence=coalesce($7,permission_evidence),updated_at=now() WHERE owner_id=$1 AND campaign_id=$2 AND id=$3 RETURNING *",
+        [p.owner_id, id, draftId, body, source, kind, evidence],
       );
       if (!d) throw fail("draft_not_found", 404);
       await audit(p, "draft_edited", d.id, db);
@@ -835,6 +866,7 @@ export function createCabinetStore({
     campaigns,
     campaignConnections,
     createCampaign,
+    editCampaignWindow,
     drafts,
     saveDraft,
     editDraft,

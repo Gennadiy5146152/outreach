@@ -5,7 +5,7 @@ import pg from "pg";
 import express from "express";
 import { createCabinet } from "../src/cabinet/router.js";
 import { createAuth } from "../src/http/auth.js";
-import { scheduleJobs } from "../src/cabinet/store.js";
+import { scheduleJobs, createCabinetStore } from "../src/cabinet/store.js";
 import {
   digest,
   hashPassword,
@@ -422,6 +422,137 @@ test(
           assert.equal((await request("/api/cabinet/campaigns", { token: wide.token, body: input })).status, 401);
         },
       );
+      await t.test("draft metadata edits preserve identity and require complete evidenced permission", async () => {
+        const fresh = await draft(c, 91);
+        const path = `/api/cabinet/campaigns/${c.id}/drafts/${fresh.id}`;
+        const edit = (body, token = full.token) => request(path, { method: "PATCH", token, body });
+        assert.equal((await edit({ permission_kind: "request", permission_evidence: "Documented request" }, read.token)).status, 403);
+        const foreign = await request(`/api/cabinet/campaigns/${cb.id}/drafts/${db.id}`, { method: "PATCH", token: full.token, body: { permission_kind: "request", permission_evidence: "Documented request" } });
+        assert.equal(foreign.status, 404);
+        for (const body of [{}, { permission_kind: "request" }, { permission_evidence: "Documented request" }, { permission_kind: "fake", permission_evidence: "Documented request" }, { permission_kind: "request", permission_evidence: " " }, { permission_kind: "request", permission_evidence: "x".repeat(1001) }, { source_url: "http://example.com" }, { recipient_id: "99", body: "Changed" }]) {
+          assert.equal((await edit(body)).status, 400, JSON.stringify(body));
+        }
+        const plan = (await request(`/api/cabinet/campaigns/${c.id}/launch/prepare`, { token: full.token, body: { draft_ids: [fresh.id] } })).data;
+        const changed = await edit({ permission_kind: "request", permission_evidence: "2026-09-27; historical request; current need unknown", source_url: "https://t.me/testgroup/123" });
+        assert.equal(changed.status, 200);
+        assert.equal(changed.data.body, fresh.body);
+        assert.equal(changed.data.recipient_id, fresh.recipient_id);
+        assert.equal(changed.data.address, fresh.address);
+        assert.equal(changed.data.permission_kind, "request");
+        assert.equal(changed.data.source_url, "https://t.me/testgroup/123");
+        assert.equal((await edit({ body: "Body-only edit" })).data.permission_evidence, changed.data.permission_evidence);
+        assert.equal((await request("/api/cabinet/execute", { token: full.token, body: { confirmation_token: plan.confirmation_token, confirm: true, kind: "launch" } })).data.error, "plan_changed");
+        const revoked = await mint(["outreach:draft"]);
+        const principal = await cabinet.store.authenticate({ headers: { authorization: "Bearer " + revoked.token } });
+        await cabinet.store.tokenRevoke(a.p, revoked.id);
+        await assert.rejects(cabinet.store.editDraft(principal, c.id, fresh.id, { body: "Must fail after revocation" }), /cabinet_auth_required/);
+      });
+      await t.test("draft edits hold credential rows through commit and reject expiry while waiting", async () => {
+        const fresh = await draft(c, 93);
+        const token = await mint(["outreach:draft"]);
+        const principal = await cabinet.store.authenticate({ headers: { authorization: "Bearer " + token.token } });
+        let release, checked;
+        const gate = new Promise(resolve => { release = resolve; });
+        const ready = new Promise(resolve => { checked = resolve; });
+        const guarded = createCabinetStore({ query, withClient: fn => withClient(db => fn({ query: async (sql, args) => {
+          const result = await db.query(sql, args);
+          if (sql.includes("SELECT 1 FROM cabinet_api_tokens")) { checked(); await gate; }
+          return result;
+        } })) });
+        const editing = guarded.editDraft(principal, c.id, fresh.id, { body: "Protected edit" });
+        await ready;
+        const db = await pool.connect();
+        try {
+          await db.query("BEGIN");
+          await db.query("SET LOCAL lock_timeout='100ms'");
+          const revoker = createCabinetStore({ query: db.query.bind(db), withClient });
+          await assert.rejects(revoker.tokenRevoke(a.p, token.id), error => error.code === "55P03");
+        } finally {
+          await db.query("ROLLBACK"); release(); await editing; db.release();
+        }
+        await cabinet.store.tokenRevoke(a.p, token.id);
+        await assert.rejects(cabinet.store.editDraft(principal, c.id, fresh.id, { body: "Revoked" }), /cabinet_auth_required/);
+      });
+      await t.test("draft edits reject credentials expired while awaiting the owner lock", async () => {
+        const fresh = await draft(c, 94);
+        const expiring = await mint(["outreach:draft"]);
+        const expiredPrincipal = await cabinet.store.authenticate({ headers: { authorization: "Bearer " + expiring.token } });
+        let reached;
+        const blocked = new Promise(resolve => { reached = resolve; });
+        const waiting = createCabinetStore({ query, withClient: fn => withClient(db => fn({ query: async (sql, args) => {
+          if (sql.includes("pg_advisory_xact_lock(hashtext")) reached();
+          return db.query(sql, args);
+        } })) });
+        const control = await pool.connect();
+        await control.query("BEGIN");
+        await control.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["cabinet:" + a.p.owner_id]);
+        const pending = waiting.editDraft(expiredPrincipal, c.id, fresh.id, { body: "Expired during wait" });
+        const rejected = assert.rejects(pending, /cabinet_auth_required/);
+        try {
+          await blocked;
+          await control.query("UPDATE cabinet_api_tokens SET expires_at=clock_timestamp() WHERE id=$1", [expiring.id]);
+        } finally { await control.query("COMMIT"); control.release(); }
+        await rejected;
+      });
+      await t.test("owner session deletion waits until the protected edit commits", async () => {
+        const fresh = await draft(c, 95);
+        const session = await cabinet.store.newSession({ id: a.p.owner_id, login: "test", display_name: "Test" });
+        const principal = await cabinet.store.authenticate({ headers: { cookie: "outreach_cabinet=" + session.raw } });
+        let release, checked;
+        const gate = new Promise(resolve => { release = resolve; });
+        const ready = new Promise(resolve => { checked = resolve; });
+        const guarded = createCabinetStore({ query, withClient: fn => withClient(db => fn({ query: async (sql, args) => {
+          const result = await db.query(sql, args);
+          if (sql.includes("SELECT 1 FROM cabinet_sessions")) { checked(); await gate; }
+          return result;
+        } })) });
+        const editing = guarded.editDraft(principal, c.id, fresh.id, { body: "Session-protected edit" });
+        await ready;
+        const db = await pool.connect();
+        try {
+          await db.query("BEGIN");
+          await db.query("SET LOCAL lock_timeout='100ms'");
+          await assert.rejects(db.query("DELETE FROM cabinet_sessions WHERE token_hash=$1", [digest(session.raw)]), error => error.code === "55P03");
+        } finally { await db.query("ROLLBACK"); release(); await editing; db.release(); }
+        await query("DELETE FROM cabinet_sessions WHERE token_hash=$1", [digest(session.raw)]);
+        await assert.rejects(cabinet.store.editDraft(principal, c.id, fresh.id, { body: "Logged out" }), /cabinet_auth_required/);
+      });
+      await t.test("window editing is restricted to idle paused owned campaigns and preserves limit", async () => {
+        const wide = await cabinet.store.tokenCreate(a.p, { name: "Idle windows", scopes: ["outreach:read", "outreach:draft", "outreach:send"], campaign_access: "all" });
+        const ownConn = await cabinet.store.connect(a.p, { username: "window_" + prefix });
+        const idle = await cabinet.store.createCampaign(a.p, { connection_id: ownConn.id, name: "Idle" });
+        await query("UPDATE cabinet_connections SET status='connected',telegram_user_id=99881,username=expected_username,heartbeat_at=now() WHERE id=$1", [ownConn.id]);
+        const fd = await draft(idle, 92);
+        const path = `/api/cabinet/campaigns/${idle.id}/window`;
+        const body = { window_start: "09:30", window_end: "14:00" };
+        const edit = (value = body, token = wide.token) => request(path, { method: "PATCH", token, body: value });
+        for (const token of [read.token, send.token, full.token]) assert.equal((await edit(body, token)).status, 403);
+        assert.equal((await request(`/api/cabinet/campaigns/${cb.id}/window`, { method: "PATCH", token: wide.token, body })).status, 404);
+        for (const value of [{ ...body, window_end: "09:35" }, { ...body, window_start: "25:00" }, { ...body, window_end: null }, { ...body, paused: false }, { ...body, daily_limit: 100 }]) assert.equal((await edit(value)).status, 400);
+        const plan = (await request(`/api/cabinet/campaigns/${idle.id}/launch/prepare`, { token: wide.token, body: { draft_ids: [fd.id] } })).data;
+        const changed = await edit();
+        assert.equal(changed.status, 200);
+        assert.equal(changed.data.paused, true);
+        assert.equal(changed.data.daily_limit, 10);
+        assert.equal(changed.data.window_end, "14:00:00");
+        assert.equal(changed.data.revision, idle.revision + 1);
+        assert.equal((await request("/api/cabinet/execute", { token: wide.token, body: { confirmation_token: plan.confirmation_token, confirm: true, kind: "launch" } })).data.error, "plan_changed");
+        await query("UPDATE cabinet_campaigns SET paused=false WHERE id=$1", [idle.id]);
+        assert.equal((await edit()).status, 409);
+        await query("UPDATE cabinet_campaigns SET paused=true WHERE id=$1", [idle.id]);
+        const sibling = await cabinet.store.createCampaign(a.p, { connection_id: ownConn.id, name: "Sibling", ...body });
+        assert.equal((await edit({ window_start: "09:30", window_end: "15:00" })).data.error, "connection_schedule_conflict");
+        await query("DELETE FROM cabinet_campaigns WHERE id=$1", [sibling.id]);
+        await query("INSERT INTO cabinet_jobs(owner_id,campaign_id,connection_id,draft_id,recipient_id,address,body,status,scheduled_at,random_id) VALUES($1,$2,$3,$4,$5,$6,$7,'uncertain',now(),921234567)", [a.p.owner_id, idle.id, ownConn.id, fd.id, fd.recipient_id, fd.address, fd.body]);
+        assert.equal((await edit()).status, 409);
+        assert.equal((await request(`/api/cabinet/campaigns/${idle.id}/drafts/${fd.id}`, { method: "PATCH", token: wide.token, body: { permission_kind: "request", permission_evidence: "Must not edit dispatched evidence" } })).status, 409);
+        assert.equal((await request(`/api/cabinet/campaigns/${c.id}/drafts/${fd.id}`, { method: "PATCH", token: full.token, body: { permission_kind: "request", permission_evidence: "Different scoped campaign" } })).status, 404);
+        await query("DELETE FROM cabinet_jobs WHERE connection_id=$1", [ownConn.id]);
+        await query("DELETE FROM cabinet_drafts WHERE campaign_id=$1", [idle.id]);
+        await query("DELETE FROM cabinet_plans WHERE campaign_id=$1", [idle.id]);
+        await query("DELETE FROM cabinet_campaigns WHERE id=$1", [idle.id]);
+        await query("DELETE FROM cabinet_connections WHERE id=$1", [ownConn.id]);
+      });
       await t.test(
         "CSRF, origin, absent scope and arbitrary paths fail closed",
         async () => {
