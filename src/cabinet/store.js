@@ -617,7 +617,7 @@ export function createCabinetStore({
     const ds = (
       await q(
         db,
-        "SELECT * FROM cabinet_drafts WHERE owner_id=$1 AND campaign_id=$2 AND id=ANY($3::uuid[]) ORDER BY id",
+        "SELECT * FROM cabinet_drafts WHERE owner_id=$1 AND campaign_id=$2 AND id=ANY($3::uuid[]) ORDER BY array_position($3::uuid[],id)",
         [p.owner_id, id, ids],
       )
     ).rows;
