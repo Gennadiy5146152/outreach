@@ -203,3 +203,16 @@ test('queued copy tools require both send and draft, expose exact prepare and fo
     assert.deepEqual(calls[1],{path:'/api/cabinet/queue-edit/execute',input:confirmation});
   });
 });
+
+test('one-off tools require cabinet-wide send plus draft and accept only two stored drafts with a time window',async()=>{
+  for(const [scopes,allCampaigns] of [[['outreach:send'],true],[['outreach:draft'],true],[['outreach:send','outreach:draft'],false]])await session(scopes,async client=>assert.equal((await client.listTools()).tools.some(t=>t.name.startsWith('telegram_one_off_')),false),{allCampaigns});
+  await session(['outreach:send','outreach:draft'],async(client,calls)=>{
+    const names=(await client.listTools()).tools.map(t=>t.name);assert.ok(names.includes('telegram_one_off_prepare'));assert.ok(names.includes('telegram_one_off_execute'));
+    const input={campaign_id:'00000000-0000-4000-8000-000000000001',draft_ids:['00000000-0000-4000-8000-000000000002'],window_start:'14:00',window_end:'15:00'};
+    for(const invalid of [{...input,day:'2026-11-27'},{...input,daily_limit:101},{...input,body:'ad hoc'},{...input,draft_ids:[]},{...input,draft_ids:[...input.draft_ids,...input.draft_ids]},{...input,draft_ids:[...input.draft_ids,'00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004']},{...input,window_end:'25:00'},{...input,window_end:'13:00'}])assert.equal((await client.callTool({name:'telegram_one_off_prepare',arguments:invalid})).isError,true);
+    assert.equal(calls.length,0);await client.callTool({name:'telegram_one_off_prepare',arguments:input});const {campaign_id,...body}=input;assert.deepEqual(calls[0],{path:`/api/cabinet/campaigns/${campaign_id}/one-off/prepare`,input:body});
+    await client.callTool({name:'telegram_one_off_prepare',arguments:{...input,daily_limit:20}});assert.deepEqual(calls.pop(),{path:`/api/cabinet/campaigns/${campaign_id}/one-off/prepare`,input:{...body,daily_limit:20}});
+    const confirmation={confirmation_token:'plan_123456789012345678901234567890',confirm:true};for(const invalid of [{...confirmation,confirm:false},{...confirmation,kind:'launch'},{...confirmation,scheduled_at:'2026-11-27'}])assert.equal((await client.callTool({name:'telegram_one_off_execute',arguments:invalid})).isError,true);
+    await client.callTool({name:'telegram_one_off_execute',arguments:confirmation});assert.deepEqual(calls[1],{path:'/api/cabinet/one-off/execute',input:confirmation});
+  },{allCampaigns:true});
+});

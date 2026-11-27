@@ -825,6 +825,159 @@ export function createCabinetStore({
       return { ok: true, kind: plan.kind, count: plan.draft_ids.length };
     });
   }
+  const moscowDay = date => new Date(date.getTime() + 10800000).toISOString().slice(0, 10);
+  function oneOffAccess(p) {
+    assertScope(p, "outreach:send");
+    assertScope(p, "outreach:draft");
+    if (p.kind !== "owner" && p.all_campaigns !== true)
+      throw fail("one_off_requires_all_campaigns", 403);
+  }
+  function oneOffInput(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input) ||
+        Object.keys(input).some(k => !["draft_ids", "window_start", "window_end", "daily_limit"].includes(k)) ||
+        !Array.isArray(input.draft_ids) || !input.draft_ids.length || input.draft_ids.length > 2 ||
+        typeof input.window_start !== "string" || typeof input.window_end !== "string" ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.window_start) ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.window_end) || input.window_end <= input.window_start ||
+        (input.daily_limit !== undefined && (!Number.isInteger(input.daily_limit) || input.daily_limit < 1 || input.daily_limit > 100)))
+      throw fail("one_off_invalid");
+    const ids = input.draft_ids.map(uuid);
+    if (new Set(ids).size !== ids.length) throw fail("one_off_invalid");
+    return { ids, day: moscowDay(now()), start: input.window_start, end: input.window_end,
+      permanent_daily_limit: input.daily_limit ?? null };
+  }
+  async function oneOffSnapshot(p, id, options, db) {
+    oneOffAccess(p);
+    let c = await campaign(p, id, "outreach:send", db);
+    await db.query("SELECT id FROM cabinet_campaigns WHERE owner_id=$1 AND connection_id=$2 ORDER BY id FOR UPDATE", [p.owner_id, c.connection_id]);
+    await db.query("SELECT id FROM cabinet_connections WHERE owner_id=$1 AND id=$2 FOR SHARE", [p.owner_id, c.connection_id]);
+    // The worker updates identity and status without taking the owner lock.
+    c = await campaign(p, id, "outreach:send", db);
+    const ds = (await db.query(
+      "SELECT to_jsonb(d) || jsonb_build_object('recipient_id',d.recipient_id::text) draft FROM cabinet_drafts d WHERE owner_id=$1 AND campaign_id=$2 AND id=ANY($3::uuid[]) ORDER BY array_position($3::uuid[],id) FOR UPDATE",
+      [p.owner_id, c.id, options.ids],
+    )).rows.map(r => r.draft);
+    const jobs = (await db.query(
+      `SELECT to_jsonb(j) || jsonb_build_object('recipient_id',j.recipient_id::text,'random_id',j.random_id::text) job FROM cabinet_jobs j
+       WHERE owner_id=$1 AND connection_id=$2 AND (status IN ('queued','sending','uncertain') OR coalesce(attempted_at,scheduled_at)>$3::timestamptz-interval '30 days') ORDER BY id FOR SHARE`,
+      [p.owner_id, c.connection_id, now()],
+    )).rows.map(r => r.job);
+    const siblings = (await db.query("SELECT id,daily_limit,window_start,window_end FROM cabinet_campaigns WHERE owner_id=$1 AND connection_id=$2 ORDER BY id", [p.owner_id, c.connection_id])).rows;
+    const settings = { id: c.id, revision: c.revision, paused: c.paused, name: c.name,
+      connection_id: c.connection_id, generation: c.connection_generation, sender: c.telegram_user_id,
+      username: c.username, expected_username: c.expected_username,
+      status: c.connection_status, error: c.connection_error,
+      daily_limit: c.daily_limit, window_start: c.window_start, window_end: c.window_end };
+    return { c, ds, jobs, siblings, hash: digest(stableJson({settings, ds, jobs, siblings, options})) };
+  }
+  function oneOffEligible(s, options) {
+    if (!sendEnabled) throw fail("telegram_sending_disabled", 503);
+    if (["telegram_rate_limit", "telegram_delivery_uncertain"].includes(s.c.connection_error))
+      throw fail("telegram_connection_attention_required", 409);
+    if (s.c.connection_status !== "connected" || !s.c.telegram_user_id || !s.c.heartbeat_at || now() - new Date(s.c.heartbeat_at) > 60000)
+      throw fail("telegram_not_connected", 409);
+    if (s.jobs.some(j => ["queued", "sending", "uncertain"].includes(j.status)))
+      throw fail("one_off_outstanding_jobs", 409);
+    if (s.ds.length !== options.ids.length) throw fail("draft_not_found", 404);
+    const used = new Set(s.jobs.filter(j => ["queued", "sending", "sent", "uncertain"].includes(j.status)).map(j => j.recipient_id));
+    if (s.ds.some(d => d.stopped || !d.permission_kind || d.permission_evidence.trim().length < 3 || used.has(d.recipient_id)))
+      throw fail("draft_not_eligible", 409);
+    const ceiling = options.permanent_daily_limit ?? Math.min(100, s.c.daily_limit + 2);
+    if (options.permanent_daily_limit !== null) {
+      const minutes = v => Number(v.slice(0, 2)) * 60 + Number(v.slice(3, 5));
+      if (minutes(s.c.window_end) - minutes(s.c.window_start) < ceiling * 3) throw fail("one_off_invalid");
+      if (s.siblings.some(c => c.id !== s.c.id && c.daily_limit !== ceiling))
+        throw fail("connection_schedule_conflict", 409);
+    }
+    return ceiling;
+  }
+  async function prepareOneOff(p, id, input) {
+    oneOffAccess(p);
+    id = uuid(id);
+    const options = oneOffInput(input);
+    return ownerTransaction(p, async db => {
+      const s = await oneOffSnapshot(p, id, options, db);
+      const ceiling = oneOffEligible(s, options);
+      const current = now(), finish = new Date(`${options.day}T${options.end}:00+03:00`);
+      if (moscowDay(current) !== options.day || current >= finish) throw fail("one_off_expired", 409);
+      // Attempts count even when cancelled; unused cancelled reservations do not.
+      const occupied = s.jobs.filter(j => j.attempted_at || ["queued", "sending", "sent", "failed", "uncertain"].includes(j.status))
+        .map(j => ({slot: j.attempted_at || j.scheduled_at}));
+      if (occupied.filter(j => moscowDay(new Date(j.slot)) === options.day).length + options.ids.length > ceiling)
+        throw fail("one_off_capacity", 409);
+      // scheduleJobs adds one minute before its first slot. Account for a past
+      // attempt too, so the approved first slot itself keeps the worker's gap.
+      const lastAttempt = Math.max(0, ...s.jobs.filter(j => j.attempted_at).map(j => new Date(j.attempted_at).getTime()));
+      const schedulingNow = new Date(Math.max(current.getTime(), lastAttempt + 120000));
+      const slots = scheduleJobs({now: schedulingNow, window_start: options.start, window_end: options.end,
+        daily_limit: ceiling, occupied, count: options.ids.length});
+      if (slots.some(slot => moscowDay(new Date(slot)) !== options.day || new Date(slot) >= finish))
+        throw fail("one_off_capacity", 409);
+      const preview = {
+        kind: "one_off_launch", campaign_id: id, campaign: s.c.name,
+        sender: s.c.username || s.c.expected_username, sender_id: s.c.telegram_user_id,
+        connection_id: s.c.connection_id,
+        daily_limit: s.c.daily_limit, window_start: s.c.window_start, window_end: s.c.window_end,
+        permanent_daily_limit: options.permanent_daily_limit,
+        one_off_day: options.day, one_off_window_start: options.start, one_off_window_end: options.end,
+        one_off_daily_limit: ceiling,
+        items: s.ds.map((d, i) => ({draft_id: d.id, name: d.name, address: d.address,
+          recipient_id: d.recipient_id, body: d.body, scheduled_at: slots[i]})),
+      };
+      const token = randomSecret("plan_");
+      await db.query(
+        "INSERT INTO cabinet_plans(token_hash,owner_id,actor_key,kind,campaign_id,draft_ids,snapshot,preview,expires_at) VALUES($1,$2,$3,'one_off_launch',$4,$5,$6,$7,clock_timestamp()+interval '10 minutes')",
+        [digest(token), p.owner_id, p.actor_key, id, options.ids, s.hash, preview],
+      );
+      return {confirmation_token: token, requires_confirmation: true, expires_in_seconds: 600, preview};
+    });
+  }
+  async function executeOneOff(p, input) {
+    if (!input || typeof input !== "object" || Array.isArray(input) ||
+        Object.keys(input).some(k => !["confirmation_token", "confirm"].includes(k))) throw fail("one_off_invalid");
+    if (input.confirm !== true) throw fail("confirmation_required");
+    if (typeof input.confirmation_token !== "string" || input.confirmation_token.length < 20 || input.confirmation_token.length > 200)
+      throw fail("confirmation_invalid", 409);
+    oneOffAccess(p);
+    return ownerTransaction(p, async db => {
+      const {rows: [plan]} = await db.query(
+        "SELECT * FROM cabinet_plans WHERE token_hash=$1 AND owner_id=$2 AND actor_key=$3 AND consumed_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE",
+        [digest(input.confirmation_token), p.owner_id, p.actor_key],
+      );
+      if (!plan) throw fail("confirmation_invalid", 409);
+      if (plan.kind !== "one_off_launch") throw fail("confirmation_wrong_action", 409);
+      const preview = plan.preview;
+      const options = {ids: plan.draft_ids, day: preview.one_off_day, start: preview.one_off_window_start,
+        end: preview.one_off_window_end, permanent_daily_limit: preview.permanent_daily_limit};
+      const current = now();
+      if (moscowDay(current) !== options.day || current >= new Date(`${options.day}T${options.end}:00+03:00`))
+        throw fail("one_off_expired", 409);
+      const s = await oneOffSnapshot(p, plan.campaign_id, options, db);
+      if (s.hash !== plan.snapshot) throw fail("plan_changed", 409);
+      const ceiling = oneOffEligible(s, options);
+      // Locks may have waited across expiry, a slot or Moscow midnight.
+      const checked = now();
+      if (moscowDay(checked) !== options.day || checked >= new Date(`${options.day}T${options.end}:00+03:00`))
+        throw fail("one_off_expired", 409);
+      if (!(await db.query("SELECT 1 FROM cabinet_plans WHERE token_hash=$1 AND expires_at>clock_timestamp()", [plan.token_hash])).rowCount)
+        throw fail("confirmation_invalid", 409);
+      for (const item of preview.items) {
+        if (new Date(item.scheduled_at) < checked) throw fail("plan_schedule_expired", 409);
+        const random = BigInt("0x" + crypto.randomBytes(8).toString("hex")) & ((1n << 63n) - 1n);
+        await db.query(
+          `INSERT INTO cabinet_jobs(owner_id,draft_id,campaign_id,connection_id,address,recipient_id,body,random_id,scheduled_at,
+            one_off_day,one_off_window_start,one_off_window_end,one_off_daily_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [p.owner_id, item.draft_id, plan.campaign_id, s.c.connection_id, item.address, item.recipient_id, item.body,
+            String(random || 1n), item.scheduled_at, options.day, options.start, options.end, ceiling],
+        );
+      }
+      await db.query("UPDATE cabinet_campaigns SET daily_limit=coalesce($3,daily_limit),paused=false,revision=revision+1 WHERE owner_id=$1 AND id=$2",
+        [p.owner_id, plan.campaign_id, options.permanent_daily_limit]);
+      await db.query("UPDATE cabinet_plans SET consumed_at=clock_timestamp() WHERE token_hash=$1", [plan.token_hash]);
+      await audit(p, "one_off_launch_executed", plan.campaign_id, db);
+      return {ok: true, kind: "one_off_launch", count: plan.draft_ids.length};
+    });
+  }
   function queueEditItems(input) {
     if (!input || typeof input !== "object" || Array.isArray(input) ||
         Object.keys(input).some(k => k !== "items") ||
@@ -998,6 +1151,8 @@ export function createCabinetStore({
     tokenRevoke,
     prepare,
     execute,
+    prepareOneOff,
+    executeOneOff,
     prepareQueueEdit,
     executeQueueEdit,
     queue,
