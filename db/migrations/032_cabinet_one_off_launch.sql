@@ -1,4 +1,4 @@
--- A bounded approval is attached only to its exact jobs, never campaign settings.
+-- Store bounded day/window metadata only on the exact approved jobs.
 ALTER TABLE cabinet_plans
   DROP CONSTRAINT cabinet_plans_kind_check,
   ADD CONSTRAINT cabinet_plans_kind_check CHECK (kind IN ('launch','stop','queue_edit','one_off_launch'));
