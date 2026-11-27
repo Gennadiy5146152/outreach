@@ -7,7 +7,7 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
     { name: "outreach-private-cabinet", version: "1.0.0" },
     {
       instructions:
-        "Work only inside the token owner's cabinet. cabinet_access reports all_campaigns: true for access to all current and future campaigns of this owner; otherwise use only the listed campaign_ids. Action scopes still apply independently. Before delivery or stopping, call prepare, show the full returned plan and ask for explicit human approval. Execute only after that approval. No Telegram sessions, QR authentication, contacts, arbitrary chats or general history are accessible.",
+        "Work only inside the token owner's cabinet. cabinet_access reports all_campaigns: true for access to all current and future campaigns of this owner; otherwise use only the listed campaign_ids. Action scopes still apply independently. Before delivery, stopping or editing queued messages, call prepare, show the full returned plan and ask for explicit human approval. Execute only after that approval. No Telegram sessions, QR authentication, contacts, arbitrary chats or general history are accessible.",
     },
   );
   const id = z.uuid(),
@@ -163,6 +163,27 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
     ({ campaign_id, job_id }) =>
       client.get(`/api/cabinet/campaigns/${campaign_id}/threads/${job_id}`),
   );
+  if (scopes.includes("outreach:send") && scopes.includes("outreach:draft")) {
+    register(
+      "telegram_queue_edit_prepare",
+      "Подготовить замену только текста queued-сообщений и их черновиков. Покажите полный старый и новый текст с получателями, отправителем и временем и запросите явное одобрение. Подготовка сохраняет план; очередь, расписание, пауза и отправка не меняются.",
+      campaign.extend({
+        items: z.array(z.object({
+          job_id: id,
+          body: z.string().min(1).max(4000).refine(value => value.trim().length > 0),
+        }).strict()).min(1).max(100).refine(items => new Set(items.map(i => i.job_id.toLowerCase())).size === items.length),
+      }).strict(),
+      null, false,
+      ({campaign_id, items}) => client.post(`/api/cabinet/campaigns/${campaign_id}/queue-edit/prepare`, {items}),
+    );
+    register(
+      "telegram_queue_edit_execute",
+      "Применить подтверждённую замену текста только после явного одобрения человеком. Изменившаяся очередь отклоняет весь план. Не запускает отправку и не меняет расписание или паузу.",
+      z.object({confirmation_token: z.string().min(20).max(200), confirm: z.literal(true)}).strict(),
+      null, false,
+      input => client.post("/api/cabinet/queue-edit/execute", input),
+    );
+  }
   for (const kind of ["launch", "stop"]) {
     const scope = kind === "launch" ? "outreach:send" : "outreach:stop";
     register(

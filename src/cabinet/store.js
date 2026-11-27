@@ -266,7 +266,7 @@ export function createCabinetStore({
       rows: [c],
     } = await q(
       db,
-      `SELECT c.*,t.status connection_status,t.username,t.heartbeat_at,t.generation connection_generation,t.telegram_user_id,t.error_code connection_error FROM cabinet_campaigns c
+      `SELECT c.*,t.status connection_status,t.username,t.expected_username,t.heartbeat_at,t.generation connection_generation,t.telegram_user_id,t.error_code connection_error FROM cabinet_campaigns c
    JOIN cabinet_connections t ON t.id=c.connection_id AND t.owner_id=c.owner_id WHERE c.owner_id=$1 AND c.id=$2`,
       [p.owner_id, id],
     );
@@ -825,6 +825,124 @@ export function createCabinetStore({
       return { ok: true, kind: plan.kind, count: plan.draft_ids.length };
     });
   }
+  function queueEditItems(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input) ||
+        Object.keys(input).some(k => k !== "items") ||
+        !Array.isArray(input.items) || !input.items.length || input.items.length > 100)
+      throw fail("queue_edit_invalid");
+    const items = input.items.map(item => {
+      if (!item || typeof item !== "object" || Array.isArray(item) ||
+          Object.keys(item).length !== 2 || !Object.hasOwn(item, "job_id") ||
+          !Object.hasOwn(item, "body")) throw fail("queue_edit_invalid");
+      // Validate without trimming: confirmation binds the exact replacement copy.
+      text(item.body);
+      return { job_id: uuid(item.job_id), body: item.body };
+    });
+    if (new Set(items.map(i => i.job_id)).size !== items.length)
+      throw fail("queue_edit_invalid");
+    return items;
+  }
+  function stableJson(value) {
+    if (Array.isArray(value)) return "[" + value.map(stableJson).join(",") + "]";
+    if (value && typeof value === "object")
+      return "{" + Object.keys(value).sort().map(k => JSON.stringify(k) + ":" + stableJson(value[k])).join(",") + "}";
+    return JSON.stringify(value);
+  }
+  async function queueEditSnapshot(p, id, items, db) {
+    assertScope(p, "outreach:draft", id);
+    let c = await campaign(p, id, "outreach:send", db);
+    // Hold both settings and selected rows stable through the atomic amendment.
+    await db.query("SELECT id FROM cabinet_campaigns WHERE owner_id=$1 AND id=$2 FOR UPDATE", [p.owner_id, c.id]);
+    await db.query("SELECT id FROM cabinet_connections WHERE owner_id=$1 AND id=$2 FOR SHARE", [p.owner_id, c.connection_id]);
+    // The connection worker can update identity/status without the owner lock.
+    // Refresh only after row locks have resolved any concurrent updates.
+    c = await campaign(p, id, "outreach:send", db);
+    const rows = (await db.query(
+      `SELECT to_jsonb(j) || jsonb_build_object('recipient_id',j.recipient_id::text,'random_id',j.random_id::text) job,
+              to_jsonb(d) || jsonb_build_object('recipient_id',d.recipient_id::text) draft FROM cabinet_jobs j
+       JOIN cabinet_drafts d ON d.id=j.draft_id AND d.campaign_id=j.campaign_id AND d.owner_id=j.owner_id
+       WHERE j.owner_id=$1 AND j.campaign_id=$2 AND j.id=ANY($3::uuid[])
+       ORDER BY array_position($3::uuid[],j.id) FOR UPDATE OF j,d`,
+      [p.owner_id, c.id, items.map(i => i.job_id)],
+    )).rows;
+    const eligible = rows.length === items.length && rows.every(({job,draft}) =>
+      job.status === "queued" && job.connection_id === c.connection_id &&
+      job.address === draft.address && String(job.recipient_id) === String(draft.recipient_id)) &&
+      new Set(rows.map(r => r.draft.id)).size === rows.length;
+    // JSONB retains PostgreSQL timestamp precision; canonical key ordering makes
+    // the snapshot independent of object/property order and preview round trips.
+    const settings = {
+      id: c.id, owner_id: c.owner_id, name: c.name, revision: c.revision,
+      paused: c.paused, connection_id: c.connection_id,
+      generation: c.connection_generation, sender: c.telegram_user_id,
+      username: c.username, expected_username: c.expected_username, status: c.connection_status, error: c.connection_error,
+      daily_limit: c.daily_limit, window_start: c.window_start, window_end: c.window_end,
+    };
+    return { c, rows, eligible, hash: digest(stableJson({ settings, rows, items })) };
+  }
+  async function prepareQueueEdit(p, id, input) {
+    id = uuid(id);
+    const items = queueEditItems(input);
+    return ownerTransaction(p, async db => {
+      const s = await queueEditSnapshot(p, id, items, db);
+      if (!s.eligible) throw fail("queue_edit_not_eligible", 409);
+      const preview = {
+        kind: "queue_edit", campaign_id: id, campaign: s.c.name,
+        sender: s.c.username || s.c.expected_username,
+        sender_id: s.c.telegram_user_id, connection_id: s.c.connection_id,
+        items: s.rows.map(({job,draft}, i) => ({
+          job_id: job.id, draft_id: draft.id, address: job.address,
+          recipient_id: String(job.recipient_id), name: draft.name,
+          scheduled_at: new Date(job.scheduled_at).toISOString(),
+          old_body: job.body, old_draft_body: draft.body, new_body: items[i].body,
+        })),
+      };
+      const token = randomSecret("plan_");
+      await db.query(
+        "INSERT INTO cabinet_plans(token_hash,owner_id,actor_key,kind,campaign_id,draft_ids,snapshot,preview,expires_at) VALUES($1,$2,$3,'queue_edit',$4,$5,$6,$7,$8)",
+        [digest(token), p.owner_id, p.actor_key, id, s.rows.map(r => r.draft.id), s.hash, preview, new Date(now().getTime()+600000)],
+      );
+      return { confirmation_token: token, requires_confirmation: true, expires_in_seconds: 600, preview };
+    });
+  }
+  async function executeQueueEdit(p, input) {
+    if (!input || typeof input !== "object" || Array.isArray(input) ||
+        Object.keys(input).some(k => !["confirmation_token", "confirm"].includes(k)))
+      throw fail("queue_edit_invalid");
+    if (input.confirm !== true) throw fail("confirmation_required");
+    if (typeof input.confirmation_token !== "string" || input.confirmation_token.length < 20 || input.confirmation_token.length > 200)
+      throw fail("confirmation_invalid", 409);
+    assertScope(p, "outreach:send");
+    assertScope(p, "outreach:draft");
+    return ownerTransaction(p, async db => {
+      const { rows: [plan] } = await db.query(
+        "SELECT * FROM cabinet_plans WHERE token_hash=$1 AND owner_id=$2 AND actor_key=$3 AND consumed_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE",
+        [digest(input.confirmation_token), p.owner_id, p.actor_key],
+      );
+      if (!plan) throw fail("confirmation_invalid", 409);
+      if (plan.kind !== "queue_edit") throw fail("confirmation_wrong_action", 409);
+      const items = queueEditItems({items: plan.preview.items.map(i => ({job_id: i.job_id, body: i.new_body}))});
+      const s = await queueEditSnapshot(p, plan.campaign_id, items, db);
+      if (!s.eligible || s.hash !== plan.snapshot) throw fail("plan_changed", 409);
+      for (let i=0; i<items.length; i++) {
+        const {job,draft} = s.rows[i];
+        const updated = await db.query(
+          "UPDATE cabinet_jobs SET body=$4 WHERE owner_id=$1 AND campaign_id=$2 AND id=$3 AND status='queued' RETURNING id",
+          [p.owner_id, plan.campaign_id, job.id, items[i].body],
+        );
+        if (updated.rowCount !== 1) throw fail("plan_changed", 409);
+        const changedDraft = await db.query(
+          "UPDATE cabinet_drafts SET body=$4 WHERE owner_id=$1 AND campaign_id=$2 AND id=$3 RETURNING id",
+          [p.owner_id, plan.campaign_id, draft.id, items[i].body],
+        );
+        if (changedDraft.rowCount !== 1) throw fail("plan_changed", 409);
+      }
+      await db.query("UPDATE cabinet_campaigns SET revision=revision+1 WHERE owner_id=$1 AND id=$2", [p.owner_id, plan.campaign_id]);
+      await db.query("UPDATE cabinet_plans SET consumed_at=now() WHERE token_hash=$1", [plan.token_hash]);
+      await audit(p, "queued_copy_edited", plan.campaign_id, db);
+      return { ok: true, kind: "queue_edit", count: items.length };
+    });
+  }
   async function queue(p, id, page = 1) {
     await campaign(p, id);
     return (
@@ -880,6 +998,8 @@ export function createCabinetStore({
     tokenRevoke,
     prepare,
     execute,
+    prepareQueueEdit,
+    executeQueueEdit,
     queue,
     messages,
     audit,

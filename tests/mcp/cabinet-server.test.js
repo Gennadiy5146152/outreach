@@ -186,3 +186,20 @@ test("idle window MCP is all-campaigns draft scoped and cannot change daily limi
     assert.equal(calls.length, 1);
   }, { allCampaigns: true });
 });
+
+test('queued copy tools require both send and draft, expose exact prepare and forbid identity or delivery controls', async()=>{
+  for(const scopes of [['outreach:send'],['outreach:draft'],['outreach:read']]) await session(scopes,async client=>assert.equal((await client.listTools()).tools.some(t=>t.name.startsWith('telegram_queue_edit_')),false));
+  await session(['outreach:send','outreach:draft'],async(client,calls)=>{
+    const names=(await client.listTools()).tools.map(t=>t.name); assert.ok(names.includes('telegram_queue_edit_prepare')); assert.ok(names.includes('telegram_queue_edit_execute'));
+    const input={campaign_id:'00000000-0000-4000-8000-000000000001',items:[{job_id:'00000000-0000-4000-8000-000000000002',body:'Exact replacement'}]};
+    for(const invalid of [{...input,paused:false},{...input,items:[{...input.items[0],recipient_id:'123'}]},{...input,items:[{...input.items[0],scheduled_at:'2030-01-01'}]},{...input,items:[]},{...input,items:[input.items[0],input.items[0]]},{...input,items:[{...input.items[0],body:' '.repeat(2)}]}]) assert.equal((await client.callTool({name:'telegram_queue_edit_prepare',arguments:invalid})).isError,true);
+    assert.equal(calls.length,0);
+    await client.callTool({name:'telegram_queue_edit_prepare',arguments:input});
+    assert.deepEqual(calls[0],{path:`/api/cabinet/campaigns/${input.campaign_id}/queue-edit/prepare`,input:{items:input.items}});
+    const confirmation={confirmation_token:'plan_123456789012345678901234567890',confirm:true};
+    assert.equal((await client.callTool({name:'telegram_queue_edit_execute',arguments:{...confirmation,confirm:false}})).isError,true);
+    assert.equal((await client.callTool({name:'telegram_queue_edit_execute',arguments:{...confirmation,paused:false}})).isError,true);
+    await client.callTool({name:'telegram_queue_edit_execute',arguments:confirmation});
+    assert.deepEqual(calls[1],{path:'/api/cabinet/queue-edit/execute',input:confirmation});
+  });
+});

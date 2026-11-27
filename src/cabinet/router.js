@@ -353,6 +353,14 @@ export function createCabinet({
     "/campaigns/:id/window",
     run(async (req, res) => res.json(await store.editCampaignWindow(req.cabinet, req.params.id, req.body))),
   );
+  router.post(
+    "/campaigns/:id/queue-edit/prepare",
+    run(async (req, res) => res.json(await store.prepareQueueEdit(req.cabinet, req.params.id, req.body))),
+  );
+  router.post(
+    "/queue-edit/execute",
+    run(async (req, res) => res.json(await store.executeQueueEdit(req.cabinet, req.body))),
+  );
   router.get(
     "/campaigns/:id/drafts",
     run(async (req, res) =>
