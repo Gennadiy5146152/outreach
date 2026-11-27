@@ -834,17 +834,18 @@ export function createCabinetStore({
   }
   function oneOffInput(input) {
     if (!input || typeof input !== "object" || Array.isArray(input) ||
-        Object.keys(input).some(k => !["draft_ids", "window_start", "window_end", "daily_limit"].includes(k)) ||
+        Object.keys(input).some(k => !["draft_ids", "window_start", "window_end", "daily_limit", "campaign_window_end"].includes(k)) ||
         !Array.isArray(input.draft_ids) || !input.draft_ids.length || input.draft_ids.length > 2 ||
         typeof input.window_start !== "string" || typeof input.window_end !== "string" ||
         !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.window_start) ||
         !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.window_end) || input.window_end <= input.window_start ||
-        (input.daily_limit !== undefined && (!Number.isInteger(input.daily_limit) || input.daily_limit < 1 || input.daily_limit > 100)))
+        (input.daily_limit !== undefined && (!Number.isInteger(input.daily_limit) || input.daily_limit < 1 || input.daily_limit > 100)) ||
+        (input.campaign_window_end !== undefined && (typeof input.campaign_window_end !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.campaign_window_end))))
       throw fail("one_off_invalid");
     const ids = input.draft_ids.map(uuid);
     if (new Set(ids).size !== ids.length) throw fail("one_off_invalid");
     return { ids, day: moscowDay(now()), start: input.window_start, end: input.window_end,
-      permanent_daily_limit: input.daily_limit ?? null };
+      permanent_daily_limit: input.daily_limit ?? null, permanent_window_end: input.campaign_window_end ?? null };
   }
   async function oneOffSnapshot(p, id, options, db) {
     oneOffAccess(p);
@@ -883,10 +884,13 @@ export function createCabinetStore({
     if (s.ds.some(d => d.stopped || !d.permission_kind || d.permission_evidence.trim().length < 3 || used.has(d.recipient_id)))
       throw fail("draft_not_eligible", 409);
     const ceiling = options.permanent_daily_limit ?? Math.min(100, s.c.daily_limit + 2);
-    if (options.permanent_daily_limit !== null) {
+    if (options.permanent_daily_limit !== null || options.permanent_window_end !== null) {
       const minutes = v => Number(v.slice(0, 2)) * 60 + Number(v.slice(3, 5));
-      if (minutes(s.c.window_end) - minutes(s.c.window_start) < ceiling * 3) throw fail("one_off_invalid");
-      if (s.siblings.some(c => c.id !== s.c.id && c.daily_limit !== ceiling))
+      const limit = options.permanent_daily_limit ?? s.c.daily_limit;
+      const end = options.permanent_window_end ?? s.c.window_end;
+      if (minutes(end) - minutes(s.c.window_start) < limit * 3) throw fail("one_off_invalid");
+      if (s.siblings.some(c => c.id !== s.c.id && (c.daily_limit !== limit ||
+          c.window_start !== s.c.window_start || c.window_end.slice(0, 5) !== end.slice(0, 5))))
         throw fail("connection_schedule_conflict", 409);
     }
     return ceiling;
@@ -918,7 +922,7 @@ export function createCabinetStore({
         sender: s.c.username || s.c.expected_username, sender_id: s.c.telegram_user_id,
         connection_id: s.c.connection_id,
         daily_limit: s.c.daily_limit, window_start: s.c.window_start, window_end: s.c.window_end,
-        permanent_daily_limit: options.permanent_daily_limit,
+        permanent_daily_limit: options.permanent_daily_limit, permanent_window_end: options.permanent_window_end,
         one_off_day: options.day, one_off_window_start: options.start, one_off_window_end: options.end,
         one_off_daily_limit: ceiling,
         items: s.ds.map((d, i) => ({draft_id: d.id, name: d.name, address: d.address,
@@ -948,7 +952,8 @@ export function createCabinetStore({
       if (plan.kind !== "one_off_launch") throw fail("confirmation_wrong_action", 409);
       const preview = plan.preview;
       const options = {ids: plan.draft_ids, day: preview.one_off_day, start: preview.one_off_window_start,
-        end: preview.one_off_window_end, permanent_daily_limit: preview.permanent_daily_limit};
+        end: preview.one_off_window_end, permanent_daily_limit: preview.permanent_daily_limit,
+        permanent_window_end: preview.permanent_window_end ?? null};
       const current = now();
       if (moscowDay(current) !== options.day || current >= new Date(`${options.day}T${options.end}:00+03:00`))
         throw fail("one_off_expired", 409);
@@ -971,8 +976,8 @@ export function createCabinetStore({
             String(random || 1n), item.scheduled_at, options.day, options.start, options.end, ceiling],
         );
       }
-      await db.query("UPDATE cabinet_campaigns SET daily_limit=coalesce($3,daily_limit),paused=false,revision=revision+1 WHERE owner_id=$1 AND id=$2",
-        [p.owner_id, plan.campaign_id, options.permanent_daily_limit]);
+      await db.query("UPDATE cabinet_campaigns SET daily_limit=coalesce($3,daily_limit),window_end=coalesce($4::time,window_end),paused=false,revision=revision+1 WHERE owner_id=$1 AND id=$2",
+        [p.owner_id, plan.campaign_id, options.permanent_daily_limit, options.permanent_window_end]);
       await db.query("UPDATE cabinet_plans SET consumed_at=clock_timestamp() WHERE token_hash=$1", [plan.token_hash]);
       await audit(p, "one_off_launch_executed", plan.campaign_id, db);
       return {ok: true, kind: "one_off_launch", count: plan.draft_ids.length};

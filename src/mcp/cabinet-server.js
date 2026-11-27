@@ -187,10 +187,11 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
   if (allCampaigns === true && scopes.includes("outreach:send") && scopes.includes("outreach:draft")) {
     register(
       "telegram_one_off_prepare",
-      "Подготовить разовый запуск максимум двух сохранённых сообщений сегодня по Москве. Постоянное окно сохраняется. Без daily_limit разовый потолок не выше обычного лимита плюс два (до 100); daily_limit явно предлагает новый постоянный лимит и тот же разовый потолок. Покажите полный план, получателей, тексты, время и ограничения, затем запросите явное одобрение. Подготовка только сохраняет план.",
+      "Подготовить разовый запуск максимум двух сохранённых сообщений сегодня по Москве. campaign_window_end явно предлагает новое постоянное окончание окна; начало окна сохраняется. Без daily_limit разовый потолок не выше обычного лимита плюс два (до 100); daily_limit явно предлагает новый постоянный лимит и тот же разовый потолок. Покажите полный план, получателей, тексты, время и ограничения, затем запросите явное одобрение. Подготовка только сохраняет план.",
       campaign.extend({
         draft_ids: z.array(id).min(1).max(2).refine(ids => new Set(ids.map(value => value.toLowerCase())).size === ids.length),
         daily_limit: z.number().int().min(1).max(100).optional(),
+        campaign_window_end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
         window_start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
         window_end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
       }).strict().refine(input => input.window_end > input.window_start),
@@ -199,7 +200,7 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
     );
     register(
       "telegram_one_off_execute",
-      "Выполнить точный разовый план только после явного одобрения человеком. План действует только сегодня и в согласованном окне; изменения состояния отклоняют запуск. Постоянное окно сохраняется; только явно предложенный в плане постоянный лимит меняется.",
+      "Выполнить точный разовый план только после явного одобрения человеком. План действует только сегодня и в согласованном окне; изменения состояния отклоняют запуск. Начало постоянного окна сохраняется; только явно предложенные в плане постоянные лимит и окончание окна меняются.",
       z.object({confirmation_token: z.string().min(20).max(200), confirm: z.literal(true)}).strict(),
       null, false,
       input => client.post("/api/cabinet/one-off/execute", input),

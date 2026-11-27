@@ -78,6 +78,25 @@ test('one-off launch is exact, scoped, same-day, atomic and limited to two extra
       await query("INSERT INTO cabinet_campaigns(owner_id,connection_id,name,daily_limit,window_start,window_end) VALUES($1,$2,'sibling',10,'12:02','13:55')",[low.owner_id,low.connection_id]);
       await assert.rejects(prepare(low,low.p,{...low.input,daily_limit:20}),/connection_schedule_conflict/);
     });
+    await t.test('reviewed permanent end 15:55 and limit 20 apply atomically with exactly two jobs',async()=>{
+      const f=await fixture();const input={...f.input,daily_limit:20,campaign_window_end:'15:55'};
+      const plan=await prepare(f,f.p,input);
+      assert.deepEqual([plan.preview.window_start,plan.preview.window_end,plan.preview.permanent_window_end,plan.preview.permanent_daily_limit],['12:02:00','13:55:00','15:55',20]);
+      assert.deepEqual((await query('SELECT daily_limit,window_start,window_end,paused FROM cabinet_campaigns WHERE id=$1',[f.campaign_id])).rows[0],{daily_limit:10,window_start:'12:02:00',window_end:'13:55:00',paused:true});
+      assert.equal((await jobs(f)).length,10);
+      await execute(f,plan);
+      assert.deepEqual((await query('SELECT daily_limit,window_start,window_end,paused FROM cabinet_campaigns WHERE id=$1',[f.campaign_id])).rows[0],{daily_limit:20,window_start:'12:02:00',window_end:'15:55:00',paused:false});
+      assert.equal((await jobs(f)).length,12);assert.ok((await jobs(f)).filter(j=>j.one_off_day).every(j=>j.one_off_daily_limit===20));
+      const endOnly=await fixture();const endPlan=await prepare(endOnly,endOnly.p,{...endOnly.input,campaign_window_end:'15:55'});await execute(endOnly,endPlan);
+      assert.deepEqual((await query('SELECT daily_limit,window_start,window_end FROM cabinet_campaigns WHERE id=$1',[endOnly.campaign_id])).rows[0],{daily_limit:10,window_start:'12:02:00',window_end:'15:55:00'});
+    });
+    await t.test('proposed permanent end rejects malformed or insufficient windows, sibling conflict and stale settings',async()=>{
+      const f=await fixture();for(const campaign_window_end of ['25:00','12:00','12:30',null,15])await assert.rejects(prepare(f,f.p,{...f.input,daily_limit:20,campaign_window_end}),/one_off_invalid/);
+      const plan=await prepare(f,f.p,{...f.input,daily_limit:20,campaign_window_end:'15:55'});
+      await query("UPDATE cabinet_campaigns SET window_end='14:55' WHERE id=$1",[f.campaign_id]);await assert.rejects(execute(f,plan),/plan_changed/);assert.equal((await jobs(f)).length,10);
+      const sibling=await fixture();await query("INSERT INTO cabinet_campaigns(owner_id,connection_id,name,daily_limit,window_start,window_end) VALUES($1,$2,'sibling',20,'12:02','13:55')",[sibling.owner_id,sibling.connection_id]);
+      await assert.rejects(prepare(sibling,sibling.p,{...sibling.input,daily_limit:20,campaign_window_end:'15:55'}),/connection_schedule_conflict/);
+    });
     await t.test('strict input rejects caller day, ceiling, identities, duplicates, invalid windows and more than two',async()=>{
       const f=await fixture();for(const input of [{...f.input,one_off_day:'2026-11-28'},{...f.input,daily_limit:99},{...f.input,paused:false},{...f.input,draft_ids:[]},{...f.input,draft_ids:[f.drafts[0].id,f.drafts[0].id]},{...f.input,draft_ids:[...f.input.draft_ids,randomUUID()]},{...f.input,window_end:'25:00'},{...f.input,window_end:'13:00'}])await assert.rejects(prepare(f,f.p,input),/one_off_invalid/);
     });
