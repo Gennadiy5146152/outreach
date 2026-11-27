@@ -354,6 +354,14 @@ export function createCabinet({
     run(async (req, res) => res.json(await store.editCampaignWindow(req.cabinet, req.params.id, req.body))),
   );
   router.post(
+    "/campaigns/:id/one-off/prepare",
+    run(async (req, res) => res.json(await store.prepareOneOff(req.cabinet, req.params.id, req.body))),
+  );
+  router.post(
+    "/one-off/execute",
+    run(async (req, res) => res.json(await store.executeOneOff(req.cabinet, req.body))),
+  );
+  router.post(
     "/campaigns/:id/queue-edit/prepare",
     run(async (req, res) => res.json(await store.prepareQueueEdit(req.cabinet, req.params.id, req.body))),
   );

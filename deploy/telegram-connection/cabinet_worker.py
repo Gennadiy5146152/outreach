@@ -7,7 +7,7 @@ import logging
 import os
 import signal
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -52,7 +52,32 @@ def reply_parent(event):
     return getattr(header, "reply_to_msg_id", None)
 
 
+def one_off_state(job, at):
+    day, start, end, limit = (job.get(key) for key in (
+        "one_off_day", "one_off_window_start", "one_off_window_end", "one_off_daily_limit"))
+    if all(value is None for value in (day, start, end, limit)):
+        return None
+    scheduled = job.get("scheduled_at")
+    if (type(day) is not date or type(start) is not time or type(end) is not time
+            or start.tzinfo is not None or end.tzinfo is not None or start >= end
+            or type(limit) is not int or not 1 <= limit <= 100
+            or not isinstance(scheduled, datetime) or scheduled.utcoffset() is None):
+        return "invalid"
+    scheduled = scheduled.astimezone(MSK)
+    if scheduled.date() != day or not start <= scheduled.time() < end:
+        return "invalid"
+    local = at.astimezone(MSK)
+    if local.date() > day or (local.date() == day and local.time() >= end):
+        return "expired"
+    if local.date() != day or local.time() < start:
+        return "waiting"
+    return "active"
+
+
 def within_window(job, at):
+    one_off = one_off_state(job, at)
+    if one_off is not None:
+        return one_off == "active"
     local = at.astimezone(MSK)
     return local.weekday() < 5 and job["window_start"] <= local.time() < job["window_end"]
 
@@ -199,10 +224,26 @@ class CabinetWorker:
         await db.execute("UPDATE cabinet_jobs SET status='cancelled',error_code=%s WHERE connection_id=%s AND status='queued'", (code, row["id"]))
         await self.update(db, row, "connected", error_code=code)
 
+    async def check_delivery_window(self, db, job):
+        at = datetime.now(UTC)
+        one_off = one_off_state(job, at)
+        if one_off in ("expired", "invalid"):
+            code = "one_off_window_expired" if one_off == "expired" else "one_off_invalid"
+            await db.execute("UPDATE cabinet_jobs SET status='cancelled',error_code=%s,completed_at=now() WHERE id=%s AND status='queued'",
+                             (code, job["id"]))
+            return False
+        return within_window(job, at)
+
     async def send_one(self, db, row, client):
         if not self.enabled:
             return
         async with self.delivery_lock(db, row["owner_id"]):
+            # Expiry also releases paused/stopped jobs, which the delivery query excludes.
+            local = datetime.now(UTC).astimezone(MSK)
+            await db.execute("""UPDATE cabinet_jobs SET status='cancelled',error_code='one_off_window_expired',completed_at=now()
+                WHERE connection_id=%s AND status='queued' AND one_off_day IS NOT NULL
+                  AND (one_off_day<%s OR (one_off_day=%s AND one_off_window_end<=%s))""",
+                (row["id"], local.date(), local.date(), local.time()))
             job = await (await db.execute("""SELECT j.*,c.window_start,c.window_end,c.daily_limit
                 FROM cabinet_jobs j JOIN cabinet_campaigns c ON c.id=j.campaign_id
                 JOIN cabinet_connections t ON t.id=j.connection_id JOIN cabinet_accounts a ON a.id=j.owner_id
@@ -210,11 +251,14 @@ class CabinetWorker:
                 WHERE j.connection_id=%s AND t.generation=%s AND t.status='connected' AND a.active
                   AND NOT c.paused AND NOT d.stopped AND j.status='queued' AND j.scheduled_at<=now()
                 ORDER BY j.scheduled_at,j.id LIMIT 1""", (row["id"], row["generation"]))).fetchone()
-            if not job or not within_window(job, datetime.now(UTC)):
+            if not job or not await self.check_delivery_window(db, job):
                 return
             usage = await (await db.execute("""SELECT count(*) n,max(attempted_at) last_at FROM cabinet_jobs
                 WHERE connection_id=%s AND attempted_at >= (date_trunc('day',now() AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow')""", (row["id"],))).fetchone()
-            if usage["n"] >= job["daily_limit"] or (usage["last_at"] and datetime.now(UTC) - usage["last_at"] < timedelta(minutes=3)):
+            daily_limit = job["daily_limit"]
+            if job.get("one_off_day") is not None:
+                daily_limit = min(job["one_off_daily_limit"], daily_limit + 2, 100)
+            if usage["n"] >= daily_limit or (usage["last_at"] and datetime.now(UTC) - usage["last_at"] < timedelta(minutes=3)):
                 return
             # Username reassignment must never redirect a scheduled message to another person.
             try:
@@ -224,7 +268,7 @@ class CabinetWorker:
             except (ValueError, errors.UsernameInvalidError, errors.UsernameNotOccupiedError):
                 await db.execute("UPDATE cabinet_jobs SET status='failed',error_code='telegram_recipient_changed',completed_at=now() WHERE id=%s AND status='queued'", (job["id"],))
                 return
-            if not within_window(job, datetime.now(UTC)):
+            if not await self.check_delivery_window(db, job):
                 return
             # Commit attempt before the RPC. Restart/timeout never blindly re-sends it.
             await db.execute("UPDATE cabinet_jobs SET status='sending',attempted_at=now() WHERE id=%s AND status='queued'", (job["id"],))
