@@ -88,6 +88,8 @@ test("scoped MCP advertises only granted tools, no account, QR or arbitrary hist
         "drafts_list",
         "outreach_thread_get",
         "queue_list",
+        "campaign_stats_get",
+        "outreach_reviews_list",
       ].sort(),
     );
     await assert.rejects(
@@ -119,6 +121,25 @@ test("scoped MCP advertises only granted tools, no account, QR or arbitrary hist
       ["cabinet_access"],
     ),
   );
+});
+test('conversion tools are read scoped; outcome edits require read+draft and cannot change delivery',async()=>{
+ const campaign_id='00000000-0000-4000-8000-000000000001',job_id='00000000-0000-4000-8000-000000000002';
+ await session(['outreach:read'],async(client,calls)=>{
+  const tools=(await client.listTools()).tools;assert.ok(tools.some(t=>t.name==='campaign_stats_get'));
+  assert.equal(tools.some(t=>t.name==='outreach_outcome_update'),false);
+  await client.callTool({name:'campaign_stats_get',arguments:{campaign_id,from:'2026-11-27',to:'2026-11-27'}});
+  assert.equal(calls[0],`/api/cabinet/campaigns/${campaign_id}/stats`);
+ });
+ await session(['outreach:read','outreach:draft'],async(client,calls)=>{
+  const base={campaign_id,job_id,status:'interested',reason:'Просит цену',expected_snapshot:'a'.repeat(32),evidence_message_ids:['123']};
+  for(const extra of [{status:'sent'},{owner_id:campaign_id},{source:'manual'},{scheduled_at:'tomorrow'},{evidence_message_ids:[]},{expected_snapshot:'bad'}]){
+   assert.equal((await client.callTool({name:'outreach_outcome_update',arguments:{...base,...extra}})).isError,true);
+  }
+  assert.equal(calls.length,0);
+  await client.callTool({name:'outreach_outcome_update',arguments:base});
+  assert.equal(calls[0].path,`/api/cabinet/campaigns/${campaign_id}/reviews/${job_id}`);
+  assert.equal(calls[0].input.status,'interested');
+ });
 });
 test("send scope accepts stored draft IDs only, preserves confirmation preview and rejects ad hoc bodies", async () => {
   await session(["outreach:send"], async (client, calls) => {
