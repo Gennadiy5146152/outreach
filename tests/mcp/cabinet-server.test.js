@@ -89,6 +89,9 @@ test("scoped MCP advertises only granted tools, no account, QR or arbitrary hist
         "outreach_thread_get",
         "queue_list",
         "campaign_stats_get",
+        "campaign_response_stats_get",
+        "campaign_response_schedule_get",
+        "outreach_media_list",
         "outreach_reviews_list",
         "outreach_followups_list",
       ].sort(),
@@ -259,5 +262,17 @@ test('deferred worklist is read-only and strictly scoped, with no automatic date
   const campaign_id='00000000-0000-4000-8000-000000000001';
   for(const extra of [{view:'yesterday'},{page:0},{page_size:101},{follow_up_on:'2026-12-12'},{owner_id:campaign_id}])assert.equal((await client.callTool({name:'outreach_followups_list',arguments:{campaign_id,...extra}})).isError,true);
   assert.equal(calls.length,0);await client.callTool({name:'outreach_followups_list',arguments:{campaign_id,view:'due'}});assert.deepEqual(calls,[`/api/cabinet/campaigns/${campaign_id}/followups`]);
+ });
+});
+
+test('all response analytics and media metadata are read scoped, without calendar or file-path writes',async()=>{
+ await session(['outreach:read'],async(client,calls)=>{
+  const campaign_id='00000000-0000-4000-8000-000000000001',names=(await client.listTools()).tools.map(t=>t.name);
+  for(const name of ['campaign_response_stats_get','campaign_response_schedule_get','outreach_media_list'])assert.ok(names.includes(name));
+  assert.ok(!names.includes('campaign_response_schedule_update'));
+  for(const extra of [{mode:'business'},{side:'manager'},{status:'success'},{page_size:101},{start:'09:00'},{file_path:'/etc/hosts'}])assert.equal((await client.callTool({name:'campaign_response_stats_get',arguments:{campaign_id,...extra}})).isError,true);
+  assert.equal((await client.callTool({name:'outreach_media_list',arguments:{campaign_id,storage_key:'outside'}})).isError,true);assert.equal(calls.length,0);
+  await client.callTool({name:'campaign_response_stats_get',arguments:{campaign_id,mode:'working',side:'artem',status:'pending'}});await client.callTool({name:'campaign_response_schedule_get',arguments:{campaign_id}});await client.callTool({name:'outreach_media_list',arguments:{campaign_id}});
+  assert.deepEqual(calls,[`/api/cabinet/campaigns/${campaign_id}/response-analytics`,`/api/cabinet/campaigns/${campaign_id}/response-schedule`,`/api/cabinet/campaigns/${campaign_id}/media`]);
  });
 });

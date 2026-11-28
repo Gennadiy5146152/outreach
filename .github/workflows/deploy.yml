@@ -60,6 +60,7 @@ jobs:
         run: |
           pip install -r deploy/telegram-connection/requirements.txt
           python -B -m unittest discover -s tests -p cabinet_worker_test.py -v
+          python -B -m unittest discover -s tests -p cabinet_media_test.py -v
 
       - name: Validate production image build
         run: docker build -t "outreach-desk-app:${GITHUB_SHA}" .

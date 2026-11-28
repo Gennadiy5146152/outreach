@@ -1,0 +1,25 @@
+<section id="response" data-cabinet-page hidden>
+  <div class="response-heading"><div><span class="response-eyebrow">TELEGRAM OUTREACH</span><h2>Скорость ответа</h2><p>От сообщения до следующего ответа в переписке.</p></div><button id="responseRefresh" class="response-refresh" type="button" aria-label="Обновить скорость ответа">↻</button></div>
+  <div id="responseEmpty" class="response-empty" hidden><h3>Пока нет рассылок</h3><p>Выберите или создайте рассылку, чтобы посмотреть время ответа.</p><a href="#campaigns">К рассылкам</a></div>
+  <div id="responseContent" hidden>
+    <form id="responseFilters" class="response-filters">
+      <label class="response-campaign">Рассылка<select id="responseCampaign" aria-label="Рассылка для анализа скорости"></select></label>
+      <label>С даты<input id="responseFrom" type="date"></label><label>По дату<input id="responseTo" type="date"></label>
+      <label>Источник<select id="responseGroup"><option value="">Все группы</option></select></label><button type="submit">Показать</button>
+    </form>
+    <div class="response-options"><label>Считать время<select id="responseMode"><option value="elapsed">Всё прошедшее</option><option value="working">Только рабочее</option></select></label><label>Чей ответ<select id="responseSide"><option value="artem">Ответ Артёма клиенту</option><option value="client">Ответ клиента на обращение</option></select></label><label>Эпизоды<select id="responseStatus"><option value="all">Все состояния</option><option value="answered">Ответ получен</option><option value="pending">Без следующего ответа</option><option value="anomaly">Ошибки времени</option></select></label></div>
+    <p class="response-basis">Период — московский день начала эпизода, а не первого отправления в аналитике конверсий.</p>
+    <div class="response-calendar-row"><p id="responseCalendar"></p><button id="responseScheduleEdit" class="response-secondary" type="button" disabled>Рабочие часы</button></div>
+    <p id="responseError" class="response-error" role="alert" hidden></p>
+    <div class="response-kpis" aria-live="polite">
+      <article class="response-kpi"><span>Медиана ответа</span><strong id="responseMedian">—</strong><small class="response-answered-note">Только полученные ответы</small></article>
+      <article class="response-kpi"><span>90% ответов в пределах</span><strong id="responseP90">—</strong><small>Только полученные ответы</small></article>
+      <article class="response-kpi"><span>Без следующего ответа</span><strong id="responsePending">—</strong><small>Не означает, что ответ необходим</small></article>
+      <article class="response-kpi"><span>Самое долгое ожидание</span><strong id="responseOldest">—</strong><small>На момент обновления данных</small></article>
+    </div>
+    <div class="response-charts"><article class="response-card"><div class="response-card-heading"><div><h3>Время ответа по дням</h3><p>Только завершённые эпизоды</p></div><div class="response-legend"><span>Медиана</span><span>p90</span></div></div><div id="responseTrend"></div></article><article class="response-card"><h3>По источникам</h3><div id="responseSources"></div></article></div>
+    <div class="response-table-heading"><h3>Эпизоды переписки</h3><p id="responseUpdatedAt"></p></div>
+    <div class="response-card response-table-card"><div id="responseRows"></div><div class="response-pagination"><span id="responsePage"></span><div><button id="responsePrev" class="response-secondary" type="button" aria-label="Предыдущая страница">←</button><button id="responseNext" class="response-secondary" type="button" aria-label="Следующая страница">→</button></div></div></div>
+  </div>
+  <dialog id="responseScheduleDialog" class="response-dialog" aria-labelledby="responseScheduleTitle"><h2 id="responseScheduleTitle">Рабочие часы для анализа</h2><p>Москва · Europe/Moscow. Изменения пересчитывают всю историю. Время отправки сообщений не меняется.</p><form id="responseScheduleForm"><fieldset id="responseWeekdays"><legend>Рабочие дни</legend><label><input type="checkbox" value="1">Пн</label><label><input type="checkbox" value="2">Вт</label><label><input type="checkbox" value="3">Ср</label><label><input type="checkbox" value="4">Чт</label><label><input type="checkbox" value="5">Пт</label><label><input type="checkbox" value="6">Сб</label><label><input type="checkbox" value="7">Вс</label></fieldset><div class="response-hours"><label>Начало<input id="responseScheduleStart" type="time" required></label><label>Окончание<input id="responseScheduleEnd" type="time" required></label></div><p>Один дневной интервал; без праздников и переноса через полночь.</p><p id="responseScheduleError" class="response-error" role="alert" hidden></p><div class="response-dialog-actions"><button id="responseScheduleSave" type="submit">Сохранить</button><button id="responseScheduleCancel" class="response-secondary" type="button">Отмена</button></div></form></dialog>
+</section>

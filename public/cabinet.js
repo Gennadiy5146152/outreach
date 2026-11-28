@@ -6,6 +6,8 @@ import {
 import { createQrPoller } from "./qr-polling.js";
 import {createCabinetStats} from './cabinet-stats.js';
 import {createCabinetFollowUps} from './cabinet-followups.js';
+import {createCabinetResponse} from './cabinet-response.js';
+import {renderCabinetMessage} from './cabinet-thread.js';
 const $ = (id) => document.getElementById(id);
 let csrf = "",
   connections = [],
@@ -21,6 +23,13 @@ let csrf = "",
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
 const errors = {
+  response_filters_invalid:'Проверьте даты, группу и режим расчёта.',
+  response_schedule_invalid:'Проверьте рабочие дни и часы: окончание должно быть позже начала.',
+  response_schedule_changed:'Рабочее расписание изменилось. Обновите данные и повторите настройку.',
+  media_not_ready:'Файл ещё не сохранён на сервере.',
+  media_unavailable:'Не удалось открыть сохранённый файл.',
+  media_not_found:'Файл не найден в этой рассылке.',
+  media_filters_invalid:'Проверьте параметры списка файлов.',
   follow_up_invalid:'Проверьте дату и заметку.',
   follow_up_filters_invalid:'Проверьте выбранный список.',
   follow_up_not_deferred:'Статус контакта изменился. Обновите список отложенных.',
@@ -196,6 +205,7 @@ function at(value) {
 }
 const cabinetStats=createCabinetStats({api,at,onCampaignChange:async id=>{campaignId=id;$("campaignSelect").value=id;await loadContent();}});
 const cabinetFollowUps=createCabinetFollowUps({api,at,onCampaignChange:async id=>{campaignId=id;$("campaignSelect").value=id;await loadContent();}});
+const cabinetResponse=createCabinetResponse({api,at,onCampaignChange:async id=>{campaignId=id;$("campaignSelect").value=id;await loadContent();}});
 function card(title, body) {
   const box = node("div", undefined, "card");
   box.append(node("h3", title));
@@ -285,6 +295,7 @@ async function refresh() {
   $("campaignSelect").value = campaignId;
   cabinetStats.setCampaigns(campaigns);
   cabinetFollowUps.setCampaigns(campaigns);
+  cabinetResponse.setCampaigns(campaigns);
   updateCampaignLayout();
   await loadContent();
   await loadTokens();
@@ -520,9 +531,9 @@ async function loadContent() {
   $("campaignState").textContent = c
     ? `${c.paused ? "На паузе" : "Запущена"} · до ${c.daily_limit} сообщений в день · ${c.window_start.slice(0, 5)}–${c.window_end.slice(0, 5)} МСК`
     : "Создайте рассылку.";
-  const statistics=cabinetStats.select(campaignId),followups=cabinetFollowUps.select(campaignId);
-  if (!c) {await Promise.all([statistics,followups]);return;}
-  await Promise.all([loadDrafts(),loadQueue(),statistics,followups]);
+  const statistics=cabinetStats.select(campaignId),followups=cabinetFollowUps.select(campaignId),response=cabinetResponse.select(campaignId);
+  if (!c) {await Promise.all([statistics,followups,response]);return;}
+  await Promise.all([loadDrafts(),loadQueue(),statistics,followups,response]);
 }
 function recipientLabel(item) {
   if (!item.recipient_source) return item.address;
@@ -593,15 +604,7 @@ async function loadQueue() {
       button("Сообщение и ответы", async () => {
         const msgs = await api(`/campaigns/${campaignId}/threads/${job.id}`);
         $("thread").replaceChildren(card("Текст задания", job.body));
-        for (const m of msgs)
-          $("thread").append(
-            card(
-              (m.direction === "outbound" ? "Вы" : "Ответ") +
-                " · " +
-                at(m.sent_at),
-              m.body,
-            ),
-          );
+        for (const m of msgs) $("thread").append(renderCabinetMessage(m,{at}));
       }),
     );
     $("queue").append(box);
@@ -887,6 +890,7 @@ const pageTitles = {
   campaigns: "Рассылки",
   analytics: "Аналитика",
   followups: "Вернуться позже",
+  response: "Скорость ответа",
   tokens: "Доступы MCP",
   profile: "Мой профиль",
 };
@@ -910,6 +914,7 @@ function renderCabinetPage({ focus = false } = {}) {
     if (qrId && !$("qrPanel").hidden) watchQr(qrId);
     else if (active) watchQr(active.id);
   }
+  if(id === "response" && focus)void cabinetResponse.refresh();
   if(id === "followups" && focus)void cabinetFollowUps.refresh();
   if (focus) {
     $("notice").textContent = "";

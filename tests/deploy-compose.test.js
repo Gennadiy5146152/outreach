@@ -55,7 +55,7 @@ test("private Telegram sessions are mounted only in their dedicated worker", () 
   assert.deepEqual(worker.profiles, ["cabinet-telegram"]);
   assert.equal(worker.read_only, true);
   assert.deepEqual(worker.cap_drop, ["ALL"]);
-  assert.equal(worker.volumes.length, 1);
+  assert.equal(worker.volumes.length, 2);
   assert.equal(worker.volumes[0].target, "/var/lib/cabinet-telegram");
   assert.equal(worker.volumes[0].type, "volume");
   assert.equal(worker.environment.CABINET_TELEGRAM_SEND_ENABLED, "false");
@@ -101,4 +101,12 @@ test("mailbox secret updates use a persistent runtime env file", () => {
     assert.equal(environment.MAILBOX_PERSISTENCE_TEST, "runtime-file");
     assert.equal(environment.OUTREACH_SECRETS_FILE, "/app/storage/runtime.env");
   }
+});
+
+test('private media has a separate worker-write/web-read mount without shared session access',()=>{
+ const config=productionConfig(['cabinet-telegram']),worker=config.services['cabinet-telegram'],web=config.services.web;
+ const archive=worker.volumes.find(v=>v.target==='/var/lib/cabinet-media'),reader=web.volumes.find(v=>v.target==='/app/cabinet-media');
+ assert.ok(archive&&reader);assert.equal(archive.type,'bind');assert.equal(reader.source,archive.source);assert.equal(reader.read_only,true);assert.equal(Boolean(archive.read_only),false);assert.ok(worker.group_add.map(String).includes('1000'));
+ assert.equal(web.environment.CABINET_MEDIA_DIR,'/app/cabinet-media');assert.equal(worker.environment.CABINET_MEDIA_DIR,'/var/lib/cabinet-media');
+ assert.ok(!archive.source.startsWith(config.services.web.volumes.find(v=>v.target==='/app/storage').source+'/'));
 });

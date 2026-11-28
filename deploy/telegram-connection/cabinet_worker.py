@@ -19,6 +19,7 @@ import qrcode.image.svg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from telethon import TelegramClient, events, errors, functions, types
 from telethon.sessions import SQLiteSession
+from cabinet_media import MediaArchive, enqueue_message, rpc_allowed
 
 logging.getLogger("telethon").setLevel(logging.CRITICAL)
 MSK = timezone(timedelta(hours=3))
@@ -100,6 +101,17 @@ def message_id_from_result(result, random_id):
         if isinstance(update, types.UpdateMessageID) and update.random_id == random_id:
             return update.id
     return None
+
+
+def message_date_from_result(result, message_id):
+    candidates = [result] if isinstance(result, types.UpdateShortSentMessage) else [
+        getattr(update, 'message', None) for update in getattr(result, 'updates', [])]
+    for message in candidates:
+        value = getattr(message, 'date', None)
+        if (getattr(message, 'id', None) == message_id and isinstance(value, datetime)
+                and value.utcoffset() is not None):
+            return value, 'telegram'
+    return datetime.now(UTC), 'service_receipt'
 
 
 class CabinetWorker:
@@ -265,11 +277,12 @@ class CabinetWorker:
                 if not job or (allowed_job_ids is not None and job['id'] not in allowed_job_ids):
                     return False
                 saved = await db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,
-                    telegram_message_id,reply_to_message_id,direction,body,sent_at)
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    telegram_message_id,reply_to_message_id,direction,body,sent_at,timestamp_source)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'telegram')
                     ON CONFLICT(connection_id,telegram_message_id) DO NOTHING""",
                     (job['owner_id'], job['id'], job['connection_id'], peer, message.id, parent,
                      direction, (message.message or '')[:16000], message.date))
+                await enqueue_message(db, job, message)
                 return saved.rowcount == 1
 
     async def recover_messages(self, row, client, job_ids, since, until, *, max_messages=1000):
@@ -427,7 +440,7 @@ class CabinetWorker:
                          (code, job["id"]))
 
     async def send_one(self, db, row, client):
-        if not self.enabled:
+        if not self.enabled or not await rpc_allowed(db,row['id']):
             return
         async with self.delivery_lock(db, row["owner_id"], row['id']):
             # Expiry also releases paused/stopped jobs, which the delivery query excludes.
@@ -471,6 +484,8 @@ class CabinetWorker:
             job = current
             if not await self.check_delivery_window(db, job) or not await self.quota_available(db, row, job):
                 return
+            if not await rpc_allowed(db,row['id']):
+                return
             # Commit attempt before the RPC. Restart/timeout never blindly re-sends it.
             attempt = await db.execute("UPDATE cabinet_jobs SET status='sending',attempted_at=now() WHERE id=%s AND status='queued'", (job["id"],))
             if attempt.rowcount != 1:
@@ -481,12 +496,14 @@ class CabinetWorker:
                 message_id = message_id_from_result(result, job["random_id"])
                 if not message_id:
                     raise RuntimeError("telegram_delivery_uncertain")
+                sent_at, timestamp_source = message_date_from_result(result, message_id)
                 async with db.transaction():
                     await db.execute("UPDATE cabinet_jobs SET status='sent',completed_at=now(),telegram_message_id=%s WHERE id=%s AND status='sending'", (message_id, job["id"]))
                     await db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,
-                        telegram_message_id,direction,body,sent_at) VALUES(%s,%s,%s,%s,%s,'outbound',%s,now())
+                        telegram_message_id,direction,body,sent_at,timestamp_source,media_checked_at)
+                        VALUES(%s,%s,%s,%s,%s,'outbound',%s,%s,%s,now())
                         ON CONFLICT(connection_id,telegram_message_id) DO NOTHING""",
-                        (row["owner_id"], job["id"], row["id"], job["recipient_id"], message_id, job["body"]))
+                        (row["owner_id"], job["id"], row["id"], job["recipient_id"], message_id, job["body"],sent_at,timestamp_source))
             except (errors.FloodWaitError, errors.PeerFloodError):
                 await db.execute("UPDATE cabinet_jobs SET status='failed',error_code='telegram_rate_limit',completed_at=now() WHERE id=%s", (job["id"],))
                 await self.pause(db, row, "telegram_rate_limit")
@@ -497,7 +514,7 @@ class CabinetWorker:
                 await self.pause(db, row, "telegram_delivery_uncertain")
 
     async def connection(self, row):
-        client = None
+        client, media_task = None, None
         async with await self.db() as db:
             locked = await (await db.execute("SELECT pg_try_advisory_lock(hashtext(%s)) locked", ("cabinet-connection:" + str(row["id"]),))).fetchone()
             if not locked["locked"]:
@@ -540,6 +557,7 @@ class CabinetWorker:
                     return
                 # Recover scoped correspondence from Telegram's update state, without inbox/history scans.
                 await client.catch_up()
+                media_task = asyncio.create_task(MediaArchive(self).run(row,client))
                 while not self.stopping.is_set():
                     current = await self.state(db, row)
                     if not current or not current["active"] or current["generation"] != row["generation"] or current["status"] != "connected":
@@ -553,6 +571,9 @@ class CabinetWorker:
                 # Never log exception text: Telegram errors can contain identifiers and RPC parameters.
                 await self.update(db, row, "error", qr_svg=None, password_cipher=None, error_code="telegram_connection_failed")
             finally:
+                if media_task is not None:
+                    media_task.cancel()
+                    await asyncio.gather(media_task,return_exceptions=True)
                 if client:
                     await client.disconnect()
                 await db.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("cabinet-connection:" + str(row["id"]),))
