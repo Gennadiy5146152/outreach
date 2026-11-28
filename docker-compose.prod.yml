@@ -5,7 +5,7 @@ x-app: &app
   env_file:
     - ${OUTREACH_ENV_FILE:-/root/outreach/.env}
     - ${OUTREACH_RUNTIME_ENV_FILE:-/root/outreach/storage/runtime.env}
-  environment:
+  environment: &app_environment
     NODE_ENV: production
     DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
     OUTREACH_SECRETS_FILE: /app/storage/runtime.env
@@ -41,6 +41,19 @@ services:
 
   web:
     <<: *app
+    environment:
+      <<: *app_environment
+      CABINET_MEDIA_DIR: /app/cabinet-media
+    volumes:
+      - type: bind
+        source: ${OUTREACH_STORAGE_DIR:-/root/outreach/storage}
+        target: /app/storage
+      - type: bind
+        source: ${OUTREACH_CABINET_MEDIA_DIR:-/var/lib/outreach-cabinet-media}
+        target: /app/cabinet-media
+        read_only: true
+        bind:
+          create_host_path: false
     build:
       context: .
     command: ["node", "src/server.js"]
@@ -121,8 +134,15 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-outreach}:${POSTGRES_PASSWORD:-outreach}@postgres:5432/${POSTGRES_DB:-outreach}
       CABINET_SESSION_DIR: /var/lib/cabinet-telegram
+      CABINET_MEDIA_DIR: /var/lib/cabinet-media
     volumes:
       - cabinet_telegram_sessions:/var/lib/cabinet-telegram
+      - type: bind
+        source: ${OUTREACH_CABINET_MEDIA_DIR:-/var/lib/outreach-cabinet-media}
+        target: /var/lib/cabinet-media
+        bind:
+          create_host_path: false
+    group_add: ["1000"]
     depends_on:
       postgres:
         condition: service_healthy

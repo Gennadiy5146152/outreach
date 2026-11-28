@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import {createCabinetAnalytics} from './analytics.js';
+import {createResponseAnalytics} from './response-analytics.js';
+import {createCabinetMedia} from './media.js';
 import {
   assertScope,
   ownerOnly,
@@ -75,6 +77,7 @@ export function createCabinetStore({
   withClient,
   now = () => new Date(),
   sendEnabled = false,
+  mediaDir,
 }) {
   const q = (db, sql, args = []) =>
     db ? db.query(sql, args) : query(sql, args);
@@ -1147,14 +1150,20 @@ export function createCabinetStore({
     if (!job) throw fail("thread_not_found", 404);
     return (
       await query(
-        `SELECT direction,body,telegram_message_id,reply_to_message_id,sent_at FROM cabinet_messages
-   WHERE owner_id=$1 AND job_id=$2 ORDER BY telegram_message_id,id LIMIT 500 OFFSET $3`,
-        [p.owner_id, jobId, (page-1)*500],
+        `SELECT m.direction,m.body,m.telegram_message_id,m.reply_to_message_id,m.sent_at,m.timestamp_source,m.media_checked_at,m.media_check_error,
+       CASE WHEN md.id IS NULL THEN NULL ELSE jsonb_build_object('id',md.id,'kind',md.kind,'mime_type',md.mime_type,
+         'size_bytes',md.size_bytes::text,'stored_bytes',md.stored_bytes::text,'duration_seconds',md.duration_seconds,
+         'status',md.status,'error_code',md.error_code,'download_url',CASE WHEN md.status='ready' THEN '/api/cabinet/campaigns/'||$4::text||'/media/'||md.id::text ELSE NULL END) END AS media
+      FROM cabinet_messages m LEFT JOIN cabinet_media md ON md.owner_id=m.owner_id AND md.job_id=m.job_id AND md.connection_id=m.connection_id AND md.telegram_message_id=m.telegram_message_id
+      WHERE m.owner_id=$1 AND m.job_id=$2 ORDER BY m.telegram_message_id,m.id LIMIT 500 OFFSET $3`,
+        [p.owner_id, jobId, (page-1)*500,id],
       )
     ).rows;
   }
   return {
     ...createCabinetAnalytics({query,campaign,ownerTransaction}),
+    ...createResponseAnalytics({query,campaign,ownerTransaction,now}),
+    ...createCabinetMedia({query,campaign,mediaDir}),
     authenticate,
     newSession,
     login,

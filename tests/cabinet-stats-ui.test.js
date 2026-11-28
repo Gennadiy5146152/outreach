@@ -12,7 +12,7 @@ test('analytics navigation preserves the latest page/campaign and correction evi
  const server=http.createServer(async(req,res)=>{
   try{const pathname=new URL(req.url,'http://localhost').pathname;
    if(pathname==='/'){const html=(await fs.readFile(new URL('cabinet.html',publicRoot),'utf8')).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'');res.setHeader('content-type','text/html');res.end(html);return;}
-   if(!['/cabinet.css','/cabinet-stats.js','/cabinet-stats-charts.js'].includes(pathname)){res.writeHead(404);res.end();return;}
+   if(!['/cabinet.css','/cabinet-stats.js','/cabinet-stats-charts.js','/cabinet-thread.js'].includes(pathname)){res.writeHead(404);res.end();return;}
    res.setHeader('content-type',pathname.endsWith('.css')?'text/css':'text/javascript');res.end(await fs.readFile(fileURLToPath(new URL('.'+pathname,publicRoot))));
   }catch(e){res.writeHead(500);res.end(e.message);}
  });

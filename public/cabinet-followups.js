@@ -1,3 +1,4 @@
+import {renderCabinetMessage} from './cabinet-thread.js';
 const $=id=>document.getElementById(id);
 function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
 const dayLabel=day=>new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(day+'T00:00:00Z'));
@@ -12,7 +13,7 @@ export function createCabinetFollowUps({api,at,onCampaignChange}){
    if(id!==campaign||location.hash!=='#followups')return;
    $('followUpThreadTitle').textContent=row.name||row.address;$('followUpThreadMessages').replaceChildren();
    messages.sort((a,b)=>BigInt(a.telegram_message_id)<BigInt(b.telegram_message_id)?-1:1);
-   for(const m of messages){const card=el('article',undefined,'conversion-message');card.append(el('small',(m.direction==='inbound'?'Получатель':'Вы')+' · '+at(m.sent_at)),el('p',m.body||'Сообщение без текста'));$('followUpThreadMessages').append(card);}
+   for(const m of messages){const card=renderCabinetMessage(m,{at});$('followUpThreadMessages').append(card);}
    $('followUpThreadDialog').showModal();
   }catch(e){if(id===campaign)error(e.message);}
  }

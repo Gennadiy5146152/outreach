@@ -1,4 +1,5 @@
 import express from "express";
+import {sendPrivateMedia} from "./media.js";
 import { createCabinetStore } from "./store.js";
 import { createEmailAuth, normalizeEmail } from "./email-auth.js";
 import { createAuthMailer } from "./auth-mail.js";
@@ -29,6 +30,7 @@ export function createCabinet({
       query,
       withClient,
       sendEnabled: env.cabinetTelegramSendEnabled === true,
+      mediaDir: env.cabinetMediaDir,
     }),
     router = express.Router(),
     admin = express.Router(),
@@ -402,6 +404,11 @@ export function createCabinet({
       res.json(await store.queue(req.cabinet, req.params.id, req.query.page)),
     ),
   );
+  router.get('/campaigns/:id/response-analytics',run(async(req,res)=>{const input={...req.query};for(const key of ['page','page_size'])if(input[key]!==undefined){if(typeof input[key]!=='string'||!/^\d+$/.test(input[key]))throw fail('response_filters_invalid');input[key]=Number(input[key]);}res.json(await store.responseAnalytics(req.cabinet,req.params.id,input));}));
+  router.get('/campaigns/:id/response-schedule',run(async(req,res)=>res.json(await store.responseSchedule(req.cabinet,req.params.id))));
+  router.patch('/campaigns/:id/response-schedule',run(async(req,res)=>res.json(await store.saveResponseSchedule(req.cabinet,req.params.id,req.body))));
+  router.get('/campaigns/:id/media',run(async(req,res)=>res.json(await store.mediaList(req.cabinet,req.params.id,req.query))));
+  router.get('/campaigns/:id/media/:mediaId',run(async(req,res)=>sendPrivateMedia(req,res,await store.openMedia(req.cabinet,req.params.id,req.params.mediaId))));
   router.get('/campaigns/:id/stats',run(async(req,res)=>res.json(await store.campaignStats(req.cabinet,req.params.id,req.query))));
   router.get('/campaigns/:id/reviews',run(async(req,res)=>res.json(await store.conversationReviews(req.cabinet,req.params.id,req.query))));
   router.get('/campaigns/:id/followups',run(async(req,res)=>res.json(await store.followUps(req.cabinet,req.params.id,req.query))));

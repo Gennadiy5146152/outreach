@@ -19,6 +19,7 @@ export const env = {
   instagramAppSecret: process.env.INSTAGRAM_APP_SECRET || "",
   instagramApiVersion: process.env.INSTAGRAM_GRAPH_API_VERSION || "v25.0",
   instagramProxyUrl: process.env.INSTAGRAM_HTTPS_PROXY_URL || "",
+  cabinetMediaDir: path.resolve(root,process.env.CABINET_MEDIA_DIR||"storage/cabinet-media"),
   cabinetTelegramSendEnabled: process.env.CABINET_TELEGRAM_SEND_ENABLED === "true",
   cabinetAllowHttp: process.env.CABINET_ALLOW_HTTP === "true",
   outreachAllowHttp: process.env.OUTREACH_ALLOW_HTTP === "true",
