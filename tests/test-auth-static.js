@@ -34,4 +34,18 @@ for (const forbidden of ["AUTH_USER", "AUTH_PASSWORD", "AUTH_SESSION_SECRET", ".
   }
 }
 
-console.log("OK: auth static test passed");
+
+
+// Cabinet users do not have an administrator cookie. Every transitive browser
+// module must be served by the account-page routes before the global admin gate.
+const publicRouteBlock=server.slice(server.indexOf('// Private account pages'),server.indexOf('app.get("/cabinet-admin"'));
+const files=new Set();
+function visit(file){
+ if(files.has(file))return;files.add(file);
+ const source=fs.readFileSync('public/'+file,'utf8');
+ for(const match of source.matchAll(/\bimport\s+[^;]*?from\s*['"]\.\/([^'"]+)['"]/g))visit(match[1]);
+}
+visit('cabinet.js');visit('cabinet-auth.js');
+for(const file of files)if(!publicRouteBlock.includes(JSON.stringify(file)))throw new Error(`Cabinet browser dependency requires public account route: ${file}`);
+
+console.log("OK: auth and transitive cabinet browser routes passed");
