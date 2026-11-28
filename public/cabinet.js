@@ -4,6 +4,7 @@ import {
   clearFormErrors,
 } from "./form-validation.js";
 import { createQrPoller } from "./qr-polling.js";
+import {createCabinetStats} from './cabinet-stats.js';
 const $ = (id) => document.getElementById(id);
 let csrf = "",
   connections = [],
@@ -19,6 +20,12 @@ let csrf = "",
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
 const errors = {
+  stats_filters_invalid:'Проверьте даты и выбранную группу.',
+  outcome_invalid:'Проверьте статус и основание оценки.',
+  outcome_snapshot_changed:'Переписка обновилась. Обновите статистику и оцените диалог заново.',
+  outcome_manual_locked:'В диалоге сохранена ручная оценка владельца.',
+  outcome_evidence_invalid:'Не удалось подтвердить сообщения, на которых основана оценка.',
+  outcome_booking_evidence_required:'Для записи нужно подтверждение договорённости обеими сторонами.',
   telegram_source_invalid: "Группа или автор исходного сообщения не совпадают с выбранным получателем. Отправка не выполнена.",
   telegram_source_unavailable: "Не удалось проверить исходное сообщение в группе. Отправка не выполнена.",
   recipient_source_invalid: "Проверьте группу, числовой ID группы и номер исходного сообщения.",
@@ -183,6 +190,7 @@ function at(value) {
         " МСК"
     : "";
 }
+const cabinetStats=createCabinetStats({api,at,onCampaignChange:async id=>{campaignId=id;$("campaignSelect").value=id;await loadContent();}});
 function card(title, body) {
   const box = node("div", undefined, "card");
   box.append(node("h3", title));
@@ -270,6 +278,7 @@ async function refresh() {
   if (!campaigns.some((c) => c.id === campaignId))
     campaignId = campaigns[0]?.id || "";
   $("campaignSelect").value = campaignId;
+  cabinetStats.setCampaigns(campaigns);
   updateCampaignLayout();
   await loadContent();
   await loadTokens();
@@ -505,9 +514,9 @@ async function loadContent() {
   $("campaignState").textContent = c
     ? `${c.paused ? "На паузе" : "Запущена"} · до ${c.daily_limit} сообщений в день · ${c.window_start.slice(0, 5)}–${c.window_end.slice(0, 5)} МСК`
     : "Создайте рассылку.";
-  if (!c) return;
-  await loadDrafts();
-  await loadQueue();
+  const statistics=cabinetStats.select(campaignId);
+  if (!c) {await statistics;return;}
+  await Promise.all([loadDrafts(),loadQueue(),statistics]);
 }
 function recipientLabel(item) {
   if (!item.recipient_source) return item.address;
@@ -870,6 +879,7 @@ const pageTitles = {
   telegram: "Telegram",
   instagram: "Instagram",
   campaigns: "Рассылки",
+  analytics: "Аналитика",
   tokens: "Доступы MCP",
   profile: "Мой профиль",
 };

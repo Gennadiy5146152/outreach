@@ -184,7 +184,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             await self.db.execute('UPDATE cabinet_jobs SET telegram_message_id=%s,completed_at=now() WHERE id=%s',
                                   (message_id, job['id']))
             await self.db.execute("""INSERT INTO cabinet_messages(owner_id,job_id,connection_id,recipient_id,telegram_message_id,direction,body,sent_at)
-                VALUES(%s,%s,%s,%s,%s,'outbound','Исходящее',now())""", (self.owner, job['id'], self.connection['id'], peer, message_id))
+                VALUES(%s,%s,%s,%s,%s,'outbound','Исходящее',now()-interval '1 second')""", (self.owner, job['id'], self.connection['id'], peer, message_id))
         return job
 
     async def source_job(self, peer=None):

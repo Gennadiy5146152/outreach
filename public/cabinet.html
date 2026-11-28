@@ -67,6 +67,7 @@
           >
             <path d="M4 7h16v13H4zM8 3v8M16 3v8M4 11h16M8 15h3" /></svg
           ><span>Рассылки</span></a
+        ><a href="#analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5M4 19h16M8 15l4-5 4 2 4-7"/></svg><span>Аналитика</span></a
         ><a href="#tokens"
           ><svg
             viewBox="0 0 24 24"
@@ -297,6 +298,28 @@
             <p>Профиль сохраняется только в вашем кабинете. Здесь можно проверить подключение и отключить аккаунт.</p>
             <p>Отправка и чтение Direct пока не добавлены. Официальный API позволяет отвечать на обращения, но не начинать холодную переписку с произвольными пользователями.</p>
           </details>
+        </section>
+        <section id="analytics" data-cabinet-page hidden>
+          <div class="dashboard-title"><div><span class="dashboard-eyebrow">TELEGRAM OUTREACH</span><h2 id="conversionTitle">Аналитика рассылки</h2><p>От первого сообщения до заинтересованного клиента.</p></div><div class="dashboard-live"><i></i><span id="statsUpdatedAt">Данные обновляются</span><button id="statsRefresh" type="button" class="dashboard-refresh" aria-label="Обновить статистику">↻</button></div></div>
+          <div id="statsEmpty" class="empty-state" hidden><h3>Здесь появятся результаты</h3><p>Создайте рассылку и отправьте первое сообщение.</p><a href="#campaigns" class="button-link">К рассылкам</a></div>
+          <div id="conversionPanel" class="dashboard-content">
+            <form id="statsFilters" class="dashboard-filterbar">
+              <label class="dashboard-campaign-label">Рассылка<select id="statsCampaign" aria-label="Рассылка для анализа"></select></label>
+              <div class="dashboard-period"><button type="button" data-stats-period="7" class="is-active">7 дней</button><button type="button" data-stats-period="30">30 дней</button><button type="button" data-stats-period="all">Всё время</button></div>
+              <label>С даты<input id="statsFrom" type="date" /></label><label>По дату<input id="statsTo" type="date" /></label>
+              <label>Источник<select id="statsGroup"><option value="">Все группы</option></select></label><button type="submit" class="dashboard-apply" aria-label="Применить фильтры">Показать</button>
+            </form>
+            <p id="statsError" role="alert" class="conversion-error" hidden></p>
+            <div id="conversionCards" class="dashboard-kpis" aria-live="polite"></div>
+            <div class="dashboard-chart-grid">
+              <div class="dashboard-card dashboard-main-chart"><div class="dashboard-card-header"><div><h3>Отправления и отклик</h3><p>По дате первого обращения</p></div><div class="dashboard-chart-legend"><span class="legend-sent">Написали</span><span class="legend-replied">Ответили</span><span class="legend-interested">Интерес</span></div></div><div id="statsTrend"></div><p class="dashboard-chart-hint">Нажмите на день, чтобы посмотреть его результаты.</p></div>
+              <div class="dashboard-card"><div class="dashboard-card-header"><div><h3>Воронка контакта</h3><p>Конверсия от первого сообщения</p></div><span class="dashboard-small-icon">↗</span></div><div id="statsFunnel"></div><div id="statsFunnelRate" class="funnel-footer"></div></div>
+              <div class="dashboard-card"><div class="dashboard-card-header"><div><h3>Отклик по группам</h3><p>Доля ответивших в каждом источнике</p></div><span class="dashboard-small-icon">↗</span></div><div id="statsSources" class="dashboard-source-list"></div></div>
+              <div class="dashboard-card"><div class="dashboard-card-header"><div><h3>Качество ответов</h3><p>Результаты разбора переписки</p></div></div><div id="statsOutcomeChart" class="dashboard-outcomes"></div></div>
+            </div>
+            <div class="dashboard-review-header"><div><h3>Диалоги и результаты</h3><p id="statsFreshness"></p></div><div id="conversionStages" class="dashboard-stage-summary"></div></div>
+            <div class="dashboard-card dashboard-conversations"><div id="statsReviews" class="dashboard-table-scroll"></div><div class="dashboard-pagination"><span id="statsPage"></span><div><button id="statsPrev" type="button" class="secondary" aria-label="Предыдущая страница">←</button><button id="statsNext" type="button" class="secondary" aria-label="Следующая страница">→</button></div></div></div>
+          </div>
         </section>
         <section id="campaigns" data-cabinet-page hidden>
           <div class="section-heading">
@@ -690,5 +713,18 @@
         ><button id="cancelPlan">Отмена</button>
       </div>
     </dialog>
+    <dialog id="statsEditDialog">
+      <h2>Результат диалога</h2><p id="statsEditPerson" class="muted"></p>
+      <form id="statsEditForm">
+        <label>Статус<select id="statsEditStatus" required></select></label>
+        <label>Основание<textarea id="statsEditReason" rows="3" minlength="3" maxlength="1000" required></textarea></label>
+        <label>Сообщения, подтверждающие результат<select id="statsEditEvidence" multiple size="6" required></select></label>
+        <small class="muted">Выберите от одного до 20 сообщений. При смене статуса выберите основания заново.</small>
+        <p class="muted">Ручная оценка защищена от изменений агентом. Подтверждайте запись только при фактической договорённости.</p>
+        <p id="statsEditError" role="alert" class="conversion-error" hidden></p>
+        <div class="row"><button type="submit">Сохранить результат</button><button id="statsEditCancel" type="button" class="secondary">Отмена</button></div>
+      </form>
+    </dialog>
+    <dialog id="statsThreadDialog"><div class="conversion-heading"><h2 id="statsThreadTitle">Переписка</h2><button id="statsThreadClose" type="button" class="secondary">Закрыть</button></div><div id="statsThreadMessages"></div></dialog>
   </body>
 </html>

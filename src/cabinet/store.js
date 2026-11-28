@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import {createCabinetAnalytics} from './analytics.js';
 import {
   assertScope,
   ownerOnly,
@@ -1133,8 +1134,10 @@ export function createCabinetStore({
       )
     ).rows;
   }
-  async function messages(p, id, jobId) {
+  async function messages(p, id, jobId, page=1) {
     await campaign(p, id);
+    page=Number(page);
+    if(!Number.isInteger(page)||page<1||page>10000)throw fail('stats_filters_invalid');
     const {
       rows: [job],
     } = await query(
@@ -1145,12 +1148,13 @@ export function createCabinetStore({
     return (
       await query(
         `SELECT direction,body,telegram_message_id,reply_to_message_id,sent_at FROM cabinet_messages
-   WHERE owner_id=$1 AND job_id=$2 ORDER BY sent_at,id LIMIT 500`,
-        [p.owner_id, jobId],
+   WHERE owner_id=$1 AND job_id=$2 ORDER BY telegram_message_id,id LIMIT 500 OFFSET $3`,
+        [p.owner_id, jobId, (page-1)*500],
       )
     ).rows;
   }
   return {
+    ...createCabinetAnalytics({query,campaign,ownerTransaction}),
     authenticate,
     newSession,
     login,

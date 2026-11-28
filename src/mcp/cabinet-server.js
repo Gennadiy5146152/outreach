@@ -162,12 +162,19 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
   register(
     "outreach_thread_get",
     "Прочитать сообщение рассылки и сохранённую переписку с этим получателем после отправки, включая обычные ответы без цитирования. История до рассылки и посторонние диалоги недоступны.",
-    campaign.extend({ job_id: id }).strict(),
+    campaign.extend({ job_id: id, page:z.number().int().min(1).max(10000).default(1) }).strict(),
     "outreach:read",
     true,
-    ({ campaign_id, job_id }) =>
-      client.get(`/api/cabinet/campaigns/${campaign_id}/threads/${job_id}`),
+    ({ campaign_id, job_id, page }) =>
+      client.get(`/api/cabinet/campaigns/${campaign_id}/threads/${job_id}`,{query:{page}}),
   );
+  const statsFilters={from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),group_username:z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/).optional()};
+  register('campaign_stats_get','Статистика уникальных получателей по дате первого подтверждённого обращения в Москве. Поздние ответы обновляют исходную группу отправки. Не меняет сообщения.',campaign.extend(statsFilters).strict(),'outreach:read',true,
+    ({campaign_id,...query})=>client.get(`/api/cabinet/campaigns/${campaign_id}/stats`,{query}));
+  register('outreach_reviews_list','Получить только диалоги рассылки для оценки результата, их snapshot и список job_ids. pending_only выбирает новые/изменившиеся оценки агента; ручные решения защищены. Перед оценкой прочитайте всю переписку всех job_ids, страницами по 500 сообщений.',campaign.extend({...statsFilters,page:z.number().int().min(1).max(10000).default(1),page_size:z.number().int().min(1).max(100).default(50),pending_only:z.boolean().default(true)}).strict(),'outreach:read',true,
+    ({campaign_id,...query})=>client.get(`/api/cabinet/campaigns/${campaign_id}/reviews`,{query}));
+  if(scopes.includes('outreach:read')&&scopes.includes('outreach:draft'))register('outreach_outcome_update','Сохранить оценку результата по актуальному snapshot и точным message ID этой переписки. Просьба о цене означает interested, не booked. Запись требует явного подтверждения и доказательств обеих сторон. Меняет только статистику, не отправляет и не останавливает сообщения.',campaign.extend({job_id:id,status:z.enum(['interested','later','declined','not_target','needs_review','booked']),reason:z.string().trim().min(3).max(1000),expected_snapshot:z.string().regex(/^[a-f0-9]{32}$/),evidence_message_ids:z.array(z.string().regex(/^[1-9]\d{0,18}$/)).min(1).max(20)}).strict(),'outreach:draft',false,
+    ({campaign_id,job_id,...body})=>client.patch(`/api/cabinet/campaigns/${campaign_id}/reviews/${job_id}`,body));
   if (scopes.includes("outreach:send") && scopes.includes("outreach:draft")) {
     register(
       "telegram_queue_edit_prepare",
