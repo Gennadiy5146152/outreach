@@ -82,6 +82,17 @@ class PrimitiveTests(unittest.TestCase):
         self.assertFalse(within_window(job, datetime(2026, 11, 30, 9, 30, tzinfo=UTC)))
         self.assertFalse(within_window(job, datetime(2026, 11, 27, 10, 0, tzinfo=UTC)))
 
+    def test_approved_twenty_message_saturday_window_is_active_only_that_day(self):
+        job = {"window_start": time(12, 2), "window_end": time(15, 55),
+               "one_off_mode": "today_batch",
+               "one_off_day": datetime(2026, 11, 28).date(),
+               "one_off_window_start": time(12, 2), "one_off_window_end": time(15, 55),
+               "one_off_daily_limit": 20,
+               "scheduled_at": datetime(2026, 11, 28, 9, 2, tzinfo=UTC)}
+        self.assertTrue(within_window(job, datetime(2026, 11, 28, 9, 30, tzinfo=UTC)))
+        self.assertFalse(within_window(job, datetime(2026, 11, 28, 12, 55, tzinfo=UTC)))
+        self.assertFalse(within_window(job, datetime(2026, 11, 29, 9, 30, tzinfo=UTC)))
+
     def test_partial_or_inconsistent_one_off_metadata_never_uses_ordinary_window(self):
         ordinary = {"window_start": time(12, 2), "window_end": time(13, 55)}
         at = datetime(2026, 11, 27, 9, 30, tzinfo=UTC)
@@ -94,6 +105,20 @@ class PrimitiveTests(unittest.TestCase):
         ):
             with self.subTest(changes=changes):
                 self.assertFalse(within_window({**ordinary, **changes}, at))
+
+
+class TodayBatchQuotaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_today_batch_tracks_current_limit_without_legacy_plus_two(self):
+        worker = object.__new__(CabinetWorker)
+        class DB:
+            async def execute(self, *args):
+                return self
+            async def fetchone(self):
+                return {"n": 10, "last_at": None}
+        job = {"daily_limit": 10, "one_off_day": datetime(2026, 11, 28).date(),
+               "one_off_daily_limit": 20, "one_off_mode": "today_batch"}
+        self.assertFalse(await worker.quota_available(DB(), {"id": "fixture"}, job))
+        self.assertTrue(await worker.quota_available(DB(), {"id": "fixture"}, {**job, "one_off_mode": None}))
 
 
 class QrTests(unittest.IsolatedAsyncioTestCase):

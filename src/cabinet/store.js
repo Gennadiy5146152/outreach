@@ -29,6 +29,7 @@ export function scheduleJobs({
   daily_limit,
   occupied = [],
   count,
+  include_weekends = false,
   random = Math.random,
 }) {
   const start = String(window_start).slice(0, 5),
@@ -55,8 +56,7 @@ export function scheduleJobs({
     const begin = new Date(`${day}T${start}:00+03:00`),
       finish = new Date(`${day}T${end}:00+03:00`);
     if (
-      weekday === 0 ||
-      weekday === 6 ||
+      (!include_weekends && (weekday === 0 || weekday === 6)) ||
       cursor >= finish ||
       (counts.get(day) || 0) >= daily_limit
     ) {
@@ -407,13 +407,14 @@ export function createCabinetStore({
     const address = hasSource ? "tg://user?id=" + input.recipient_id :
       "https://t.me/" + username(String(input.address || "").replace(/^https:\/\/t\.me\//, ""));
     const kind = input.permission_kind || null;
-    if (kind && !["request", "consent"].includes(kind))
+    if (kind && !["request", "consent", "public_context"].includes(kind))
       throw fail("permission_kind_invalid");
     const evidence = String(input.permission_evidence || "");
     if (evidence.length > 1000) throw fail("permission_evidence_invalid");
     const source = String(input.source_url || "");
     if (source && (!source.startsWith("https://") || source.length > 2000))
       throw fail("source_url_invalid");
+    validatePublicContext(kind, evidence, source);
     const {
       rows: [d],
     } = await query(
@@ -450,10 +451,11 @@ export function createCabinetStore({
       throw fail("permission_pair_required");
     const kind = has("permission_kind") ? input.permission_kind : null;
     const evidence = has("permission_evidence") ? input.permission_evidence : null;
-    if (has("permission_kind") && !["request", "consent"].includes(kind))
+    if (has("permission_kind") && !["request", "consent", "public_context"].includes(kind))
       throw fail("permission_kind_invalid");
     if (has("permission_evidence") && (typeof evidence !== "string" || evidence.trim().length < 3 || evidence.length > 1000))
       throw fail("permission_evidence_invalid");
+    validatePublicContext(kind, evidence, source);
     return ownerTransaction(p, async (db) => {
       await campaign(p, id, "outreach:draft", db);
       if ((await db.query(
@@ -703,7 +705,7 @@ export function createCabinetStore({
           s.ds.some(
             (d) =>
               d.stopped ||
-              !d.permission_kind ||
+              !["request", "consent"].includes(d.permission_kind) ||
               d.permission_evidence.trim().length < 3 ||
               used.has(String(d.recipient_id)),
           )
@@ -847,16 +849,29 @@ export function createCabinetStore({
     });
   }
   const moscowDay = date => new Date(date.getTime() + 10800000).toISOString().slice(0, 10);
+  function validatePublicContext(kind, evidence, source) {
+    if (kind !== "public_context") return;
+    if (typeof source !== "string" || !/^https:\/\/t\.me\/[a-zA-Z][a-zA-Z0-9_]{4,31}\/[1-9]\d*$/.test(source) ||
+        typeof evidence !== "string" || evidence.trim().length < 30 || !evidence.includes(source))
+      throw fail("public_context_evidence_required");
+    let data;
+    try { data=JSON.parse(evidence); } catch { throw fail("public_context_evidence_required"); }
+    if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).sort().join(',') !== 'date,quote,source_url' ||
+        typeof data.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.date) ||
+        !Number.isFinite(Date.parse(data.date+'T00:00:00Z')) || new Date(data.date+'T00:00:00Z').toISOString().slice(0,10) !== data.date ||
+        data.date > moscowDay(now()) || typeof data.quote !== 'string' || data.quote.trim().length < 10 ||
+        data.source_url !== source) throw fail("public_context_evidence_required");
+  }
   function oneOffAccess(p) {
     assertScope(p, "outreach:send");
     assertScope(p, "outreach:draft");
     if (p.kind !== "owner" && p.all_campaigns !== true)
       throw fail("one_off_requires_all_campaigns", 403);
   }
-  function oneOffInput(input) {
+  function oneOffInput(input, batch = false) {
     if (!input || typeof input !== "object" || Array.isArray(input) ||
-        Object.keys(input).some(k => !["draft_ids", "window_start", "window_end", "daily_limit", "campaign_window_end"].includes(k)) ||
-        !Array.isArray(input.draft_ids) || !input.draft_ids.length || input.draft_ids.length > 2 ||
+        Object.keys(input).some(k => !(batch ? ["draft_ids", "window_start", "window_end"] : ["draft_ids", "window_start", "window_end", "daily_limit", "campaign_window_end"]).includes(k)) ||
+        !Array.isArray(input.draft_ids) || !input.draft_ids.length || input.draft_ids.length > (batch ? 20 : 2) ||
         typeof input.window_start !== "string" || typeof input.window_end !== "string" ||
         !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.window_start) ||
         !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.window_end) || input.window_end <= input.window_start ||
@@ -866,7 +881,8 @@ export function createCabinetStore({
     const ids = input.draft_ids.map(uuid);
     if (new Set(ids).size !== ids.length) throw fail("one_off_invalid");
     return { ids, day: moscowDay(now()), start: input.window_start, end: input.window_end,
-      permanent_daily_limit: input.daily_limit ?? null, permanent_window_end: input.campaign_window_end ?? null };
+      permanent_daily_limit: input.daily_limit ?? null, permanent_window_end: input.campaign_window_end ?? null,
+      ...(batch ? {batch: true} : {}) };
   }
   async function oneOffSnapshot(p, id, options, db) {
     oneOffAccess(p);
@@ -890,7 +906,12 @@ export function createCabinetStore({
       username: c.username, expected_username: c.expected_username,
       status: c.connection_status, error: c.connection_error,
       daily_limit: c.daily_limit, window_start: c.window_start, window_end: c.window_end };
-    return { c, ds, jobs, siblings, hash: digest(stableJson({settings, ds, jobs, siblings, options})) };
+    const exclusions = options.batch ? (await db.query(
+      `SELECT 'stop' kind, id::text, recipient_id::text FROM cabinet_drafts WHERE owner_id=$1 AND recipient_id=ANY($2::bigint[]) AND stopped
+       UNION ALL SELECT 'history' kind, id::text, recipient_id::text FROM cabinet_jobs WHERE owner_id=$1 AND recipient_id=ANY($2::bigint[])
+       AND (status IN ('queued','sending','uncertain') OR (status='sent' AND coalesce(attempted_at,scheduled_at)>$3::timestamptz-interval '30 days')) ORDER BY kind,id`,
+      [p.owner_id, ds.map(d=>d.recipient_id), now()])).rows : [];
+    return { c, ds, jobs, siblings, exclusions, hash: digest(stableJson({settings, ds, jobs, siblings, options, ...(options.batch ? {exclusions} : {})})) };
   }
   function oneOffEligible(s, options) {
     if (!sendEnabled) throw fail("telegram_sending_disabled", 503);
@@ -902,9 +923,13 @@ export function createCabinetStore({
       throw fail("one_off_outstanding_jobs", 409);
     if (s.ds.length !== options.ids.length) throw fail("draft_not_found", 404);
     const used = new Set(s.jobs.filter(j => ["queued", "sending", "sent", "uncertain"].includes(j.status)).map(j => j.recipient_id));
-    if (s.ds.some(d => d.stopped || !d.permission_kind || d.permission_evidence.trim().length < 3 || used.has(d.recipient_id)))
+    if (s.exclusions?.length || s.ds.some(d => d.stopped || !(options.batch ? ["request", "consent", "public_context"] : ["request", "consent"]).includes(d.permission_kind) || d.permission_evidence.trim().length < 3 || used.has(d.recipient_id)))
       throw fail("draft_not_eligible", 409);
-    const ceiling = options.permanent_daily_limit ?? Math.min(100, s.c.daily_limit + 2);
+    if (options.batch) {
+      if (options.start < s.c.window_start.slice(0,5) || options.end > s.c.window_end.slice(0,5)) throw fail("today_batch_outside_campaign_window");
+      for (const d of s.ds) validatePublicContext(d.permission_kind,d.permission_evidence,d.source_url);
+    }
+    const ceiling = options.batch ? Math.min(20,s.c.daily_limit) : options.permanent_daily_limit ?? Math.min(100, s.c.daily_limit + 2);
     if (options.permanent_daily_limit !== null || options.permanent_window_end !== null) {
       const minutes = v => Number(v.slice(0, 2)) * 60 + Number(v.slice(3, 5));
       const limit = options.permanent_daily_limit ?? s.c.daily_limit;
@@ -916,10 +941,10 @@ export function createCabinetStore({
     }
     return ceiling;
   }
-  async function prepareOneOff(p, id, input) {
+  async function prepareOneOff(p, id, input, batch = false) {
     oneOffAccess(p);
     id = uuid(id);
-    const options = oneOffInput(input);
+    const options = oneOffInput(input, batch);
     return ownerTransaction(p, async db => {
       const s = await oneOffSnapshot(p, id, options, db);
       const ceiling = oneOffEligible(s, options);
@@ -935,11 +960,12 @@ export function createCabinetStore({
       const lastAttempt = Math.max(0, ...s.jobs.filter(j => j.attempted_at).map(j => new Date(j.attempted_at).getTime()));
       const schedulingNow = new Date(Math.max(current.getTime(), lastAttempt + 120000));
       const slots = scheduleJobs({now: schedulingNow, window_start: options.start, window_end: options.end,
-        daily_limit: ceiling, occupied, count: options.ids.length});
+        daily_limit: ceiling, occupied, count: options.ids.length, include_weekends: options.batch === true});
       if (slots.some(slot => moscowDay(new Date(slot)) !== options.day || new Date(slot) >= finish))
         throw fail("one_off_capacity", 409);
       const preview = {
         kind: "one_off_launch", campaign_id: id, campaign: s.c.name,
+        ...(options.batch ? {launch_mode: "today_batch"} : {}),
         sender: s.c.username || s.c.expected_username, sender_id: s.c.telegram_user_id,
         connection_id: s.c.connection_id,
         daily_limit: s.c.daily_limit, window_start: s.c.window_start, window_end: s.c.window_end,
@@ -947,7 +973,8 @@ export function createCabinetStore({
         one_off_day: options.day, one_off_window_start: options.start, one_off_window_end: options.end,
         one_off_daily_limit: ceiling,
         items: s.ds.map((d, i) => ({draft_id: d.id, name: d.name, address: d.address,
-          recipient_id: d.recipient_id, recipient_source: d.recipient_source, body: d.body, scheduled_at: slots[i]})),
+          recipient_id: d.recipient_id, recipient_source: d.recipient_source, body: d.body, scheduled_at: slots[i],
+          ...(options.batch ? {permission_kind:d.permission_kind,permission_evidence:d.permission_evidence,source_url:d.source_url} : {})})),
       };
       const token = randomSecret("plan_");
       await db.query(
@@ -956,6 +983,9 @@ export function createCabinetStore({
       );
       return {confirmation_token: token, requires_confirmation: true, expires_in_seconds: 600, preview};
     });
+  }
+  async function prepareTodayBatch(p,id,input) {
+    return prepareOneOff(p,id,input,true);
   }
   async function executeOneOff(p, input) {
     if (!input || typeof input !== "object" || Array.isArray(input) ||
@@ -974,7 +1004,8 @@ export function createCabinetStore({
       const preview = plan.preview;
       const options = {ids: plan.draft_ids, day: preview.one_off_day, start: preview.one_off_window_start,
         end: preview.one_off_window_end, permanent_daily_limit: preview.permanent_daily_limit,
-        permanent_window_end: preview.permanent_window_end ?? null};
+        permanent_window_end: preview.permanent_window_end ?? null,
+        ...(preview.launch_mode === "today_batch" ? {batch:true} : {})};
       const current = now();
       if (moscowDay(current) !== options.day || current >= new Date(`${options.day}T${options.end}:00+03:00`))
         throw fail("one_off_expired", 409);
@@ -992,9 +1023,9 @@ export function createCabinetStore({
         const random = BigInt("0x" + crypto.randomBytes(8).toString("hex")) & ((1n << 63n) - 1n);
         await db.query(
           `INSERT INTO cabinet_jobs(owner_id,draft_id,campaign_id,connection_id,address,recipient_id,body,random_id,scheduled_at,
-            one_off_day,one_off_window_start,one_off_window_end,one_off_daily_limit,recipient_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+            one_off_day,one_off_window_start,one_off_window_end,one_off_daily_limit,recipient_source,one_off_mode) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
           [p.owner_id, item.draft_id, plan.campaign_id, s.c.connection_id, item.address, item.recipient_id, item.body,
-            String(random || 1n), item.scheduled_at, options.day, options.start, options.end, ceiling, item.recipient_source ?? null],
+            String(random || 1n), item.scheduled_at, options.day, options.start, options.end, ceiling, item.recipient_source ?? null, options.batch ? 'today_batch' : null],
         );
       }
       await db.query("UPDATE cabinet_campaigns SET daily_limit=coalesce($3,daily_limit),window_end=coalesce($4::time,window_end),paused=false,revision=revision+1 WHERE owner_id=$1 AND id=$2",
@@ -1188,6 +1219,7 @@ export function createCabinetStore({
     prepare,
     execute,
     prepareOneOff,
+    prepareTodayBatch,
     executeOneOff,
     prepareQueueEdit,
     executeQueueEdit,

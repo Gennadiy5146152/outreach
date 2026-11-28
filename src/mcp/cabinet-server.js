@@ -121,7 +121,7 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
         name: z.string().max(200).default(""),
         body: z.string().min(1).max(4000),
         source_url: z.url().optional(),
-        permission_kind: z.enum(["request", "consent"]).optional(),
+        permission_kind: z.enum(["request", "consent", "public_context"]).optional(),
         permission_evidence: z.string().max(1000).optional(),
       })
       .strict().refine(input => (input.address !== undefined) !== (input.recipient_source !== undefined)),
@@ -137,7 +137,7 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
       draft_id: id,
       body: z.string().min(1).max(4000).optional(),
       source_url: z.url().startsWith("https://").max(2000).optional(),
-      permission_kind: z.enum(["request", "consent"]).optional(),
+      permission_kind: z.enum(["request", "consent", "public_context"]).optional(),
       permission_evidence: z.string().trim().min(3).max(1000).optional(),
     }).strict().refine(input => (input.permission_kind !== undefined) === (input.permission_evidence !== undefined))
       .refine(input => [input.body, input.source_url, input.permission_kind].some(v => v !== undefined)),
@@ -205,6 +205,13 @@ export function createCabinetMcpServer({ client, scopes = [], allCampaigns = fal
     );
   }
   if (allCampaigns === true && scopes.includes("outreach:send") && scopes.includes("outreach:draft")) {
+    register(
+      "telegram_today_batch_prepare",
+      "Подготовить разовую партию до 20 сообщений только сегодня по Москве, включая выходной, в пределах обычных часов и дневного лимита кампании. Постоянные настройки не меняются. Допускаются request/consent и честно помеченный public_context: это холодное обращение по публичному сообщению, не запрос услуги и не согласие. Для public_context обязательны публичный source_url и permission_evidence как JSON-строка с ровно date (реальная дата YYYY-MM-DD, не в будущем), quote (точная цитата/фрагмент от 10 символов), source_url (та же ссылка). Сохраняются стопы, история отправок по всем профилям владельца, проверка аккаунта и отсутствие незавершённой очереди. Покажите весь возвращённый план с основаниями, получателями, полными текстами и временем; запросите явное одобрение. Только после него используйте telegram_one_off_execute с токеном этого плана. Подготовка не отправляет.",
+      campaign.extend({draft_ids:z.array(id).min(1).max(20).refine(ids=>new Set(ids.map(v=>v.toLowerCase())).size===ids.length),
+        window_start:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),window_end:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)}).strict().refine(v=>v.window_end>v.window_start),
+      null,false,({campaign_id,...body})=>client.post(`/api/cabinet/campaigns/${campaign_id}/today-batch/prepare`,body),
+    );
     register(
       "telegram_one_off_prepare",
       "Подготовить разовый запуск максимум двух сохранённых сообщений сегодня по Москве. campaign_window_end явно предлагает новое постоянное окончание окна; начало окна сохраняется. Без daily_limit разовый потолок не выше обычного лимита плюс два (до 100); daily_limit явно предлагает новый постоянный лимит и тот же разовый потолок. Покажите полный план, получателей, тексты, время и ограничения, затем запросите явное одобрение. Подготовка только сохраняет план.",

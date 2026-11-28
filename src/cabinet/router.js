@@ -356,6 +356,10 @@ export function createCabinet({
     run(async (req, res) => res.json(await store.editCampaignWindow(req.cabinet, req.params.id, req.body))),
   );
   router.post(
+    "/campaigns/:id/today-batch/prepare",
+    run(async (req, res) => res.json(await store.prepareTodayBatch(req.cabinet, req.params.id, req.body))),
+  );
+  router.post(
     "/campaigns/:id/one-off/prepare",
     run(async (req, res) => res.json(await store.prepareOneOff(req.cabinet, req.params.id, req.body))),
   );
