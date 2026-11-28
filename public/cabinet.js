@@ -5,6 +5,7 @@ import {
 } from "./form-validation.js";
 import { createQrPoller } from "./qr-polling.js";
 import {createCabinetStats} from './cabinet-stats.js';
+import {createCabinetFollowUps} from './cabinet-followups.js';
 const $ = (id) => document.getElementById(id);
 let csrf = "",
   connections = [],
@@ -20,6 +21,9 @@ let csrf = "",
 let invite = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (invite) history.replaceState(null, "", location.pathname);
 const errors = {
+  follow_up_invalid:'Проверьте дату и заметку.',
+  follow_up_filters_invalid:'Проверьте выбранный список.',
+  follow_up_not_deferred:'Статус контакта изменился. Обновите список отложенных.',
   stats_filters_invalid:'Проверьте даты и выбранную группу.',
   outcome_invalid:'Проверьте статус и основание оценки.',
   outcome_snapshot_changed:'Переписка обновилась. Обновите статистику и оцените диалог заново.',
@@ -191,6 +195,7 @@ function at(value) {
     : "";
 }
 const cabinetStats=createCabinetStats({api,at,onCampaignChange:async id=>{campaignId=id;$("campaignSelect").value=id;await loadContent();}});
+const cabinetFollowUps=createCabinetFollowUps({api,at,onCampaignChange:async id=>{campaignId=id;$("campaignSelect").value=id;await loadContent();}});
 function card(title, body) {
   const box = node("div", undefined, "card");
   box.append(node("h3", title));
@@ -279,6 +284,7 @@ async function refresh() {
     campaignId = campaigns[0]?.id || "";
   $("campaignSelect").value = campaignId;
   cabinetStats.setCampaigns(campaigns);
+  cabinetFollowUps.setCampaigns(campaigns);
   updateCampaignLayout();
   await loadContent();
   await loadTokens();
@@ -514,9 +520,9 @@ async function loadContent() {
   $("campaignState").textContent = c
     ? `${c.paused ? "На паузе" : "Запущена"} · до ${c.daily_limit} сообщений в день · ${c.window_start.slice(0, 5)}–${c.window_end.slice(0, 5)} МСК`
     : "Создайте рассылку.";
-  const statistics=cabinetStats.select(campaignId);
-  if (!c) {await statistics;return;}
-  await Promise.all([loadDrafts(),loadQueue(),statistics]);
+  const statistics=cabinetStats.select(campaignId),followups=cabinetFollowUps.select(campaignId);
+  if (!c) {await Promise.all([statistics,followups]);return;}
+  await Promise.all([loadDrafts(),loadQueue(),statistics,followups]);
 }
 function recipientLabel(item) {
   if (!item.recipient_source) return item.address;
@@ -880,6 +886,7 @@ const pageTitles = {
   instagram: "Instagram",
   campaigns: "Рассылки",
   analytics: "Аналитика",
+  followups: "Вернуться позже",
   tokens: "Доступы MCP",
   profile: "Мой профиль",
 };
@@ -903,6 +910,7 @@ function renderCabinetPage({ focus = false } = {}) {
     if (qrId && !$("qrPanel").hidden) watchQr(qrId);
     else if (active) watchQr(active.id);
   }
+  if(id === "followups" && focus)void cabinetFollowUps.refresh();
   if (focus) {
     $("notice").textContent = "";
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });

@@ -404,6 +404,8 @@ export function createCabinet({
   );
   router.get('/campaigns/:id/stats',run(async(req,res)=>res.json(await store.campaignStats(req.cabinet,req.params.id,req.query))));
   router.get('/campaigns/:id/reviews',run(async(req,res)=>res.json(await store.conversationReviews(req.cabinet,req.params.id,req.query))));
+  router.get('/campaigns/:id/followups',run(async(req,res)=>res.json(await store.followUps(req.cabinet,req.params.id,req.query))));
+  router.patch('/campaigns/:id/followups/:jobId',run(async(req,res)=>res.json(await store.saveFollowUp(req.cabinet,req.params.id,req.params.jobId,req.body))));
   router.patch('/campaigns/:id/reviews/:jobId',run(async(req,res)=>res.json(await store.saveConversationOutcome(req.cabinet,req.params.id,req.params.jobId,req.body))));
   router.get(
     "/campaigns/:id/threads/:jobId",

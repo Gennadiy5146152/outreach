@@ -99,6 +99,42 @@ test('cabinet conversion statistics and evidence-based outcomes', {skip:!connect
    assert.equal(new Set([...one.items,...two.items].map(x=>x.recipient_id)).size,3);
    assert.ok(one.items.every(x=>x.snapshot&&x.job_ids.length===1&&x.last_inbound_message_id));
   });
+  await t.test('deferred worklist keeps undated contacts across cohort periods and owner dates stay separate from classification',async()=>{
+   const f=await fixture(),j=await f.job('99101','2026-10-01T09:00:00Z');await f.message(j,'inbound','Пока отложил');
+   let row=(await f.reviews()).items[0];await f.save(row,{status:'later',reason:'Клиент пока отложил работу'});
+   let list=await store.followUps(f.agent,f.campaign_id,{});assert.equal(list.total,1);assert.equal(list.totals.undated,1);assert.equal(list.items[0].follow_up_on,null);
+   const before=(await query('SELECT revision FROM cabinet_campaigns WHERE id=$1',[f.campaign_id])).rows[0].revision;
+   row=list.items[0];await store.saveFollowUp(f.p,f.campaign_id,j.id,{follow_up_on:list.today,follow_up_note:'Вернуться к обсуждению крыши',expected_snapshot:row.snapshot});
+   list=await store.followUps(f.agent,f.campaign_id,{view:'due'});assert.equal(list.total,1);assert.equal(list.items[0].follow_up_note,'Вернуться к обсуждению крыши');assert.equal(list.items[0].review_source,'agent');
+   assert.equal((await query('SELECT revision FROM cabinet_campaigns WHERE id=$1',[f.campaign_id])).rows[0].revision,before);
+   await f.message(j,'inbound','Пока всё так же');row=(await f.reviews()).items[0];
+   assert.equal((await store.followUps(f.agent,f.campaign_id,{})).total,1); // stale assessments cannot silently lose deferred contacts
+   await f.save(row,{status:'later',reason:'Повторно подтвердил отсрочку'});list=await store.followUps(f.agent,f.campaign_id,{});assert.equal(list.items[0].follow_up_on,list.today);
+   row=(await f.reviews()).items[0];await f.save(row,{status:'interested',reason:'Возобновил обсуждение цены'});assert.equal((await store.followUps(f.agent,f.campaign_id,{})).total,0);
+   row=(await f.reviews()).items[0];assert.equal(row.follow_up_on,list.today);assert.equal(row.follow_up_note,'Вернуться к обсуждению крыши');
+  });
+  await t.test('follow-up views, ordering and paging preserve exact Moscow date boundaries',async()=>{
+   const f=await fixture();const today=(await query("SELECT (now() AT TIME ZONE 'Europe/Moscow')::date::text AS day")).rows[0].day;
+   for(let i=0;i<4;i++){const j=await f.job(String(99200+i));await f.message(j);const row=(await f.reviews()).items.find(x=>x.job_id===j.id);await f.save(row,{status:'later',reason:'Клиент отложил до уточнения'});
+    if(i)await store.saveFollowUp(f.p,f.campaign_id,j.id,{follow_up_on:i===1?today:i===2?'2099-01-01':'2020-01-01',follow_up_note:'',expected_snapshot:row.snapshot});
+   }
+   const all=await store.followUps(f.p,f.campaign_id,{page:1,page_size:2});assert.deepEqual(all.totals,{total:4,undated:1,due:2,upcoming:1});assert.equal(all.today,today);assert.equal(all.items[0].follow_up_on,'2020-01-01');assert.equal(all.items[1].follow_up_on,today);
+   assert.equal((await store.followUps(f.p,f.campaign_id,{view:'undated'})).total,1);assert.equal((await store.followUps(f.p,f.campaign_id,{view:'upcoming'})).total,1);
+   assert.equal((await store.followUps(f.p,f.campaign_id,{page:2,page_size:2})).items.length,2);
+   await assert.rejects(store.followUps(f.p,f.campaign_id,{view:'unknown'}),/follow_up_filters_invalid/);
+  });
+  await t.test('only owner can manually schedule a deferred contact, scoped and snapshot checked',async()=>{
+   const f=await fixture(),other=await fixture(),j=await f.job();await f.message(j);let row=(await f.reviews()).items[0];await f.save(row,{status:'later',reason:'Клиент отложил решение'});
+   const input={follow_up_on:'2026-12-12',follow_up_note:'Через пару недель',expected_snapshot:row.snapshot};
+   await assert.rejects(store.saveFollowUp(f.agent,f.campaign_id,j.id,input),/owner_session_required/);
+   await assert.rejects(store.saveFollowUp(other.p,f.campaign_id,j.id,input),/campaign_not_found/);
+   await assert.rejects(store.followUps(other.agent,f.campaign_id,{}),/scope_denied|campaign_not_found/);
+   for(const invalid of [{...input,follow_up_on:'2026-02-30'},{...input,follow_up_on:undefined},{...input,owner_id:f.owner_id},{...input,expected_snapshot:'x'}])await assert.rejects(store.saveFollowUp(f.p,f.campaign_id,j.id,invalid),/follow_up_invalid/);
+   await f.message(j);await assert.rejects(store.saveFollowUp(f.p,f.campaign_id,j.id,input),/outcome_snapshot_changed/);
+   row=(await f.reviews()).items[0];await store.saveFollowUp(f.p,f.campaign_id,j.id,{...input,follow_up_on:null,follow_up_note:'Пока без даты',expected_snapshot:row.snapshot});
+   assert.equal((await store.followUps(f.p,f.campaign_id,{})).items[0].follow_up_on,null);
+   await f.save(row,{status:'declined',reason:'Не актуально'});await assert.rejects(store.saveFollowUp(f.p,f.campaign_id,j.id,{...input,expected_snapshot:row.snapshot}),/follow_up_not_deferred/);
+  });
   await t.test('HTTP metrics, paginated review and outcome routes enforce token boundaries',async()=>{
    const f=await fixture(),other=await fixture();const j=await f.job();await f.message(j);
    const url=`http://127.0.0.1:${server.address().port}/api/cabinet/campaigns/${f.campaign_id}`;
@@ -107,6 +143,10 @@ test('cabinet conversion statistics and evidence-based outcomes', {skip:!connect
    r=await fetch(url+'/reviews?pending_only=true',{headers});assert.equal(r.status,200);const row=(await r.json()).items[0];
    r=await fetch(url+'/reviews/'+row.job_id,{method:'PATCH',headers,body:JSON.stringify({status:'interested',reason:'Запросил стоимость',expected_snapshot:row.snapshot,evidence_message_ids:[row.last_inbound_message_id]})});assert.equal(r.status,200);
    assert.equal((await r.json()).review_source,'agent');
+   r=await fetch(url+'/reviews/'+row.job_id,{method:'PATCH',headers,body:JSON.stringify({status:'later',reason:'Клиент попросил вернуться позже',expected_snapshot:row.snapshot,evidence_message_ids:[row.last_inbound_message_id]})});assert.equal(r.status,200);
+   r=await fetch(url+'/followups?view=undated',{headers});assert.equal(r.status,200);assert.equal((await r.json()).total,1);
+   r=await fetch(url+'/followups/'+row.job_id,{method:'PATCH',headers,body:JSON.stringify({follow_up_on:'2026-12-12',follow_up_note:'',expected_snapshot:row.snapshot})});assert.equal(r.status,403);
+
    r=await fetch(url+'/stats',{headers:{authorization:'Bearer '+other.rawToken}});assert.equal(r.status,404);
   });
   await t.test('concurrent ingestion invalidates a pending write under the same reply lock',async()=>{
