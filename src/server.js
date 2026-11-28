@@ -71,7 +71,7 @@ app.get('/login.html',(_req,res)=>{
  res.sendFile(path.resolve('public','login.html'));
 });
 // Private account pages contain no account data; all data APIs authenticate separately.
-for (const file of ["cabinet.html", "cabinet.js", "cabinet.css", "cabinet-auth.js", "form-validation.js", "qr-polling.js"]) {
+for (const file of ["cabinet.html", "cabinet.js", "cabinet-stats.js", "cabinet-stats-charts.js", "cabinet.css", "cabinet-auth.js", "form-validation.js", "qr-polling.js"]) {
   app.get(file === "cabinet.html" ? "/cabinet" : `/${file}`, (_req, res) => {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
