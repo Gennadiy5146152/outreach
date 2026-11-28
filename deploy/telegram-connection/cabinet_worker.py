@@ -65,14 +65,18 @@ def reply_parent(event):
 
 
 def one_off_state(job, at):
+    mode = job.get("one_off_mode")
+    if mode not in (None, "today_batch"):
+        return "invalid"
     day, start, end, limit = (job.get(key) for key in (
         "one_off_day", "one_off_window_start", "one_off_window_end", "one_off_daily_limit"))
     if all(value is None for value in (day, start, end, limit)):
-        return None
+        return "invalid" if mode else None
     scheduled = job.get("scheduled_at")
     if (type(day) is not date or type(start) is not time or type(end) is not time
             or start.tzinfo is not None or end.tzinfo is not None or start >= end
             or type(limit) is not int or not 1 <= limit <= 100
+            or (mode == "today_batch" and limit > 20)
             or not isinstance(scheduled, datetime) or scheduled.utcoffset() is None):
         return "invalid"
     scheduled = scheduled.astimezone(MSK)
@@ -389,7 +393,8 @@ class CabinetWorker:
             WHERE connection_id=%s AND attempted_at >= (date_trunc('day',now() AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow')""", (row["id"],))).fetchone()
         daily_limit = job["daily_limit"]
         if job.get("one_off_day") is not None:
-            daily_limit = min(job["one_off_daily_limit"], daily_limit + 2, 100)
+            allowance = 0 if job.get("one_off_mode") == "today_batch" else 2
+            daily_limit = min(job["one_off_daily_limit"], daily_limit + allowance, 100)
         return usage["n"] < daily_limit and (not usage["last_at"] or datetime.now(UTC) - usage["last_at"] >= timedelta(minutes=3))
 
     async def source_peer(self, job, client):

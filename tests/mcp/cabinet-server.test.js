@@ -32,6 +32,15 @@ async function session(scopes, fn, options = {}) {
     await server.close();
   }
 }
+test('today batch is cabinet-wide send+draft scoped and bounds twenty stored recipients with a mandatory plan',async()=>{
+ for(const [scopes,allCampaigns] of [[["outreach:send"],true],[["outreach:draft"],true],[["outreach:send","outreach:draft"],false]])await session(scopes,async client=>assert.equal((await client.listTools()).tools.some(t=>t.name==='telegram_today_batch_prepare'),false),{allCampaigns});
+ await session(['outreach:send','outreach:draft'],async(client,calls)=>{
+  const input={campaign_id:'00000000-0000-4000-8000-000000000001',draft_ids:Array.from({length:20},(_,i)=>`00000000-0000-4000-8000-${String(i+10).padStart(12,'0')}`),window_start:'12:02',window_end:'15:55'};
+  for(const bad of [{...input,draft_ids:[...input.draft_ids,'00000000-0000-4000-8000-000000000099']},{...input,include_weekends:true},{...input,daily_limit:100},{...input,body:'ad hoc message'},{...input,one_off_day:'2026-11-28'}])assert.equal((await client.callTool({name:'telegram_today_batch_prepare',arguments:bad})).isError,true);
+  assert.equal(calls.length,0);const plan=await client.callTool({name:'telegram_today_batch_prepare',arguments:input});assert.equal(plan.isError,undefined);assert.equal(plan.structuredContent.data.requires_confirmation,true);
+  const {campaign_id,...body}=input;assert.deepEqual(calls,[{path:`/api/cabinet/campaigns/${campaign_id}/today-batch/prepare`,input:body}]);
+ },{allCampaigns:true});
+});
 test("Instagram status is independently scoped and cannot connect, send or read Direct", async () => {
   await session(["instagram:read"], async (client, calls) => {
     assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ["cabinet_access", "instagram_connections_list"]);
