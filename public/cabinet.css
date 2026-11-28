@@ -2235,7 +2235,7 @@ input[type="checkbox"], input[type="radio"] {
 .funnel-replied { background:var(--chart-replied); } .funnel-interested { background:var(--chart-interest); } .funnel-booked { background:var(--chart-booked); }
 .funnel-footer { display:flex; align-items:center; gap:9px; padding-top:13px; border-top:1px solid #eef1f6; color:var(--muted); font-size:10px; }
 .funnel-footer strong { color:var(--chart-interest); font-size:19px; font-weight:600; letter-spacing:-.035em; }
-.dashboard-source-list { display:grid; gap:14px; }
+.dashboard-source-list { display:grid; gap:14px; max-height:230px; overflow-y:auto; padding-right:6px; scrollbar-width:thin; scrollbar-color:#d5deec transparent; }
 #analytics button.source-rank { display:block; min-height:0; border:0; background:none; box-shadow:none; padding:0; text-align:left; color:var(--ink); border-radius:3px; }
 #analytics button.source-rank:disabled { opacity:1; cursor:default; }
 .source-rank-head { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:11px; }
