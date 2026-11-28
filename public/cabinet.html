@@ -68,6 +68,7 @@
             <path d="M4 7h16v13H4zM8 3v8M16 3v8M4 11h16M8 15h3" /></svg
           ><span>Рассылки</span></a
         ><a href="#analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5M4 19h16M8 15l4-5 4 2 4-7"/></svg><span>Аналитика</span></a
+        ><a href="#followups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span>Отложенные</span></a
         ><a href="#tokens"
           ><svg
             viewBox="0 0 24 24"
@@ -319,6 +320,16 @@
             </div>
             <div class="dashboard-review-header"><div><h3>Диалоги и результаты</h3><p id="statsFreshness"></p></div><div id="conversionStages" class="dashboard-stage-summary"></div></div>
             <div class="dashboard-card dashboard-conversations"><div id="statsReviews" class="dashboard-table-scroll"></div><div class="dashboard-pagination"><span id="statsPage"></span><div><button id="statsPrev" type="button" class="secondary" aria-label="Предыдущая страница">←</button><button id="statsNext" type="button" class="secondary" aria-label="Следующая страница">→</button></div></div></div>
+          </div>
+        </section>
+        <section id="followups" data-cabinet-page hidden>
+          <div class="dashboard-title"><div><span class="dashboard-eyebrow">ПОВТОРНЫЙ КОНТАКТ</span><h2>Вернуться позже</h2><p>Отложенные обращения за всё время. Даты назначаем вручную.</p></div><button id="followUpRefresh" type="button" class="secondary">Обновить</button></div>
+          <div id="followUpEmpty" class="empty-state" hidden><h3>Пока нет рассылок</h3><p>Отложенные обращения появятся здесь после первых диалогов.</p><a href="#campaigns" class="button-link">К рассылкам</a></div>
+          <div id="followUpContent" hidden>
+            <div class="dashboard-filterbar followup-filters"><label class="dashboard-campaign-label">Рассылка<select id="followUpCampaign"></select></label><label>Показать<select id="followUpView"><option value="all">Все отложенные</option><option value="undated">Нужно назначить дату</option><option value="due">Пора вернуться</option><option value="upcoming">Запланировано</option></select></label></div>
+            <div id="followUpCounts" class="followup-counts"></div>
+            <p id="followUpError" class="conversion-error" role="alert" hidden></p>
+            <div class="dashboard-card dashboard-conversations"><div id="followUpRows" class="dashboard-table-scroll"></div><div class="dashboard-pagination"><span id="followUpPage"></span><div><button id="followUpPrev" type="button" class="secondary" aria-label="Предыдущая страница">←</button><button id="followUpNext" type="button" class="secondary" aria-label="Следующая страница">→</button></div></div></div>
           </div>
         </section>
         <section id="campaigns" data-cabinet-page hidden>
@@ -713,6 +724,8 @@
         ><button id="cancelPlan">Отмена</button>
       </div>
     </dialog>
+    <dialog id="followUpDateDialog"><h2>Когда вернуться</h2><p id="followUpDatePerson" class="muted"></p><form id="followUpDateForm"><label>Дата повторного разбора<input id="followUpDateInput" type="date" /></label><label>Заметка<textarea id="followUpNote" rows="3" maxlength="1000"></textarea></label><p class="muted">Можно оставить дату пустой: контакт будет ждать назначения.</p><p id="followUpEditError" class="conversion-error" role="alert" hidden></p><div class="row"><button type="submit">Сохранить</button><button id="followUpDateCancel" type="button" class="secondary">Отмена</button></div></form></dialog>
+    <dialog id="followUpThreadDialog"><div class="conversion-heading"><h2 id="followUpThreadTitle">Переписка</h2><button id="followUpThreadClose" type="button" class="secondary">Закрыть</button></div><div id="followUpThreadMessages"></div></dialog>
     <dialog id="statsEditDialog">
       <h2>Результат диалога</h2><p id="statsEditPerson" class="muted"></p>
       <form id="statsEditForm">

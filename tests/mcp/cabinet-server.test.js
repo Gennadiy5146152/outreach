@@ -90,6 +90,7 @@ test("scoped MCP advertises only granted tools, no account, QR or arbitrary hist
         "queue_list",
         "campaign_stats_get",
         "outreach_reviews_list",
+        "outreach_followups_list",
       ].sort(),
     );
     await assert.rejects(
@@ -250,4 +251,13 @@ test('draft_create accepts exactly one personal address mode and never permits s
     await client.callTool({name:'draft_create',arguments:{campaign_id,recipient_id:'9912345',body:'Legacy copy',address:'https://t.me/legacy_person'}});assert.equal(calls[1].input.address,'https://t.me/legacy_person');assert.equal(Object.hasOwn(calls[1].input,'recipient_source'),false);
     assert.equal((await client.callTool({name:'draft_update',arguments:{campaign_id,draft_id:'00000000-0000-4000-8000-000000000002',recipient_source:source}})).isError,true);
   });
+});
+
+test('deferred worklist is read-only and strictly scoped, with no automatic date edits',async()=>{
+ await session(['outreach:read'],async(client,calls)=>{
+  const names=(await client.listTools()).tools.map(t=>t.name);assert.ok(names.includes('outreach_followups_list'));assert.ok(!names.includes('outreach_followup_update'));
+  const campaign_id='00000000-0000-4000-8000-000000000001';
+  for(const extra of [{view:'yesterday'},{page:0},{page_size:101},{follow_up_on:'2026-12-12'},{owner_id:campaign_id}])assert.equal((await client.callTool({name:'outreach_followups_list',arguments:{campaign_id,...extra}})).isError,true);
+  assert.equal(calls.length,0);await client.callTool({name:'outreach_followups_list',arguments:{campaign_id,view:'due'}});assert.deepEqual(calls,[`/api/cabinet/campaigns/${campaign_id}/followups`]);
+ });
 });

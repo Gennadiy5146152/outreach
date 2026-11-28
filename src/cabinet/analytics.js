@@ -1,4 +1,4 @@
-import {assertScope,fail,uuid} from './security.js';
+import {assertScope,ownerOnly,fail,uuid} from './security.js';
 
 export const OUTCOME_STATUSES=['interested','later','declined','not_target','needs_review','booked'];
 function date(value){
@@ -40,6 +40,7 @@ const PEOPLE_SQL=`WITH sent AS (
    lower(COALESCE(f.recipient_source->>'username',substring(d.source_url from '^https://t[.]me/([A-Za-z][A-Za-z0-9_]{3,31})/[0-9]+$'))) AS group_username,
    history.*,o.status AS assessed_status,o.reason,o.evidence_message_ids::text[] AS evidence_message_ids,
    o.review_source,o.reviewed_at,o.snapshot AS assessment_snapshot,
+   o.follow_up_on::text,o.follow_up_note,o.follow_up_updated_at,
    COALESCE(o.snapshot<>history.snapshot,false) AS stale,
    CASE WHEN o.status IS NULL AND history.inbound_count=0 THEN 'no_reply'
      WHEN o.status IS NULL OR (o.review_source='agent' AND o.snapshot<>history.snapshot) THEN 'needs_review'
@@ -134,5 +135,41 @@ export function createCabinetAnalytics({query,campaign,ownerTransaction}){
    return {job_id:row.job_id,recipient_id:row.recipient_id,...saved};
   });
  }
- return {campaignStats,conversationReviews,saveConversationOutcome};
+ async function followUps(p,id,input={}){
+  id=uuid(id);
+  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['view','page','page_size'].includes(k)))throw fail('follow_up_filters_invalid');
+  const view=input.view??'all',page=Number(input.page??1),page_size=Number(input.page_size??50);
+  if(!['all','undated','due','upcoming'].includes(view)||!Number.isInteger(page)||page<1||page>10000||!Number.isInteger(page_size)||page_size<1||page_size>100)throw fail('follow_up_filters_invalid');
+  // Use the retained assessment even while a new message is awaiting review.
+  const deferred=(await rows(p,id,{from:null,to:null,group:null})).filter(r=>r.assessed_status==='later');
+  const today=(await query("SELECT (now() AT TIME ZONE 'Europe/Moscow')::date::text AS day")).rows[0].day;
+  const kind=r=>!r.follow_up_on?'undated':r.follow_up_on<=today?'due':'upcoming';
+  const totals={total:deferred.length,undated:0,due:0,upcoming:0};for(const r of deferred)totals[kind(r)]++;
+  const priority={due:0,undated:1,upcoming:2};
+  const selected=deferred.filter(r=>view==='all'||kind(r)===view).sort((a,b)=>priority[kind(a)]-priority[kind(b)]||(a.follow_up_on||'').localeCompare(b.follow_up_on||'')||a.first_sent_at-b.first_sent_at||(BigInt(a.recipient_id)<BigInt(b.recipient_id)?-1:1));
+  return {time_zone:'Europe/Moscow',today,totals,total:selected.length,page,page_size,items:selected.slice((page-1)*page_size,page*page_size)};
+ }
+ async function saveFollowUp(p,id,jobId,input){
+  ownerOnly(p);id=uuid(id);jobId=uuid(jobId);
+  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['follow_up_on','follow_up_note','expected_snapshot'].includes(k))||
+    !(input.follow_up_on===null||typeof input.follow_up_on==='string'&&input.follow_up_on!=='')||typeof input.follow_up_note!=='string'||input.follow_up_note.length>1000||
+    typeof input.expected_snapshot!=='string'||!(/^[a-f0-9]{32}$/).test(input.expected_snapshot))throw fail('follow_up_invalid');
+  let day=null;try{if(input.follow_up_on!==null)day=date(input.follow_up_on);}catch{throw fail('follow_up_invalid');}
+  return ownerTransaction(p,async db=>{
+   await campaign(p,id,'outreach:draft',db);
+   const job=(await db.query("SELECT connection_id,recipient_id::text FROM cabinet_jobs WHERE owner_id=$1 AND campaign_id=$2 AND id=$3 AND status='sent'",[p.owner_id,id,jobId])).rows[0];
+   if(!job)throw fail('thread_not_found',404);
+   await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',['cabinet-replies:'+job.connection_id]);
+   const row=(await rows(p,id,{from:null,to:null,group:null},db)).find(r=>r.recipient_id===job.recipient_id);
+   if(!row)throw fail('thread_not_found',404);
+   if(row.snapshot!==input.expected_snapshot)throw fail('outcome_snapshot_changed',409);
+   if(row.assessed_status!=='later')throw fail('follow_up_not_deferred',409);
+   const saved=(await db.query(`UPDATE cabinet_conversation_outcomes SET follow_up_on=$4,follow_up_note=$5,
+     follow_up_updated_at=now(),follow_up_actor_key=$6 WHERE owner_id=$1 AND campaign_id=$2 AND recipient_id=$3
+     RETURNING follow_up_on::text,follow_up_note,follow_up_updated_at`,[p.owner_id,id,job.recipient_id,day,input.follow_up_note.trim(),p.actor_key])).rows[0];
+   await db.query("INSERT INTO cabinet_audit(owner_id,actor_key,action,target_id) VALUES($1,$2,'follow_up_schedule',$3)",[p.owner_id,p.actor_key,row.job_id]);
+   return {job_id:row.job_id,recipient_id:row.recipient_id,...saved};
+  });
+ }
+ return {campaignStats,conversationReviews,saveConversationOutcome,followUps,saveFollowUp};
 }
